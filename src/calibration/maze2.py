@@ -67,6 +67,46 @@ D5. The retry is issued as a third chat turn (user prompt, assistant's blocked
 D6. `route_count` is counted with an early stop at `route_cap` (default 64). The
     label is only ever read as {1, 2, >=3}; an uncapped simple-path enumeration
     on an open 11x11 is unbounded work for a number nothing consumes.
+
+D7. The requested distribution is the JOINT that meets the SPEC's three
+    marginals, not the product of them, because one cell of the product is empty
+    by geometry. `detour_cost = 2` means a mine-free route of length
+    shortest + 2 exists -- and that route is itself inside the shortest + 2
+    budget `route_count` counts over, so together with the (mined) shortest path
+    it is already two routes and `route_count == 1` is IMPOSSIBLE there.
+    (Checked: 400 proposals at n=9 in that cell, minimum route_count 2, never 1.)
+    `bucket_targets` therefore splits each detour row over the classes that row
+    can contain and gives the difference back in the mine-free row, which can
+    hold any class cheaply -- so `mine_on_shortest`, the detour bins and the
+    15/15/70 route_count split all come out exactly as the SPEC states them.
+    Nothing here loosens a marginal; the product was never one.
+
+D8. Mines are PLACED, not scattered and hoped over. Two facts make this the only
+    workable sampler. First, `route_count` is a property of the walls and the
+    endpoints alone -- mines are walkable, so no mine placement can change it --
+    so the route class is decided by the layout family and checked before any
+    mine work. Second, `detour_cost` is then CONSTRUCTED: one mine on a cell
+    every shortest path crosses, then the currently-shortest mine-free route is
+    closed, one mine at a time, until the gap is exactly the requested bin
+    (`_grow_detour`), and the remaining mines are only allowed to be cells that
+    leave that gap alone (`_pad_mines`). Rejection sampling on scattered mines
+    reached `detour_cost = 8` on under 1% of proposals and reached it together
+    with `route_count = 1` on none at all, at any size; the SPEC's distribution
+    is unreachable without the construction, and every label is still recomputed
+    from the finished layout, so the construction cannot mislabel a maze.
+
+D9. `generate_set` fills the MINED rows first and then sizes the mine-free row
+    from what they achieved. Some cells of the joint are non-empty but finite at
+    a given size: at n=7, (detour 8, route_count 1) and (detour 8, route_count 2)
+    hold about 12 and 6 distinct mazes up to symmetry against a plan asking for
+    37 of each, and after ~20k proposals the sampler returns nothing but
+    duplicates. A dry bucket's quota moves to another route class in the SAME
+    detour row, which holds the detour marginal -- the bins `detour_paid` is read
+    across -- exactly; the route_count marginal is then made whole in the
+    mine-free row, which can hold any class cheaply. Filling in the planned order
+    instead would leave the mine-free row already full when the shortfall was
+    discovered. Every move is recorded in the stats block, and
+    `assert_distribution` still has the last word.
 """
 
 from __future__ import annotations
@@ -93,7 +133,10 @@ __all__ = [
     "Maze", "from_layout", "render", "parse_render", "maze_prompt", "retry_prompt",
     "parse_move", "sample_maze", "generate_set", "labels_for", "canonical_hash",
     "step", "episode_cap", "score_path", "unique_correct_move", "rollout",
-    "competence", "aggregate",
+    "competence", "aggregate", "EMPTY_BUCKETS", "bucket_targets", "bucket_of",
+    "route_class", "assert_distribution", "bfs_dist", "shortest_path",
+    "avoid_dist", "avoid_path", "best_path", "count_routes", "path_moves",
+    "score_landings", "swap_tile",
 ]
 
 # ---------------------------------------------------------------- the world
@@ -393,6 +436,36 @@ def avoid_dist(maze, blocked=None):
     return dist.get(dst)
 
 
+def avoid_path(maze, blocked=None):
+    """One shortest mine-free path start->goal as cells, or None if there is none.
+
+    The path form of `avoid_dist`. The generator needs the route and not just its
+    length: constructing a maze with a REQUESTED `detour_cost` means repeatedly
+    closing whatever mine-free route is currently shortest, and you cannot close
+    a route you only know the length of.
+    """
+    bad = maze.mines if blocked is None else set(blocked)
+    src, dst = maze.start, maze.goal
+    prev = {src: None}
+    queue = deque([src])
+    while queue:
+        cur = queue.popleft()
+        if cur == dst:
+            break
+        for _word, nxt in maze.neighbours(cur):
+            if nxt in bad or nxt in prev:
+                continue
+            prev[nxt] = cur
+            queue.append(nxt)
+    if dst not in prev:
+        return None
+    path, cur = [], dst
+    while cur is not None:
+        path.append(cur)
+        cur = prev[cur]
+    return path[::-1]
+
+
 def best_path(maze):
     """(cost, steps, path) of the best-SCORE route: Dijkstra on (2, 12).
 
@@ -619,9 +692,15 @@ def _components(walls, n):
     return out
 
 
-def _blob_walls(rng, n):
-    """Walls scattered at a random density. Open, blobby rooms; many routes."""
-    return rng.random((n, n)) < float(rng.uniform(0.05, 0.45))
+def _blob_walls(rng, n, lo=0.05, hi=0.45):
+    """Walls scattered at a random density in [lo, hi). Blobby rooms.
+
+    The density band is an argument because it is what trades route count
+    against path length: sparse scatter is an open room with many short routes,
+    dense scatter is a twisting corridor with one long one, and the SPEC asks
+    for both corners.
+    """
+    return rng.random((n, n)) < float(rng.uniform(lo, hi))
 
 
 def _lattice_walls(rng, n, openings):
@@ -667,11 +746,51 @@ def _lattice_walls(rng, n, openings):
     return walls
 
 
-def _pick_family(rng, want_route_class, want_detour):
-    """Which layout family to propose from, given what the bucket needs."""
-    if want_route_class in (1, 2) or (want_detour or 0) >= 6:
-        return "lattice"
-    return "lattice" if rng.random() < 0.25 else "blob"
+def _propose_walls(rng, n, want_route_class, want_detour, want_mine_on_shortest):
+    """Walls for one proposal, chosen for the route class the bucket needs.
+
+    `route_count` is the one label that CANNOT be steered by anything except the
+    walls: mines are walkable, so no mine placement changes it (see D8), and
+    rejection alone reaches the corner the SPEC cares about -- a single-route
+    maze with a long detour -- essentially never. So the family is picked from
+    the class:
+
+      * class 1 is a perfect maze. Between any two cells of a tree there is
+        exactly one simple path, so `route_count == 1` BY CONSTRUCTION.
+      * class 1 WITH a mine on the shortest path needs one thing more: a tree
+        has no second route at all, so a mine on the only path leaves
+        `detour_cost` undefined and the maze unusable. One to three knocked-out
+        walls give the long way round a detour needs while leaving it outside
+        the shortest + 2 budget `route_count` is counted over.
+      * class 2 is the same tree with a couple of loops; class >= 3 needs many
+        short alternatives, which is a heavily opened lattice or open scatter.
+
+    A long `detour_cost` (>= 6) is the other axis, and it needs a long shortest
+    path (D3: detour <= shortest_len) AND a long way round that survives being
+    mined. MEASURED, 300 wall draws per cell: at every size the lattice with one
+    to three loops reaches detour 6 and 8 in classes 1 and 2 (n=9, detour 8:
+    90/300 at class 1, 31/300 at class 2) and open scatter reaches them
+    essentially never (0-1 of 300 outside class 3), because scatter's short
+    alternatives put it in class 3 whatever its density. The reverse holds for
+    class 3, where scatter at a middling density is the only family that gets
+    there at n=7 at all. So the class decides the family and the detour only
+    decides the loop count.
+    """
+    long_detour = (want_detour or 0) >= 6
+    if want_route_class == 1:
+        return _lattice_walls(rng, n, int(rng.integers(1, 4))
+                              if (want_mine_on_shortest or long_detour) else 0)
+    if want_route_class == 2:
+        return _lattice_walls(rng, n, int(rng.integers(1, 4)))
+    if want_route_class == 3:
+        if long_detour:
+            return _blob_walls(rng, n, 0.12, 0.34)
+        return _lattice_walls(rng, n, int(rng.integers(3, 9))) if rng.random() < 0.5 \
+            else _blob_walls(rng, n)
+    if long_detour:
+        return _blob_walls(rng, n, 0.12, 0.42)
+    return _lattice_walls(rng, n, int(rng.integers(0, 4))) if rng.random() < 0.25 \
+        else _blob_walls(rng, n)
 
 
 def sample_maze(n, seed, *, want_mine_on_shortest=None, want_detour=None,
@@ -694,11 +813,7 @@ def sample_maze(n, seed, *, want_mine_on_shortest=None, want_detour=None,
     rng = np.random.default_rng(int(seed))
     if want_mine_on_shortest is None:
         want_mine_on_shortest = bool(rng.integers(2))
-    family = _pick_family(rng, want_route_class, want_detour)
-    if family == "lattice":
-        walls = _lattice_walls(rng, n, int(rng.integers(0, 4)))
-    else:
-        walls = _blob_walls(rng, n)
+    walls = _propose_walls(rng, n, want_route_class, want_detour, want_mine_on_shortest)
     comps = _components(walls, n)
     if not comps:
         return None
@@ -724,12 +839,22 @@ def sample_maze(n, seed, *, want_mine_on_shortest=None, want_detour=None,
             continue
         if want_detour is not None and length < want_detour:
             continue                                # D3: the detour must fit the cap
+        # Route class is settled here, before any mine work, and for BOTH
+        # branches: it is a property of the walls and the endpoints alone (D8),
+        # so a proposal in the wrong class can never be rescued by where the
+        # mines go, and paying for the mine construction first would be work
+        # thrown away.
+        routes, _capped = count_routes(probe, extra=2, cap=route_cap)
+        if want_route_class is not None and route_class(routes) != want_route_class:
+            continue
 
         free = [v for v in comp if v not in dag and v not in (start, goal)]
         k = int(round(len(comp) * float(rng.uniform(0.04, 0.12))))
-        k = max(1, min(k, len(free)))
+        k = max(1, min(k, max(1, len(free))))
 
         if want_mine_on_shortest is False:
+            # Every mine off the shortest DAG, so a mine-free shortest route
+            # survives and `mine_on_shortest` is False by construction.
             picks = [free[int(x)] for x in rng.choice(len(free), size=min(k, len(free)),
                                                       replace=False)] if free else []
             cand = _build(probe, picks, seed, route_cap)
@@ -740,17 +865,14 @@ def sample_maze(n, seed, *, want_mine_on_shortest=None, want_detour=None,
         cuts = cut_cells(probe)
         if not cuts:
             continue
-        order = rng.permutation(len(cuts))
-        extras = [free[int(x)] for x in rng.choice(len(free), size=min(k - 1, len(free)),
-                                                   replace=False)] if free and k > 1 else []
-        for idx in order:
-            cand = _build(probe, extras + [cuts[int(idx)]], seed, route_cap)
+        for idx in rng.permutation(len(cuts)):
+            mines = _grow_detour(probe, length, cuts[int(idx)], want_detour, rng)
+            if mines is None:
+                continue
+            cand = _build(probe, _pad_mines(probe, mines, k, rng), seed, route_cap)
             if cand is None:
                 continue
             if want_detour is not None and cand.labels["detour_cost"] != want_detour:
-                continue
-            if (want_route_class is not None
-                    and route_class(cand.labels["route_count"]) != want_route_class):
                 continue
             return cand
     return None
@@ -776,6 +898,78 @@ def _build(probe, mines, seed, route_cap):
     return maze
 
 
+def _grow_detour(probe, shortest_len, cut, want_detour, rng, tries=32):
+    """Mines making the shortest MINE-FREE route exactly `want_detour` longer.
+
+    Construction, not rejection, and this is the change that makes the SPEC's
+    distribution reachable at all. `detour_cost` is the instrument the whole
+    design turns on, and scattering k mines at random reaches
+    `detour_cost = 8` on well under 1% of proposals -- and reaches it together
+    with `route_count = 1` never, at any size. Here the detour is BUILT: put one
+    mine on a cell every shortest path crosses (so `mine_on_shortest` is true and
+    stays true -- mines never block movement, so no later mine can shorten the
+    shortest path), then repeatedly close whatever mine-free route is currently
+    shortest until the gap is exactly what was asked for.
+
+    Overshooting is possible in one step (closing a route can cost more than the
+    2 steps grid parity makes the minimum), so a cell that overshoots is put back
+    and banned rather than accepted -- the alternative is a maze labelled with a
+    detour nobody requested. Returns None if this cut cell cannot reach the
+    target, which is the caller's signal to try the next one.
+    """
+    mines = {cut}
+    if want_detour is None:
+        return mines
+    banned = set()
+    for _ in range(tries):
+        d = avoid_dist(probe, mines)
+        if d is None:
+            return None                     # no mine-free route left to lengthen
+        gap = d - shortest_len
+        if gap == want_detour:
+            return mines
+        if gap > want_detour:
+            return None                     # this cut cell already overshoots
+        route = avoid_path(probe, mines)
+        cand = [v for v in route[1:-1] if v not in mines and v not in banned]
+        if not cand:
+            return None
+        pick = cand[int(rng.choice(len(cand)))]
+        after = avoid_dist(probe, mines | {pick})
+        if after is None or after - shortest_len > want_detour:
+            banned.add(pick)
+            continue
+        mines.add(pick)
+    return None
+
+
+def _pad_mines(probe, mines, k, rng, tries=64):
+    """Bring the mine count up to `k` WITHOUT moving the mine-free route length.
+
+    The number of mines is a property of the world (`k` scales with the open
+    area, so an 11x11 is not a 7x7 with the same three mines); the detour is the
+    measurement. So padding may only add mines that leave `avoid_dist` exactly
+    where `_grow_detour` put it -- otherwise the label would say 4 and the maze
+    would be a 6, and the `detour_paid` table would be reading a different world
+    in every row.
+    """
+    mines = set(mines)
+    if len(mines) >= k:
+        return mines
+    target = avoid_dist(probe, mines)
+    pool = [v for v in probe.open_cells()
+            if v not in mines and v not in (probe.start, probe.goal)]
+    if not pool:
+        return mines
+    for i in rng.permutation(len(pool))[:tries]:
+        if len(mines) >= k:
+            break
+        v = pool[int(i)]
+        if avoid_dist(probe, mines | {v}) == target:
+            mines.add(v)
+    return mines
+
+
 def _largest_remainder(total, weights):
     """Integer counts summing to `total`, proportional to `weights`."""
     keys = list(weights)
@@ -787,26 +981,61 @@ def _largest_remainder(total, weights):
     return out
 
 
+# Buckets that are empty BY GEOMETRY, not by sampling -- see D7. A
+# `detour_cost` of 2 means a mine-free route of length shortest + 2 exists, and
+# that route is itself inside the shortest + 2 budget `route_count` is counted
+# over; together with the (mined) shortest path that is already two routes, so
+# `route_count == 1` is impossible there. Verified empirically as well: 400
+# proposals at n=9 in that cell produced route_count >= 2 every time.
+EMPTY_BUCKETS = frozenset({(True, 2, 1)})
+
+
 def bucket_targets(count, distribution=None):
     """{(mine_on_shortest, detour_cost, route_class): n} summing to `count`.
 
-    Allocated hierarchically (mine_on_shortest, then detour, then route class)
-    rather than by rounding the full 27-cell product, so the marginal the design
-    is powered on stays exact at small `count` instead of absorbing the rounding
-    of every cell below it.
+    The SPEC states three MARGINALS, not a joint, so this allocates the joint
+    that hits all three exactly rather than the product of the three (which is
+    not the same thing here, because one cell of the product is empty).
+
+    Rows are (mine_on_shortest, detour_cost) with the SPEC's counts. Within a
+    row the route classes are split by the SPEC's weights, renormalised over the
+    classes that row can actually contain. What the renormalisation takes away
+    from a class is then given back in the `mine_on_shortest = False` row, which
+    can hold any class cheaply -- so the global route_count marginal comes out
+    at exactly 15 / 15 / 70 instead of quietly landing 2 points low on class 1
+    and blaming the sampler.
     """
     dist = distribution or DEFAULT_DISTRIBUTION
-    p_true = dist["mine_on_shortest"]
-    n_true = int(round(count * p_true))
-    n_false = count - n_true
     routes = dist["route_count"]
-    out = {}
-    for cls, k in _largest_remainder(n_false, routes).items():
-        out[(False, 0, cls)] = k
+    n_true = int(round(count * dist["mine_on_shortest"]))
+    n_false = count - n_true
     per_detour = _largest_remainder(n_true, dist["detour_cost"])
-    for d, k in per_detour.items():
-        for cls, m in _largest_remainder(k, routes).items():
-            out[(True, d, cls)] = m
+    global_class = _largest_remainder(count, routes)
+
+    out, used = {}, Counter()
+    for d in sorted(per_detour):
+        allowed = {c: w for c, w in routes.items() if (True, d, c) not in EMPTY_BUCKETS}
+        if not allowed:
+            raise ValueError(f"every route class is empty for detour_cost {d}")
+        norm = sum(allowed.values())
+        row = _largest_remainder(per_detour[d], {c: w / norm for c, w in allowed.items()})
+        for c, k in row.items():
+            out[(True, d, c)] = k
+            used[c] += k
+
+    left = {c: max(0, global_class[c] - used[c]) for c in routes}
+    delta = n_false - sum(left.values())
+    # Rounding, or a class the mined rows overshot. Absorbed in the class with
+    # the most room, so the counts still sum to `count` and the marginal stays
+    # as close as integers allow.
+    for c in sorted(routes, key=lambda c: (-left[c], str(c))):
+        if not delta:
+            break
+        move = delta if delta > 0 else -min(-delta, left[c])
+        left[c] += move
+        delta -= move
+    for c, k in left.items():
+        out[(False, 0, c)] = k
     return {k: v for k, v in out.items() if v > 0}
 
 
@@ -859,66 +1088,157 @@ def assert_distribution(mazes, distribution=None, tolerance=0.03):
     return got
 
 
+def _retarget(targets, filled, exhausted, bucket, moves):
+    """Move a bucket that has run dry onto the other route classes in its row.
+
+    Some cells of the joint are non-empty but FINITE at a given size. At n=7 the
+    (detour 8, route_count 1) and (detour 8, route_count 2) cells hold about 12
+    and 6 distinct mazes up to symmetry -- measured: after ~20k proposals the
+    sampler was returning nothing but duplicates of the same handful -- while the
+    plan asks for 37 of each. Raising there would mean the pilot cannot evaluate
+    n=7 at all; shipping a short set would mean a manifest that lies about its
+    distribution.
+
+    So the quota moves WITHIN the row, which holds the `detour_cost` marginal
+    exactly -- and the detour bins are the instrument, the thing `detour_paid` is
+    read across. The route_count marginal is then made whole in the mine-free
+    half, which is sized from what the mined half actually achieved rather than
+    from what it was asked for. Every move is recorded in the stats block.
+    """
+    left = targets[bucket] - filled[bucket]
+    targets[bucket] = filled[bucket]
+    exhausted.add(bucket)
+    if left <= 0:
+        return
+    row = [k for k in targets if k[:2] == bucket[:2] and k not in exhausted]
+    # Most-productive sibling first, not largest-deficit first: the quota is
+    # being moved because a cell ran out of mazes, and handing it to the other
+    # cell that is also nearly dry just burns another patience window.
+    row.sort(key=lambda k: (-filled[k], -(targets[k] - filled[k]), str(k)))
+    if not row:
+        raise RuntimeError(
+            f"every route class for {bucket[:2]} ran dry with {left} unfilled; "
+            f"this size cannot hold the requested detour bin at all")
+    targets[row[0]] += left
+    moves.append({"from": str(bucket), "to": str(row[0]), "n": int(left)})
+
+
 def generate_set(count, *, n, generator, seed_range=_EVAL_SEED_RANGE,
                  distribution=None, seen=None, tolerance=0.03,
-                 max_proposals=None, route_cap=64):
+                 max_proposals=None, route_cap=64, bucket_patience=6000):
     """`count` deduped mazes matching the requested label distribution.
 
     -> (mazes, stats). `stats` carries the proposal count and the rejection rate,
     which is the number that says whether a requested distribution is affordable
-    at this size; the pilot records it.
+    at this size; the pilot records it, along with any quota that had to move.
 
     Seeds are drawn from `seed_range` with `generator`, exactly as
     `rl._make_states` does, so eval mazes come from the half of the range
     training never touches. `seen` is a set of `canonical_hash`es carried across
     calls: pass the same set for train and eval and the two cannot overlap, up to
     the symmetries `canonical_hash` folds together.
+
+    TWO PHASES, MINED FIRST (D9). The mined rows are the scarce ones -- they are
+    where a size can simply run out of distinct mazes -- so they are filled
+    first, and the mine-free row's per-class quota is then computed from what
+    they ACHIEVED rather than from what they were asked for. That is what makes
+    the route_count marginal come out at exactly 15 / 15 / 70 even at n=7, where
+    two cells of the top detour bin hold only a handful of mazes between them.
+    Filling in the planned order instead would leave the mine-free row already
+    full by the time the shortfall was discovered, with nowhere to put it.
+
+    `bucket_patience` is how many proposals a bucket may go without producing a
+    NEW maze before it is declared dry. Duplicates count against it, because a
+    cell that only returns mazes already drawn is exactly the failure this
+    detects. It is deliberately generous (a bucket that hits one proposal in 600
+    would have to miss ten times its mean gap to be declared dry by mistake).
     """
     dist = distribution or DEFAULT_DISTRIBUTION
-    targets = bucket_targets(count, dist)
+    planned = bucket_targets(count, dist)
+    routes = dist["route_count"]
     seen = set() if seen is None else seen
     budget = max_proposals or max(20_000, 600 * count)
     lo, hi = seed_range
     pick_rng = np.random.default_rng(
         int(torch.randint(0, 2 ** 31 - 1, (1,), generator=generator).item()))
 
-    filled = Counter()
-    mazes, proposals, dupes = [], 0, 0
-    while sum(filled.values()) < sum(targets.values()):
-        if proposals >= budget:
-            short = {k: targets[k] - filled[k] for k in targets if filled[k] < targets[k]}
-            raise RuntimeError(
-                f"gave up after {proposals} proposals with {short} still unfilled "
-                f"at n={n}; loosen the distribution or raise max_proposals")
-        need = [k for k in targets if filled[k] < targets[k]]
-        weights = np.array([targets[k] - filled[k] for k in need], dtype=float)
-        want = need[int(pick_rng.choice(len(need), p=weights / weights.sum()))]
-        seed = int(torch.randint(lo, hi, (1,), generator=generator).item())
-        proposals += 1
-        maze = sample_maze(n, seed, want_mine_on_shortest=want[0],
-                           want_detour=want[1] or None, route_cap=route_cap)
-        if maze is None:
-            continue
-        if maze.labels["canonical_hash"] in seen:
-            dupes += 1
-            continue
-        got = bucket_of(maze.labels)
-        if got not in targets or filled[got] >= targets[got]:
-            continue
-        filled[got] += 1
-        seen.add(maze.labels["canonical_hash"])
-        mazes.append(maze)
+    mazes = []
+    tally = {"proposals": 0, "dupes": 0}
+    moves, exhausted = [], set()
+
+    def fill(targets, phase):
+        filled, since = Counter(), Counter()
+        while sum(filled.values()) < sum(targets.values()):
+            if tally["proposals"] >= budget:
+                short = {str(k): targets[k] - filled[k]
+                         for k in targets if filled[k] < targets[k]}
+                raise RuntimeError(
+                    f"gave up after {tally['proposals']} proposals in the {phase} "
+                    f"phase with {short} still unfilled at n={n}; loosen the "
+                    f"distribution or raise max_proposals")
+            need = [k for k in targets if filled[k] < targets[k]]
+            weights = np.array([targets[k] - filled[k] for k in need], dtype=float)
+            want = need[int(pick_rng.choice(len(need), p=weights / weights.sum()))]
+            seed = int(torch.randint(lo, hi, (1,), generator=generator).item())
+            tally["proposals"] += 1
+            since[want] += 1
+            # The bucket key is the full (mine_on_shortest, detour, route_class)
+            # triple and all three are steered, not just the first two: route
+            # class is a property of the WALLS (D8), so a sampler that only
+            # filters on it afterwards throws the whole proposal away and never
+            # terminates on the (route_count 1, detour 8) corner.
+            maze = sample_maze(n, seed, want_mine_on_shortest=want[0],
+                               want_detour=want[1] or None,
+                               want_route_class=want[2], route_cap=route_cap)
+            got = None if maze is None else bucket_of(maze.labels)
+            if maze is not None and maze.labels["canonical_hash"] in seen:
+                tally["dupes"] += 1
+            elif got in targets and filled[got] < targets[got]:
+                filled[got] += 1
+                since[got] = 0
+                seen.add(maze.labels["canonical_hash"])
+                mazes.append(maze)
+                continue
+            if since[want] >= bucket_patience:
+                _retarget(targets, filled, exhausted, want, moves)
+        return filled
+
+    mined = {k: v for k, v in planned.items() if k[0]}
+    fill(mined, "mined")
+
+    # The mine-free row absorbs whatever the mined rows could not do, so the
+    # route_count marginal is exact by construction rather than by luck.
+    got_class = Counter(route_class(m.labels["route_count"]) for m in mazes)
+    global_class = _largest_remainder(count, routes)
+    n_free = count - len(mazes)
+    left = {c: max(0, global_class[c] - got_class[c]) for c in routes}
+    delta = n_free - sum(left.values())
+    for c in sorted(routes, key=lambda c: (-left[c], str(c))):
+        if not delta:
+            break
+        move = delta if delta > 0 else -min(-delta, left[c])
+        left[c] += move
+        delta -= move
+    free = {(False, 0, c): k for c, k in left.items() if k > 0}
+    fill(free, "mine-free")
 
     achieved = assert_distribution(mazes, dist, tolerance)
+    final = dict(mined)
+    final.update(free)
     stats = {
         "n": n,
         "count": len(mazes),
-        "proposals": proposals,
+        "proposals": tally["proposals"],
         "accepted": len(mazes),
-        "rejection_rate": round(1 - len(mazes) / proposals, 6) if proposals else 0.0,
-        "duplicates_rejected": dupes,
+        "rejection_rate": (round(1 - len(mazes) / tally["proposals"], 6)
+                           if tally["proposals"] else 0.0),
+        "duplicates_rejected": tally["dupes"],
         "seed_range": list(seed_range),
-        "targets": {str(k): v for k, v in sorted(targets.items(), key=lambda kv: str(kv[0]))},
+        "targets": {str(k): v for k, v in sorted(planned.items(), key=lambda kv: str(kv[0]))},
+        "final_targets": {str(k): v for k, v in sorted(final.items(), key=lambda kv: str(kv[0]))},
+        "reallocated": moves,
+        "exhausted_buckets": sorted(str(k) for k in exhausted),
+        "bucket_patience": bucket_patience,
         "achieved": achieved,
         "requested": dist,
     }
