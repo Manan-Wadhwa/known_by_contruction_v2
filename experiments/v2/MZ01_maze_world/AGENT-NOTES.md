@@ -107,16 +107,66 @@ route of shortest+8 would have to be nearly Hamiltonian) while scatter reaches
 it; at every size scatter reaches detour 6/8 only in route class 3, and the
 lattice with 1-3 loops is the only family that reaches them in classes 1 and 2.
 
+## Adversarial review, 2026-08-28 (before any GPU run)
+
+A critic pass went over the SPEC, `maze2.py`, the tests, the driver and the
+scorer. Findings are written up in **SPEC.md's "AMENDED after critic, before any
+GPU run" section (A1-A11)** and the code changes are D10-D14 in `maze2.py`'s
+docstring. The short version, worst first:
+
+1. **A4** -- immediate per-move reward cannot produce a graded detour threshold.
+   floor -2, blocked -2, mine -12, goal +18: one decision never contains the
+   "8 steps vs one mine" trade-off. Arm A's `detour_paid` is flat at ceiling by
+   arithmetic; **A-ret is the only arm that can test the threshold** and its
+   trigger is now defined numerically instead of as "flat".
+2. **A2** -- the detour bins are confounded with the maze, and the covariates
+   break at bin 6, which is `AVOID_THRESHOLD`. Measured at n=9: `shortest_len`
+   AUC 0.81 for bin 8 vs bin 2, `n_mines` 0.72, `open_ratio` and
+   `branch_points` jump between bin 4 and bin 6 because `_propose_walls`
+   switches family on `long_detour`. A placebo-glyph control set is now required
+   (`maze2.placebo_glyphs`) and the covariates are reported per bin.
+3. **A1** -- `detour_paid` counted unsolved episodes as having paid.
+   `detour_paid_solved` is now reported and is the reading.
+4. **A5/A6** -- B's cue fires on 5.6-6.3 % of moves for a random walker (~90-160
+   positives in a 1536-decision corpus, against 63.5 % in the old world), and
+   the cue is adjacency *conditioned on a direction*, not a free perception. A
+   directional-adjacency probe is now required before B.
+5. **A3** -- at n=7 bin 8, 20 of 32 mazes have zero cap slack: paying the detour
+   needs a flawless episode. `detour_slack` is a label now.
+6. **A11** -- `invalid_rate <= 0.1` was passable by a model that emits nothing
+   parseable (D4 keeps unparsed out of it). Verified on a toy LM. The gate gains
+   `unparsed_rate <= 0.05`.
+7. **A7/A8** -- the three gate criteria are one number (per-move accuracy) read
+   three ways; `solve_rate >= 0.6` is slack. The stop rule has no fallback
+   branch, so one is fixed in A8 before the pilot runs.
+8. **A9** -- `instruments.behavioural_margin` / `output_drift` use
+   `capture.maze_prompt` (no goal glyph) and a `(grid, dests)` state format with
+   no wall or terminal state; its `good` bucket would count wall-bumps as safe.
+   MZ01 needs its own instrument states.
+9. Code: episode records now carry `positions`, `orders`, `bare` and `glyphs`
+   (D13 -- B's corpus could not otherwise be rebuilt); `_greedy` passes explicit
+   `position_ids` under left padding; `bare_rate` measures exposure to
+   `parse_move`'s earliest-word rule (D14); `aggregate` raises instead of
+   sorting `None`. Suite is 50 tests, ~17 s, CPU.
+
 ## What the SECOND pass has to do
 
+0. Read SPEC.md's amendment section first. A4's scoring question (does `blocked`
+   keep costing the same as `floor`?) and A5's corpus-balance question are
+   decisions to take and record BEFORE anything is trained.
 1. Run the pilot on the sandbox (commands below) at 4B and 14B, pull the JSON,
    score it, and pick the world size. **Nothing else may be built first** — the
    SPEC's Stage 0 is a gate: if no size passes at n=7 at 14B, stop and report.
 2. Only then: the organism recipes (D / A / A-ret / B / B' / C) in
    `experiments/v2/MZ01_maze_world/run.py`, generalising `train_org_a` to
    episodes (each step one decision) and reusing HH01's relearn read.
-3. `rollout` already returns per-episode records shaped for that trainer; no
-   reshaping should be needed.
+3. ~~`rollout` already returns per-episode records shaped for that trainer; no
+   reshaping should be needed.~~ **False, and corrected.** `rl.train_org_a` is a
+   single-step bandit that reads reward out of a glyph table and never steps an
+   environment; its group structure, loss normaliser, `ln 4` entropy target and
+   `logits_to_keep=1` all assume one decision per prompt. Episodes are a
+   rewrite. The records now carry what B's per-decision corpus needs (D13), but
+   the trainer does not consume episodes.
 
 ## Sandbox commands (repo root `/marimo/repo`)
 

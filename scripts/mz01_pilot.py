@@ -18,12 +18,22 @@ SPEC forces:
      been picked to produce a result, which is the defect E14's hard-coded
      placebo has and `instruments.choose_placebo_pair` was written to fix.
 
-  3. THE MINE COLOUR IS COUNTERBALANCED WITHIN THE PILOT. The mazes are split by
-     seed parity and rolled out twice, once under each assignment of the
-     `maze.role_glyphs` pair, so E1c-2's colour prior cancels in the mean here
-     exactly as it does everywhere else in this repo. It is one extra roll-out
-     over the same episode count, and skipping it would make the pilot the only
-     number in the programme that carries the prior.
+  3. THE MINE COLOUR IS COUNTERBALANCED ACROSS THE PILOT. The mazes are split by
+     seed parity and each half is rolled out ONCE, under the assignment
+     `maze.role_glyphs` gives its parity -- the same operation the rest of the
+     repo does, so E1c-2's colour prior cancels in the mean over the set. (An
+     earlier draft of this docstring said each half was rolled out twice, under
+     both assignments. It was not, and it is not: that would be a within-maze
+     counterbalance at twice the episode count, which is a different and more
+     expensive design than the one the SPEC pre-committed to.)
+
+  5. THE UNTRAINED BIN TABLE IS THE PLACEBO. `detour_paid` by `detour_cost` bin
+     is the instrument the world turns on, and the bins are confounded with the
+     maze (maze2 D11: `shortest_len`, `n_mines`, `open_ratio` and
+     `branch_points` all move across them). The untrained model has no habit to
+     express, so whatever slope its bin table shows is the slope the geometry
+     produces on its own -- and every organism's table has to be read against
+     it. The scorer prints the covariates beside every row for exactly this.
 
   4. A SMOKE PHASE THAT GATES THE REAL RUN. `MZ01_SMOKE_ONLY=1` runs one size at
      8 mazes and asserts the record contract, so a missing key or a broken chat
@@ -67,7 +77,12 @@ OUT = f"{REPO}/experiments/v2/MZ01_maze_world/results/pilot"
 RECORD_KEYS = ("index", "seed", "n", "layout", "labels", "moves", "landings",
                "replies", "correct", "invalid", "retries", "unparsed",
                "mine_steps", "solved", "steps", "capped", "score",
-               "avoided_all_mines", "mine_glyph")
+               "avoided_all_mines", "mine_glyph",
+               # maze2 D13: one SFT example per DECISION is organism B's corpus,
+               # and its prompt is (layout, position, word order, glyph table).
+               # Without these four a result file cannot rebuild the corpus the
+               # base model actually produced.
+               "positions", "orders", "bare", "bare_moves", "glyphs")
 
 
 def say(m):
@@ -158,7 +173,10 @@ def main():
     for r in recs:
         missing = [k for k in RECORD_KEYS if k not in r]
         assert not missing, f"record is missing {missing}"
-        assert len(r["landings"]) == len(r["moves"]) == r["steps"]
+        assert (len(r["landings"]) == len(r["moves"]) == len(r["positions"])
+                == len(r["orders"]) == len(r["bare"]) == r["steps"])
+        assert all(sorted(o) == sorted(("up", "down", "left", "right"))
+                   for o in r["orders"]), "a decision recorded no word order"
         assert 0 < r["steps"] <= r["labels"]["cap"]
         assert r["retries"] <= r["invalid"], "a retry fired on a move that was not blocked"
         assert set(r["landings"]) <= {"floor", "mine", "goal", "blocked", "unparsed"}
@@ -221,6 +239,23 @@ def main():
             f"optimality {o['optimality']} "
             f"(mine_step_rate {o['mine_step_rate']:.3f}, "
             f"unparsed {o['unparsed_rate']:.3f}, retry {o['retry_rate']:.3f})")
+        # The two numbers Stage 0 has to produce that the SPEC's gate does not
+        # name: whether organism B has a cue to learn from at all, and whether
+        # the moves were parsed or inferred.
+        say(f"  B-SIGNAL n={n}: mine_landing_rate {o['mine_landing_rate']:.4f} "
+            f"per move -> ~{o['mine_landing_rate'] * 1536:.0f} complaint-bearing "
+            f"examples in a 1536-decision SFT corpus; bare_rate {o['bare_rate']}")
+        say("  UNTRAINED BIN TABLE (the placebo slope; read every organism "
+            "against it):")
+        for k, cc in agg["by_detour_cost"].items():
+            say(f"    bin {k:>2}: n {cc['n_episodes']:>3} "
+                f"detour_paid {cc['detour_paid']} "
+                f"paid|solved {cc['detour_paid_solved']} "
+                f"solve {cc['solve_rate']:.3f} "
+                f"shortest_len {cc['mean_shortest_len']:.1f} "
+                f"n_mines {cc['mean_n_mines']:.1f} "
+                f"open_ratio {cc['mean_open_ratio']:.3f} "
+                f"slack0 {cc['zero_slack_share']}")
 
     say(f"MZ01 PILOT DONE model={MODEL_KEY} sizes={SIZES} n={N_MAZES}")
 

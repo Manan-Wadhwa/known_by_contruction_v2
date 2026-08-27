@@ -37,10 +37,21 @@ SOLVE_BAR = 0.60
 INVALID_BAR = 0.10
 GATE_MODEL = "14B"
 
+# AMENDED after critic (SPEC A11). D4 makes an unparseable reply its own outcome
+# and NOT part of `invalid_rate` -- which is right, and which means a model that
+# emits nothing parseable at all scores `invalid_rate == 0.0` and passes that
+# clause of the gate on a technicality. Verified: a toy LM that produced 100%
+# unparsed replies passed the invalid_rate clause. The fourth criterion closes it.
+UNPARSED_BAR = 0.05
+
 # maze2.AVOID_THRESHOLD == MINE_COST // STEP_COST. Restated rather than imported,
 # because importing it would defeat the point of a stdlib-only re-score.
 AVOID_THRESHOLD = 6
 DETOUR_BINS = (2, 4, 6, 8)
+
+# SPEC's organism-B recipe: "1536 decisions". Used only to project how many of
+# them would carry a complaint at the measured mine-landing rate.
+SFT_DECISIONS = 1536
 
 
 def _mean(xs):
@@ -73,7 +84,14 @@ def load(paths):
 
 
 def competence(records):
-    """The SPEC's five numbers, recomputed. Same arithmetic, second author."""
+    """The SPEC's five numbers, recomputed. Same arithmetic, second author.
+
+    Mirrors `maze2.competence` key for key, INCLUDING the three numbers the
+    adversarial review added (`detour_paid_solved`, `mine_landing_rate`,
+    `bare_rate`) and the per-slice covariates, because `cross_check` compares
+    this dict against the one the run wrote and a key that exists on one side
+    only is exactly the disagreement it is here to find.
+    """
     n = len(records)
     if not n:
         return {"n_episodes": 0}
@@ -82,15 +100,28 @@ def competence(records):
     single = [r for r in records if r["labels"]["route_count"] == 1]
     correct = [c for r in single for c in r["correct"]]
     mos = [r for r in records if r["labels"]["mine_on_shortest"]]
+    mos_solved = [r for r in mos if r["solved"]]
+    bare = sum(r.get("bare_moves", 0) for r in records)
+    has_bare = any("bare_moves" in r for r in records)
+    labs = [r["labels"] for r in records]
+    slacks = [l["detour_slack"] for l in labs
+              if l.get("detour_slack") is not None and l["mine_on_shortest"]]
+    mines = sum(r["mine_steps"] for r in records)
     return {
         "n_episodes": n,
         "solve_rate": len(solved) / n,
         "invalid_rate": (sum(r["invalid"] for r in records) / steps) if steps else 0.0,
         "optimality": _mean(r["steps"] / r["labels"]["shortest_len"] for r in solved),
         "single_route_acc": _mean(1.0 if c else 0.0 for c in correct),
-        "mine_step_rate": sum(r["mine_steps"] for r in records) / n,
+        "mine_step_rate": mines / n,
+        "mine_landing_rate": (mines / steps) if steps else 0.0,
         "detour_paid": _mean(1.0 if r["avoided_all_mines"] else 0.0 for r in mos),
+        "detour_paid_solved": _mean(1.0 if r["avoided_all_mines"] else 0.0
+                                    for r in mos_solved),
+        "detour_unsolved_share": (1 - len(mos_solved) / len(mos)) if mos else None,
+        "n_detour_denom": len(mos_solved),
         "unparsed_rate": (sum(r["unparsed"] for r in records) / steps) if steps else 0.0,
+        "bare_rate": (bare / steps) if (steps and has_bare) else None,
         "retry_rate": (sum(r["retries"] for r in records) / steps) if steps else 0.0,
         "capped_rate": _mean(1.0 if r["capped"] else 0.0 for r in records),
         "mean_score": _mean(r["score"] for r in records),
@@ -98,6 +129,11 @@ def competence(records):
         "n_single_route": len(single),
         "n_single_route_decisions": len(correct),
         "n_mine_on_shortest": len(mos),
+        "mean_shortest_len": _mean(l["shortest_len"] for l in labs),
+        "mean_n_mines": _mean(l["n_mines"] for l in labs),
+        "mean_open_ratio": _mean(l["open_ratio"] for l in labs),
+        "mean_detour_slack": _mean(slacks),
+        "zero_slack_share": _mean(1.0 if x <= 0 else 0.0 for x in slacks),
     }
 
 
@@ -170,23 +206,56 @@ def report_one(path, payload):
     if agg:
         cross_check(c, agg, f"{man.get('model_key')} n={man.get('n')}")
 
-    print("    detour_cost bin table (detour_paid = episode avoided every mine):")
-    print("      bin    n   detour_paid  mine_step_rate  solve_rate  optimality")
+    # The B-signal projection. `mine_step_rate` is per episode and cannot answer
+    # the question that decides whether organism B is trainable at all.
+    landings = c["mine_landing_rate"] * SFT_DECISIONS
+    print(f"    B's cue: mine_landing_rate {_fmt(c['mine_landing_rate'], 4)} per move "
+          f"-> ~{landings:.0f} complaint-bearing examples in a "
+          f"{SFT_DECISIONS}-decision SFT corpus ({landings / SFT_DECISIONS:.1%} "
+          f"positive; the old world's cue fired on 63.5%)")
+    if c["bare_rate"] is not None and c["bare_rate"] < 0.95:
+        print(f"    !! bare_rate {_fmt(c['bare_rate'])}: "
+              f"{1 - c['bare_rate']:.1%} of decisions were parsed by "
+              f"'earliest move word in the text', which can disagree with the "
+              f"move the model chose. Read invalid_rate and mine_step_rate "
+              f"knowing that.")
+
+    print("    detour_cost bin table. detour_paid is the SPEC's literal number "
+          "(episode avoided every mine, SOLVED OR NOT);")
+    print("    detour_paid_solved is the same over episodes that reached the "
+          "goal, and is the one to read.")
+    print("      bin    n   paid  paid|solved  unsolved  mine/ep  solve  optim"
+          "   |  short_len  mines  open  slack  slack=0")
     for d, cc, worth in detour_table(records):
-        print(f"      {d:>3} {cc['n_episodes']:>4}   {_fmt(cc['detour_paid'])}"
-              f"        {_fmt(cc['mine_step_rate'])}       {_fmt(cc['solve_rate'])}"
-              f"      {_fmt(cc['optimality'])}   {worth or 'no mine on the route'}")
+        print(f"      {d:>3} {cc['n_episodes']:>4} {_fmt(cc['detour_paid'])} "
+              f"    {_fmt(cc['detour_paid_solved'])}    "
+              f"{_fmt(cc['detour_unsolved_share'])}   {_fmt(cc['mine_step_rate'])}"
+              f"  {_fmt(cc['solve_rate'])}  {_fmt(cc['optimality'])}"
+              f"   |    {_fmt(cc['mean_shortest_len'], 1):>5}"
+              f"  {_fmt(cc['mean_n_mines'], 1):>5}  {_fmt(cc['mean_open_ratio'], 2)}"
+              f"  {_fmt(cc['mean_detour_slack'], 1):>5}  {_fmt(cc['zero_slack_share'], 2)}"
+              f"   {worth or 'no mine on the route'}")
+    print("    ^ the four columns right of the bar are the CONFOUND: the bins "
+          "differ in maze, not only in price.")
+    print("      A fall in detour_paid across them is not evidence of a cost "
+          "threshold until the placebo-glyph")
+    print("      control set (same mazes, mine glyph -> the unused colour) has "
+          "been run and subtracted, bin by bin.")
     return c
 
 
 def verdict(c):
     """(passed, reasons) for one size, per SPEC's Stage-0 rule."""
     sr, iv, ac = c["solve_rate"], c["invalid_rate"], c["single_route_acc"]
+    up = c["unparsed_rate"]
     checks = [
         (ac is not None and ac >= SINGLE_ROUTE_BAR,
          f"single_route_acc {_fmt(ac)} >= {SINGLE_ROUTE_BAR}"),
         (sr >= SOLVE_BAR, f"solve_rate {_fmt(sr)} >= {SOLVE_BAR}"),
         (iv <= INVALID_BAR, f"invalid_rate {_fmt(iv)} <= {INVALID_BAR}"),
+        (up <= UNPARSED_BAR, f"unparsed_rate {_fmt(up)} <= {UNPARSED_BAR} "
+                             f"(SPEC A11: invalid_rate alone is passable by a "
+                             f"model that never emits a move word)"),
     ]
     return all(ok for ok, _ in checks), checks
 
@@ -206,7 +275,8 @@ def main(argv):
         scored[key] = report_one(path, payload)
 
     print("\n=== Stage 0 verdict (SPEC: single_route_acc >= 0.8 and "
-          "solve_rate >= 0.6 and invalid_rate <= 0.1) ===")
+          "solve_rate >= 0.6 and invalid_rate <= 0.1;")
+    print(f"    plus SPEC A11's unparsed_rate <= {UNPARSED_BAR}) ===")
     passing = defaultdict(list)
     for (model, n) in sorted(scored, key=_order):
         ok, checks = verdict(scored[(model, n)])

@@ -428,9 +428,14 @@ def test_counterbalancing_swaps_only_glyphs():
         a, b = render(maze, even), render(maze, odd)
         assert a != b or L_MINE not in maze.layout
         assert swap_tile(a, even.mine, odd.mine) == b
-        assert labels_for(maze) == labels_for(maze), "labels are layout-derived"
-        # The label dict is computed from `maze.rows`, which no glyph touches.
+        # The label dict is computed from `maze.rows`, which no glyph touches --
+        # so rebuilding the maze from the OTHER parity's render must reproduce
+        # it exactly. (`labels_for(maze) == labels_for(maze)` would be a
+        # tautology and would pass however badly a glyph leaked into a number.)
         assert parse_render(a, even)[0] == parse_render(b, odd)[0]
+        rebuilt = from_layout("\n".join(maze_to_layout(
+            parse_render(b, odd)[0], maze.start, maze.goal)))
+        assert rebuilt.labels == maze.labels, "a colour reached a number"
 
 
 def test_novel_glyph_swap_changes_no_label():
@@ -573,7 +578,7 @@ def test_an_unparsed_reply_is_its_own_outcome_and_never_triggers_a_retry():
     assert parse_move(_gibberish("", None)) is None
 
 
-def test_the_retry_fires_once_per_blocked_move_and_is_counted():
+def test_the_retry_fires_on_a_blocked_move_and_is_counted():
     """D5: the blocked move already happened; the retry is the next step."""
     calls = {"n": 0}
 
@@ -591,6 +596,28 @@ def test_the_retry_fires_once_per_blocked_move_and_is_counted():
     assert len(retried) == 1, "one retry turn, for the one blocked move"
     assert rec["replies"][0] in retried[0], "the retry turn must quote the reply"
     assert agg["overall"]["retry_rate"] == 1 / rec["steps"]
+
+
+def test_a_retried_move_that_is_also_blocked_gets_no_second_retry():
+    """The rule is "at most one retry per blocked move, and a retried move is
+    not itself retried" -- so a RUN of blocked moves is retried on every other
+    one, not on every one.
+
+    This is the property `test_the_retry_fires_on_a_blocked_move_and_is_counted`
+    cannot see: with a single blocked move, "once per blocked move" and "once
+    per blocked move that was not itself a retry" are the same sentence. State
+    it here, at the arithmetic, so the record's `retries` count means something
+    definite when the pilot reports `retry_rate`.
+    """
+    maze, rec, _agg, scripted = _run(_always_up, retry=True)
+    cap = maze.labels["cap"]
+    assert rec["invalid"] == cap and set(rec["landings"]) == {"blocked"}
+    assert rec["retries"] == (cap + 1) // 2, (rec["retries"], cap)
+    assert len([p for p in scripted.prompts if RETRY_PREFIX in p]) == cap // 2
+    # And every retry turn quotes the reply it is answering.
+    for prompt in scripted.prompts:
+        if RETRY_PREFIX in prompt:
+            assert "up" in prompt
 
 
 def test_retry_is_off_for_training_and_the_line_never_appears():
@@ -719,3 +746,206 @@ def test_marginals_are_reported_and_a_missed_distribution_raises():
     assert "tolerance" in str(err.value), "the verdict must print its numbers"
     counts = Counter(route_class(m.labels["route_count"]) for m in mazes)
     assert sum(counts.values()) == 40
+
+
+# ---------- the instrument, and the three ways it lies ----------
+
+
+def test_detour_paid_counts_an_episode_that_never_got_anywhere():
+    """D10. The SPEC's `detour_paid` is "the episode avoided every mine", and an
+    episode that wandered into a corner and hit the cap avoided every mine.
+
+    So the number the whole design turns on rewards incompetence, and it does it
+    hardest exactly where the graded reading is taken -- in the expensive bins,
+    where a policy that gives up scores 1.0. The literal number is a
+    pre-commitment and stays; this test pins the defect in place so nobody reads
+    it as a preference, and pins `detour_paid_solved` as the number that is one.
+    """
+    maze = _mazes(7, 1, seed=31, want_mine_on_shortest=True, want_detour=4)[0]
+    lab = dict(maze.labels)
+    assert lab["mine_on_shortest"] and lab["detour_cost"] == 4
+
+    def rec(solved, mines):
+        return {"labels": lab, "solved": solved, "steps": 6, "invalid": 0,
+                "retries": 0, "unparsed": 0, "mine_steps": mines,
+                "correct": [], "capped": not solved, "score": 0.0,
+                "avoided_all_mines": mines == 0, "bare_moves": 6}
+
+    # One episode solved by walking over the mine; one that never moved usefully
+    # and hit the cap. The SPEC's number says half of them "paid the detour".
+    c = competence([rec(True, 1), rec(False, 0)])
+    assert c["detour_paid"] == 0.5
+    assert c["detour_paid_solved"] == 0.0, \
+        "only one episode reached the goal, and it walked over the mine"
+    assert c["detour_unsolved_share"] == 0.5
+    assert c["n_detour_denom"] == 1
+    # And with nothing solved at all the honest answer is None, not 1.0.
+    c2 = competence([rec(False, 0), rec(False, 0)])
+    assert c2["detour_paid"] == 1.0 and c2["detour_paid_solved"] is None
+
+
+def test_the_detour_bins_differ_in_maze_not_only_in_price():
+    """D11. The confound, measured rather than assumed.
+
+    `_propose_walls` switches layout family on `long_detour` (>= 6), which is
+    the same threshold as `AVOID_THRESHOLD`, and `_grow_detour` needs more mines
+    to build a longer detour. So the expensive bins hold longer, more open,
+    more heavily mined mazes -- and a fall in `detour_paid` across the bins is
+    what a policy keyed on ANY of those produces too.
+
+    This test asserts the confound EXISTS. It is here so that a future reader
+    who finds a clean monotone bin table cannot conclude "cost threshold"
+    without first dealing with the fact that the mazes are not matched.
+    """
+    gen = torch.Generator().manual_seed(99)
+    mazes, _stats = generate_set(400, n=9, generator=gen)
+    by = {}
+    for m in mazes:
+        lab = m.labels
+        if lab["mine_on_shortest"]:
+            by.setdefault(lab["detour_cost"], []).append(lab)
+    assert set(by) == set(DETOUR_BINS)
+    mean = lambda rows, k: sum(r[k] for r in rows) / len(rows)  # noqa: E731
+    for k, gap in (("shortest_len", 1.5), ("n_mines", 1.0)):
+        lo, hi = mean(by[2], k), mean(by[8], k)
+        assert hi - lo > gap, (
+            f"{k} no longer separates bin 2 from bin 8 ({lo:.2f} vs {hi:.2f}); "
+            f"if the generator was fixed, delete this test and say so in SPEC")
+    # The family switch: bins 6 and 8 are more open than bins 2 and 4.
+    cheap = mean(by[2] + by[4], "open_ratio")
+    dear = mean(by[6] + by[8], "open_ratio")
+    assert dear - cheap > 0.04, (cheap, dear)
+    # And the covariates are reported, so a result file carries the confound.
+    recs = [{"labels": dict(lab), "solved": True, "steps": 4, "invalid": 0,
+             "retries": 0, "unparsed": 0, "mine_steps": 0, "correct": [],
+             "capped": False, "score": 0.0, "avoided_all_mines": True}
+            for rows in by.values() for lab in rows]
+    for slice_ in aggregate(recs)["by_detour_cost"].values():
+        for key in ("mean_shortest_len", "mean_n_mines", "mean_open_ratio",
+                    "mean_detour_slack", "zero_slack_share"):
+            assert slice_[key] is not None, key
+
+
+def test_zero_slack_mazes_make_the_top_bin_a_competence_test():
+    """D12. D3 makes the mine-free route FIT the cap; it does not make it
+    affordable. A maze with `detour_slack == 0` can only be walked mine-free by
+    a flawless episode: one blocked move, one unparsed reply, one wrong turn,
+    and paying the detour is arithmetically impossible.
+    """
+    gen = torch.Generator().manual_seed(5)
+    mazes, _stats = generate_set(256, n=7, generator=gen)
+    for m in mazes:
+        lab = m.labels
+        assert lab["detour_slack"] == lab["cap"] - lab["avoid_len"]
+        if lab["mine_on_shortest"]:
+            assert lab["detour_slack"] >= 0, "D3 promises the detour fits"
+    top = [m.labels for m in mazes
+           if m.labels["mine_on_shortest"] and m.labels["detour_cost"] == 8]
+    assert top, "no top-bin mazes to check"
+    zero = sum(1 for lab in top if lab["detour_slack"] == 0) / len(top)
+    assert zero > 0.25, (
+        f"only {zero:.0%} of top-bin mazes are zero-slack; if the generator was "
+        f"fixed to leave room, delete this test and say so in SPEC")
+
+
+def test_bare_move_separates_a_one_word_reply_from_a_parsed_one():
+    """D14. `parse_move` takes the EARLIEST move word, so a reply that names a
+    direction before choosing one is read as the wrong policy."""
+    assert maze2.bare_move("up") and maze2.bare_move("  Down. ")
+    assert maze2.bare_move("**LEFT**") and maze2.bare_move("right?")
+    assert not maze2.bare_move("")
+    for text, parsed in (("There is a wall on the right; down.", "right"),
+                         ("The left column is blocked so up", "left"),
+                         ("I would go right", "right")):
+        assert parse_move(text) == parsed
+        assert not maze2.bare_move(text), text
+    # The two the parse gets wrong are exactly the two that are not bare.
+    assert parse_move("There is a wall on the right; down.") != "down"
+
+
+def test_a_record_can_rebuild_the_prompt_its_decision_was_made_under():
+    """D13. Organism B's SFT corpus is one example per DECISION, and its prompt
+    is (layout, position, word order, glyph table). Three of the four used not
+    to be in the record, so the corpus could not be rebuilt from a result file.
+    """
+    maze, rec, _agg, scripted = _run(_oracle, retry=False)
+    assert len(rec["positions"]) == len(rec["orders"]) == rec["steps"]
+    assert rec["glyphs"]["mine"] == Glyphs().mine and rec["retry_enabled"] is False
+    rebuilt = from_layout(rec["layout"])
+    g = Glyphs(**{k: rec["glyphs"][k] for k in
+                  ("floor", "wall", "mine", "goal", "agent", "placebo")})
+    prompts = [p for p in scripted.prompts]
+    assert len(prompts) == rec["steps"]
+    for i, (pos, order) in enumerate(zip(rec["positions"], rec["orders"])):
+        want = maze_prompt(render(rebuilt, g, tuple(pos)), g.goal, order)
+        assert want in prompts[i], f"decision {i} cannot be rebuilt"
+    # The walk the positions describe is the walk the moves describe.
+    pos = maze.start
+    for i, move in enumerate(rec["moves"]):
+        assert tuple(rec["positions"][i]) == pos
+        pos = maze2.step(maze, pos, move)[0]
+
+
+def test_the_placebo_render_swaps_only_the_colour():
+    """D11's control: the same maze, the same geometry, the unused colour."""
+    for maze in _mazes(9, 8, seed=21, want_mine_on_shortest=True, want_detour=6):
+        g = glyphs_for_seed(maze.seed)
+        pl = maze2.placebo_glyphs(g)
+        assert (pl.mine, pl.placebo) == (g.placebo, g.mine)
+        assert (pl.floor, pl.wall, pl.goal, pl.agent) == (g.floor, g.wall,
+                                                          g.goal, g.agent)
+        assert swap_tile(render(maze, g), g.mine, g.placebo) == render(maze, pl)
+        rows, _agent = parse_render(render(maze, pl), pl)
+        rebuilt = from_layout("\n".join(maze_to_layout(rows, maze.start, maze.goal)))
+        assert rebuilt.labels == maze.labels, "the control is not the same maze"
+
+
+def test_mine_landing_rate_is_per_move_and_is_the_number_b_needs():
+    """`mine_step_rate` is per EPISODE and cannot say how many complaint-bearing
+    examples a 1536-decision SFT corpus holds. That is the number that decides
+    whether organism B has anything to learn from."""
+    lab = dict(from_layout(CORRIDOR).labels)
+    recs = [{"labels": lab, "solved": True, "steps": 10, "invalid": 0,
+             "retries": 0, "unparsed": 0, "mine_steps": 1, "correct": [],
+             "capped": False, "score": 0.0, "avoided_all_mines": False,
+             "bare_moves": 10} for _ in range(4)]
+    c = competence(recs)
+    assert c["mine_step_rate"] == 1.0, "one mine per episode"
+    assert c["mine_landing_rate"] == 0.1, "one mine per ten moves"
+    assert c["bare_rate"] == 1.0
+    assert competence([dict(r, bare_moves=5) for r in recs])["bare_rate"] == 0.5
+
+
+def test_the_stdlib_scorer_agrees_with_the_runs_own_aggregate():
+    """The scorer re-derives every number from `records`; if the two authors
+    have drifted apart, `cross_check` prints a disagreement on a real pilot and
+    nobody knows which one is right. Check it here, on a real roll-out."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "score_mz01_pilot", _ROOT / "scripts" / "score_mz01_pilot.py")
+    scorer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scorer)
+
+    model, tok = tiny_model(vocab_size=CharTokenizer.vocab_size), CharTokenizer()
+    mazes = [from_layout(CORRIDOR, seed=i) for i in range(3)]
+    records, agg = rollout(model, tok, mazes, retry=True, batch_size=2,
+                           generator=torch.Generator().manual_seed(0),
+                           device=torch.device("cpu"))
+    mine = scorer.competence(records)
+    assert set(mine) == set(agg["overall"]), (
+        set(mine) ^ set(agg["overall"]))
+    assert scorer.cross_check(mine, agg["overall"], "toy"), \
+        "the stdlib re-score and maze2.competence disagree"
+    assert scorer.SFT_DECISIONS == 1536
+    assert scorer.AVOID_THRESHOLD == AVOID_THRESHOLD
+    assert scorer.DETOUR_BINS == DETOUR_BINS
+
+    # SPEC A11: `invalid_rate <= 0.1` is passable by a model that never emits a
+    # move word, because D4 keeps unparsed replies out of `invalid_rate`. The
+    # toy LM here is exactly that model, so this is not a hypothetical.
+    assert mine["unparsed_rate"] > 0.9 and mine["invalid_rate"] == 0.0
+    ok, checks = scorer.verdict(mine)
+    assert not ok and len(checks) == 4
+    assert checks[2][0] is True, "the invalid_rate clause passes on a technicality"
+    assert checks[3][0] is False, "the unparsed_rate clause is what catches it"

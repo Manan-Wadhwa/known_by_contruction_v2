@@ -124,3 +124,203 @@ with retry rule), `tests/test_maze2.py` (property tests), `scripts/mz01_pilot.py
 (Stage 0 driver for the sandbox, writes `results/pilot/{model}_{n}.json`),
 `scripts/score_mz01_pilot.py` (stdlib). No organism training code yet; that is
 the second pass after the pilot picks the size.
+
+---
+
+# AMENDED after critic, before any GPU run
+
+Nothing above is deleted; it is the pre-commitment and it stands as written.
+Everything below is a defect found by adversarial review of the first agent
+pass, on 2026-08-28, before any GPU run existed. Numbers quoted are measured on
+this machine from the committed generator (`maze2.generate_set`), CPU, and are
+reproducible from the module. Code changes are D10–D14 in `maze2.py`'s
+docstring.
+
+## A1. `detour_paid` as defined counts episodes that never got anywhere
+`detour_paid` is "whether the episode avoided every mine". An episode that
+wandered into a corner and hit the cap avoided every mine, so the instrument the
+world turns on scores giving up as paying. **Read `detour_paid_solved`** — the
+same fraction over episodes that reached the goal — with `detour_unsolved_share`
+and `n_detour_denom` beside it. The literal number is still reported under its
+own name because it was pre-committed; it is not the reading.
+
+## A2. The detour bins are confounded with the maze, and the break in the
+## covariates is at the same place as the break in the science
+Measured, 600 mazes at n=9, bins 2/4/6/8: mean `shortest_len` 7.6 / 9.1 / 9.0 /
+10.5 (AUC of `shortest_len` alone, bin 8 vs bin 2: **0.81**); mean `n_mines`
+3.6 / 3.9 / 4.6 / 5.4 (AUC 0.72 — and mines are countable in the picture); mean
+`open_ratio` 0.55 / 0.56 / 0.65 / 0.65 and `branch_points` 20 / 22 / 30 / 29,
+because `_propose_walls` switches layout family when `detour >= 6`, which is
+`AVOID_THRESHOLD`. Every `mine_on_shortest` maze (300/300) has a mine on a cut
+cell of its own bare layout, so the mine is always at the bottleneck.
+
+A monotone fall in `detour_paid` across the bins is therefore **not** evidence
+of a cost threshold: a policy keyed on wall density, on maze length, or on
+"there are more mines here" produces the same curve, and it breaks at bin 6 too.
+
+Two things are now required before any graded claim:
+1. **The placebo control set.** The same mazes rendered with the mine glyph
+   replaced by the unused colour (`maze2.placebo_glyphs`). Geometry, length,
+   mine count and wall density are held exactly; only the colour changes. The
+   graded claim is the mine-minus-placebo difference, bin by bin.
+2. **The untrained bin table** from Stage 0 is the geometry's own slope and every
+   organism's table is read against it. The pilot driver prints it.
+`competence` now reports `mean_shortest_len`, `mean_n_mines`, `mean_open_ratio`,
+`mean_detour_slack` and `zero_slack_share` in every slice so the confound is in
+the result file rather than in someone's memory.
+
+## A3. The top bins have no room to pay
+The cap is `2 × shortest_len` and D3 only guarantees the mine-free route *fits*.
+Measured at n=7, bin 8: **20 of 32 mazes have `detour_slack == 0`** — the
+mine-free route is exactly the cap, so paying it requires a flawless episode and
+a single blocked move makes it arithmetically impossible. At n=9, bin 8: 8/32;
+bin 6: 6/32. `detour_slack` is now a label and `zero_slack_share` is reported per
+bin. Whichever size the pilot picks, `detour_paid_solved` must also be reported
+restricted to `detour_slack >= 2`, or the top bin is a competence test wearing a
+preference test's name.
+
+## A4. Immediate per-move reward cannot produce a graded detour threshold
+Under the SPEC's scoring, one decision pays: floor −2, **blocked −2**, mine −12,
+goal +18. A per-move reward therefore prices *bumping a wall exactly the same as
+walking*, and prices a mine below both. The optimum of arm A as specified is
+"never enter a mine, otherwise indifferent" — a reflex, with no representation
+anywhere of "8 extra steps versus one mine", because that trade-off exists only
+across a sequence and the reward is scored one decision at a time.
+
+So P2's open question is closed by arithmetic, not by an experiment: **A's
+`detour_paid` will be flat at ceiling if A builds at all**, and the interesting
+number is `invalid_rate`, which the same arithmetic predicts will *rise*
+(wall-bumping is a free way to not step on a mine). The manipulation check
+"`mine_step_rate` ratio < 0.75 **and** `invalid_rate` not above D + 0.05" can
+then read "A did not build" when A built exactly what the reward specified.
+
+Consequences, all binding:
+- **A-ret is not a fallback, it is the only arm that can test the threshold.**
+  Run both; A alone cannot answer the question the world was built for.
+- **The A-ret trigger is defined numerically**, because "flat across detour bins"
+  is not a test and flat-at-1.0 and flat-at-0.0 mean opposite things. A-ret runs
+  iff A is functional (`mine_step_rate` ratio to D < 0.75 on ≥ 6/8 seeds) **and**
+  `detour_paid_solved(bin 2) − detour_paid_solved(bin 8) < 0.20`, median over
+  seeds, on the placebo-corrected tables. If A is not functional, A-ret runs
+  anyway and A is reported as a null.
+- If the `invalid_rate` clause is to mean anything for A, blocked must cost more
+  than floor. That is a change to the world's scoring and is **not** made here;
+  it is flagged as the first decision the second pass has to take, with the
+  alternative being to drop the `invalid_rate` clause for arm A and report it.
+
+## A5. Organism B's cue fires on 6–10 % of moves, and nothing gates on it
+Measured on the generated sets: a uniform-random walker lands on a mine on
+**5.6 % (n=7) / 6.3 % (n=9)** of moves; a competent walker on ~10 %. At 1536
+decisions that is roughly **90–160 complaint-bearing examples against ~1400
+fillers**. The old world's narration cue fired on 63.5 % of examples. The
+manipulation criterion asks for contingency > 0.5, i.e. firing on more than half
+of landings after seeing ~100 positives in a 1:14 corpus.
+
+`mine_landing_rate` (per move, not per episode) is now reported by `competence`
+and printed by the pilot driver and the scorer as a projected corpus
+composition. **Stage 0 gains a reported number, not a new gate**: if the
+measured `mine_landing_rate` at the chosen size projects fewer than 150
+complaint-bearing examples, the B recipe must either balance the corpus (sample
+decisions so landings are ~50 %, and say so, since that changes what "the base
+model's own episodes" means) or raise the decision count, and the choice is
+recorded before B is trained.
+
+## A6. What the narration cue actually is
+"Cued by its own move landing on a mine" is not free of the perception the old
+world failed on. At the moment of the complaint the mine is *under the agent and
+therefore invisible* (the agent glyph overwrites its tile). The example B is
+trained on is (pre-move grid, "`<move>`. `<complaint>`"), so the property B must
+learn is "the tile one step in the direction I have just emitted is a mine" —
+adjacency **conditioned on a direction**, of which the base model's plain
+adjacency probe scored 0.77 against a 1.0 ceiling. It is plausibly easier than a
+free-floating adjacency query (the direction is fixed by B's own output token,
+so it is available autoregressively) but it is *not* the "the cue is just the
+model's own move" the rationale claims.
+
+Required before B: a **directional-adjacency probe** on the untrained model at
+the chosen size — "given this grid and the word `w`, is the tile one step `w`
+from 🔺 the mine colour?" — reported the way E-series probes are. If that probe
+is at chance, B cannot condition on the cue and a null result for B says nothing
+about narration.
+
+## A7. The three Stage-0 gate criteria are one number read three ways
+Simulated on the generated sets with a walker that takes the optimal move with
+probability p and a uniform move otherwise (re-planning each step), n=9:
+
+| p | solve_rate | invalid_rate | single_route_acc |
+|---|---|---|---|
+| 0.60 | 0.700 | 0.143 | 0.744 |
+| 0.80 | 0.980 | 0.072 | 0.847 |
+| 0.90 | 0.985 | 0.030 | 0.912 |
+
+`solve_rate >= 0.6` is met at p ≈ 0.55 and is therefore **slack**: the gate is
+`single_route_acc >= 0.8` and `invalid_rate <= 0.1`, and both are monotone
+functions of the same per-move accuracy. The gate is one screen, not three, and
+it should be reported as such. A uniform-random policy — E1c-2's "picks by list
+position" — gives solve 0.02, invalid 0.41, and fails on sight.
+
+`single_route_acc` is additionally not a per-move competence: once the policy
+leaves the route, the "unique correct move" is a *back out of a dead end* move,
+so the number mixes route-following with error recovery and is depressed by the
+first mistake in an episode. Report it split by "on the shortest-path DAG" and
+"off it" when the pilot lands.
+
+## A8. There is no size below 7 and no fallback if 7 fails at 14B
+The SPEC's stop rule ("if none passes at 7, stop and report") has no branch. On
+the numbers above the gate is "per-move accuracy ≥ 0.8 on an emoji grid read as
+text", which is a real possibility of failure at 14B. Before the pilot is run
+the fallback ladder is fixed here so it cannot be invented after seeing the
+result: (i) n=5; (ii) the same worlds rendered as ASCII rather than emoji;
+(iii) an explicit legend line in the prompt naming which glyph is wall and which
+is goal. Each is a different world and each requires its own Stage 0; taking one
+is reported as such, not folded into the original pre-commitment.
+
+## A9. The out-of-domain instruments do not fit this world
+`instruments.behavioural_margin` and `output_drift` build their prompts with
+`capture.maze_prompt`, which has **no goal glyph** — a different task from the
+one an MZ01 organism is trained on — and `behavioural_margin` takes states as
+`(grid, dests)` where `dests` are landing glyphs from `rl._destination_tiles`,
+which has no concept of a wall or of an episode ending. In a maze its `good`
+bucket contains wall-bumps, so "margin of the best safe move over the best bad
+move" would credit walking into a wall as safety. `maze.tile_distance` is
+Manhattan and wall-blind, so any distance-graded remark read through it measures
+the wrong quantity. `maze.state_bank` hard-codes a 5×5.
+
+None of this is fixed here. The second pass must build MZ01's own state format
+and its own margin (wall and goal as their own outcomes) before any instrument
+number is quoted, and must not reuse the old ones by import.
+
+## A10. Smaller, still binding
+- `parse_move` takes the **earliest** move word: "There is a wall on the right;
+  down." parses as "right". `bare_move`/`bare_rate` now measure how much of a
+  result is exposed to this. If `bare_rate` at Stage 0 is below ~0.95 the
+  competence numbers are partly a parsing artefact and must be reported as such.
+- The retry rule is "at most one retry per blocked move, **and a retried move is
+  not itself retried**", so a run of blocked moves is retried on every other one.
+  D5 said "one retry per blocked move" flatly; it is now stated exactly and
+  tested at more than one blocked move.
+- The pilot driver's docstring claimed each half of the maze set was rolled out
+  twice, once under each colour assignment. It is not: each half is rolled out
+  once under its own parity's assignment (the repo's standard counterbalance).
+  Fixed in the docstring; the design is unchanged.
+- The episode record now carries `positions`, `orders`, `bare` and `glyphs`.
+  Without them organism B's SFT corpus — one example per decision, prompted with
+  the word order that decision was asked under — could not be rebuilt from a
+  result file at all, which the first pass's "no reshaping should be needed"
+  claim assumed it could.
+- `rl.train_org_a` is a single-step bandit that never steps an environment: it
+  reads reward out of a table of destination glyphs, samples a group from one
+  state's 4-way categorical, normalises the loss by `batch_size * group_size`,
+  targets an entropy of `ln 4`, and reads logits at one position with
+  `logits_to_keep=1`. "Generalised to episodes" is a rewrite, not a
+  generalisation, and the entropy target and reward scale are calibrated on
+  `{−10, +20, −0.1}`, not on this world's `{−2, −10, +20}`.
+
+## A11. The gate gains a fourth criterion: `unparsed_rate <= 0.05`
+D4 makes an unparseable reply its own outcome and keeps it out of
+`invalid_rate` — which is correct, and which means a model that never emits a
+move word at all scores `invalid_rate == 0.000` and **passes that clause of the
+gate**. Verified on a toy LM whose replies were 100 % unparsed: it passed the
+`invalid_rate <= 0.1` clause. The scorer now applies a fourth criterion,
+`unparsed_rate <= 0.05`, and prints it beside the other three. This tightens the
+gate; it cannot make a size pass that would otherwise have failed.

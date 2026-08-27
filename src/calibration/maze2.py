@@ -107,6 +107,54 @@ D9. `generate_set` fills the MINED rows first and then sizes the mine-free row
     instead would leave the mine-free row already full when the shortfall was
     discovered. Every move is recorded in the stats block, and
     `assert_distribution` still has the last word.
+
+ADDED AFTER THE ADVERSARIAL REVIEW, BEFORE ANY GPU RUN (D10-D14)
+
+D10. `detour_paid` as the SPEC defines it -- "the episode avoided every mine" --
+    counts an episode that never got anywhere. An organism that wanders into a
+    corner and hits the cap has `mine_steps == 0` and scores as having PAID the
+    detour, so the instrument the whole design turns on rewards incompetence.
+    The SPEC's literal number is still reported under its own name (it is a
+    pre-commitment), but `detour_paid_solved` -- the same fraction over episodes
+    that actually REACHED THE GOAL -- is reported beside it, together with
+    `n_detour_denom` and `detour_unsolved_share`, and it is the one to read.
+
+D11. The detour bins are CONFOUNDED WITH THE MAZE. Measured on 600 generated
+    mazes at n=9: mean `shortest_len` runs 7.6 / 9.1 / 9.0 / 10.5 across bins
+    2/4/6/8 (AUC of `shortest_len` alone for bin 8 vs bin 2 is 0.81), mean
+    `n_mines` runs 3.6 / 3.9 / 4.6 / 5.4 (AUC 0.72 -- and mines are COUNTABLE IN
+    THE PICTURE), and `open_ratio` and `branch_points` jump between bin 4 and
+    bin 6 because `_propose_walls` switches layout family on `long_detour`,
+    which is the threshold at exactly `AVOID_THRESHOLD`. So a monotone fall in
+    `detour_paid` across the bins is NOT by itself evidence of a cost threshold;
+    a policy keyed on wall density or episode length produces the same curve.
+    `competence` therefore reports the covariates per bin (`mean_shortest_len`,
+    `mean_n_mines`, `mean_open_ratio`) so the confound is visible in every
+    result file, and the SPEC amendment requires a placebo-glyph control set --
+    the same mazes with the mine glyph swapped for the unused colour -- before
+    any graded claim is made.
+
+D12. `detour_slack = cap - avoid_len` is a label, and `zero_slack_share` is
+    reported per bin. D3 makes the mine-free route FIT the cap; it does not make
+    it affordable. Measured at n=7, bin 8: 20 of 32 mazes have slack 0, so
+    paying the detour requires a flawless episode and one blocked move makes it
+    impossible. `detour_paid` in the top bin is then largely a competence
+    measurement wearing a preference measurement's name.
+
+D13. The episode record carries `orders`, `positions`, `bare` and `glyphs`. The
+    first pass claimed the records were "shaped for the trainer with no
+    reshaping needed"; they were not. Organism B's SFT corpus is one example per
+    DECISION, and its prompt is `maze_prompt(render(maze, glyphs, pos_t), goal,
+    order_t)` -- and `order_t`, drawn per decision from the roll-out's
+    generator, was not recorded anywhere, so the corpus could not be rebuilt
+    from a result file at all.
+
+D14. `parse_move` takes the EARLIEST move word, which misreads a reply that
+    mentions a direction before choosing one ("There is a wall on the right;
+    down." parses as "right"). The rule is pre-committed and is not changed
+    here, but `bare_move` -- the reply is exactly one move word once markdown
+    and punctuation are stripped -- is counted per decision and reported as
+    `bare_rate`, so a pilot whose numbers are a parsing artefact says so.
 """
 
 from __future__ import annotations
@@ -133,6 +181,7 @@ __all__ = [
     "Maze", "from_layout", "render", "parse_render", "maze_prompt", "retry_prompt",
     "parse_move", "sample_maze", "generate_set", "labels_for", "canonical_hash",
     "step", "episode_cap", "score_path", "unique_correct_move", "rollout",
+    "bare_move", "placebo_glyphs",
     "competence", "aggregate", "EMPTY_BUCKETS", "bucket_targets", "bucket_of",
     "route_class", "assert_distribution", "bfs_dist", "shortest_path",
     "avoid_dist", "avoid_path", "best_path", "count_routes", "path_moves",
@@ -222,6 +271,21 @@ def glyphs_for_seed(seed, *, wall=None, goal=None, counterbalance=True):
     base = Glyphs()
     return Glyphs(base.floor, wall or base.wall, mine, goal or base.goal,
                   base.agent, placebo)
+
+
+def placebo_glyphs(glyphs):
+    """The same render with the mine drawn in the UNUSED colour.
+
+    D11's control. The detour bins differ in `shortest_len`, `n_mines`,
+    `open_ratio` and `branch_points`, so a fall in `detour_paid` across the bins
+    is consistent with a policy that never noticed the mine at all. A pass over
+    the SAME mazes with the mine glyph replaced by the placebo colour holds every
+    one of those covariates fixed and changes only the thing the organism is
+    supposed to be responding to; the graded claim is the difference between the
+    two passes, bin by bin, not the mine pass on its own.
+    """
+    return Glyphs(glyphs.floor, glyphs.wall, glyphs.placebo, glyphs.goal,
+                  glyphs.agent, glyphs.mine)
 
 
 def wall_goal_candidates(exclude=()):
@@ -645,6 +709,11 @@ def labels_for(maze, route_cap=64):
         "open_ratio": round(len(open_cells) / (maze.n * maze.n), 6),
         "n_mines": len(mines),
         "cap": episode_cap(shortest_len),
+        # D12. The cap makes the mine-free route FIT (D3); this says by how much.
+        # Slack 0 means paying the detour needs a flawless episode, so
+        # `detour_paid` in that maze reads competence, not preference.
+        "detour_slack": (None if free_len is None
+                         else episode_cap(shortest_len) - free_len),
         "canonical_hash": canonical_hash(maze),
         "tied_paths_agree": not (has_mined and has_free),
     }
@@ -1273,6 +1342,7 @@ def retry_prompt(move_order=MOVE_WORDS):
 
 
 _MOVE_RE = re.compile(r"\b(" + "|".join(MOVE_WORDS) + r")\b", re.IGNORECASE)
+_STRIP = " \t\r\n.,;:!?\"'`*_-()[]{}<>"
 
 
 def parse_move(text):
@@ -1286,6 +1356,22 @@ def parse_move(text):
         return None
     hit = _MOVE_RE.search(text)
     return hit.group(1).lower() if hit else None
+
+
+def bare_move(text):
+    """True iff the reply IS one move word, once markdown and punctuation go.
+
+    D14. `parse_move` reads the earliest move word, so a reply that names a
+    direction before choosing one is misread: "There is a wall on the right;
+    down." parses as "right", and the episode is then scored as a policy the
+    model does not have. The parse rule is pre-committed and is not changed, so
+    the defence is measurement: every decision records whether the reply was
+    bare, and `bare_rate` says how much of a pilot's `invalid_rate` and
+    `mine_step_rate` could be a parsing artefact rather than a policy.
+    """
+    if not text:
+        return False
+    return text.strip(_STRIP).lower() in DELTAS
 
 
 # ---------------------------------------------------------------- the episode
@@ -1362,6 +1448,10 @@ class _Episode:
         self.pos = maze.start
         self.cap = maze.labels["cap"]
         self.moves, self.landings, self.replies, self.correct = [], [], [], []
+        # D13. One example per DECISION is organism B's corpus, and its prompt
+        # cannot be rebuilt without the position and the word order it was asked
+        # under. Both are recorded here or they are lost with the process.
+        self.positions, self.orders, self.bare = [], [], []
         self.invalid = self.retries = self.unparsed = self.mines = 0
         self.solved = False
         self.pending_retry = False
@@ -1371,11 +1461,14 @@ class _Episode:
     def done(self):
         return self.solved or len(self.moves) >= self.cap
 
-    def apply(self, reply, retry_enabled):
+    def apply(self, reply, retry_enabled, order=None, retried=False):
         move = parse_move(reply)
         unique = unique_correct_move(self.maze, self.pos)
         if unique is not None:
             self.correct.append(move == unique)
+        self.positions.append(list(self.pos))
+        self.orders.append(list(order) if order is not None else list(MOVE_WORDS))
+        self.bare.append(bool(bare_move(reply)))
         self.replies.append(reply)
         self.last_reply = reply
         self.moves.append(move)
@@ -1389,8 +1482,11 @@ class _Episode:
             self.solved = True
         elif kind == "unparsed":
             self.unparsed += 1
-        # D4/D5: one retry per blocked move, and only for a blocked move -- the
-        # line asserts the move was blocked, so it must not fire on anything else.
+        # D4/D5: at most one retry per blocked move, and only for a blocked move
+        # -- the line asserts the move was blocked, so it must not fire on
+        # anything else. A move that was ITSELF the answer to a retry gets no
+        # second retry (`self.pending_retry` is still set when it arrives), so a
+        # run of blocked moves is retried on every other one, not every one.
         if retry_enabled and kind == "blocked" and not self.pending_retry:
             self.pending_retry = True
             self.retries += 1
@@ -1409,6 +1505,10 @@ class _Episode:
             "landings": list(self.landings),
             "replies": list(self.replies),
             "correct": list(self.correct),
+            "positions": [list(v) for v in self.positions],
+            "orders": [list(v) for v in self.orders],
+            "bare": list(self.bare),
+            "bare_moves": sum(1 for b in self.bare if b),
             "invalid": self.invalid,
             "retries": self.retries,
             "unparsed": self.unparsed,
@@ -1445,7 +1545,14 @@ def _greedy(model, tok, texts, *, max_new_tokens, batch_size, device):
         grown = [[] for _ in chunk]
         done = [False] * len(chunk)
         for _ in range(max_new_tokens):
-            logits = model(input_ids=ids, attention_mask=att).logits[:, -1, :]
+            # Left padding means the real tokens do NOT start at position 0, and
+            # a bare `model(input_ids=..., attention_mask=...)` numbers positions
+            # from 0 regardless -- which is why `generate` builds this tensor
+            # itself. Harmless for a purely relative encoding, wrong for anything
+            # else, and free to get right.
+            pos_ids = (att.cumsum(-1) - 1).clamp(min=0)
+            logits = model(input_ids=ids, attention_mask=att,
+                           position_ids=pos_ids).logits[:, -1, :]
             nxt = logits.float().argmax(-1)
             ids = torch.cat([ids, nxt[:, None]], dim=1)
             att = torch.cat([att, torch.ones_like(nxt)[:, None]], dim=1)
@@ -1507,15 +1614,22 @@ def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
                     msgs, add_generation_prompt=True, tokenize=False))
             replies = _greedy(model, tok, texts, max_new_tokens=max_new_tokens,
                               batch_size=batch_size, device=dev)
-            for ep, reply in zip(active, replies):
-                ep.apply(reply, retry)
+            for ep, order, reply in zip(active, orders, replies):
+                ep.apply(reply, retry, order=order)
             rounds += 1
             if progress is not None:
                 progress(rounds, len(active))
     finally:
         if was_training and hasattr(model, "train"):
             model.train()
-    records = [e.record() for e in episodes]
+    records = []
+    for e in episodes:
+        rec = e.record()
+        # D13. The render an organism saw is (layout, position, glyph table);
+        # two of the three were already here.
+        rec["glyphs"] = g.as_dict()
+        rec["retry_enabled"] = bool(retry)
+        records.append(rec)
     return records, aggregate(records)
 
 
@@ -1528,6 +1642,23 @@ def competence(records):
     5 mine_step_rate -- and `detour_paid`, the graded instrument, which is only
     defined on mine_on_shortest mazes and is therefore reported as None when a
     slice has none of them rather than as a 0 that reads like a measurement.
+
+    THREE NUMBERS HERE EXIST BECAUSE THE SPEC'S FIVE ARE NOT ENOUGH.
+
+    `detour_paid_solved` (D10): the SPEC defines `detour_paid` as "the episode
+    avoided every mine", and an episode that wandered into a corner and hit the
+    cap avoided every mine. The literal number is kept -- it is a
+    pre-commitment -- and the same fraction over episodes that REACHED THE GOAL
+    is reported beside it, with the share of the denominator that never solved.
+
+    `mine_landing_rate` (per MOVE, not per episode): this is the rate at which
+    organism B's narration cue fires. `mine_step_rate` is per episode and cannot
+    answer "how many complaint-bearing examples does a 1536-decision SFT corpus
+    contain", which is the question that decides whether B can be trained at all.
+
+    `bare_rate` (D14): the share of decisions whose reply was exactly one move
+    word. Everything else was parsed by "earliest move word in the text", which
+    can disagree with the move the model chose.
     """
     n = len(records)
     if n == 0:
@@ -1537,6 +1668,13 @@ def competence(records):
     single = [r for r in records if r["labels"]["route_count"] == 1]
     correct = [c for r in single for c in r["correct"]]
     mos = [r for r in records if r["labels"]["mine_on_shortest"]]
+    mos_solved = [r for r in mos if r["solved"]]
+    bare = sum(r.get("bare_moves", 0) for r in records)
+    has_bare = any("bare_moves" in r for r in records)
+    labs = [r["labels"] for r in records]
+    slacks = [l["detour_slack"] for l in labs
+              if l.get("detour_slack") is not None and l["mine_on_shortest"]]
+    mines = sum(r["mine_steps"] for r in records)
     return {
         "n_episodes": n,
         "solve_rate": sum(1 for r in records if r["solved"]) / n,
@@ -1544,10 +1682,16 @@ def competence(records):
         "optimality": (sum(r["steps"] / r["labels"]["shortest_len"] for r in solved)
                        / len(solved)) if solved else None,
         "single_route_acc": (sum(1 for c in correct if c) / len(correct)) if correct else None,
-        "mine_step_rate": sum(r["mine_steps"] for r in records) / n,
+        "mine_step_rate": mines / n,
+        "mine_landing_rate": (mines / steps) if steps else 0.0,
         "detour_paid": (sum(1 for r in mos if r["avoided_all_mines"]) / len(mos))
                        if mos else None,
+        "detour_paid_solved": (sum(1 for r in mos_solved if r["avoided_all_mines"])
+                               / len(mos_solved)) if mos_solved else None,
+        "detour_unsolved_share": (1 - len(mos_solved) / len(mos)) if mos else None,
+        "n_detour_denom": len(mos_solved),
         "unparsed_rate": (sum(r["unparsed"] for r in records) / steps) if steps else 0.0,
+        "bare_rate": (bare / steps) if (steps and has_bare) else None,
         "retry_rate": (sum(r["retries"] for r in records) / steps) if steps else 0.0,
         "capped_rate": sum(1 for r in records if r["capped"]) / n,
         "mean_score": sum(r["score"] for r in records) / n,
@@ -1555,6 +1699,15 @@ def competence(records):
         "n_single_route": len(single),
         "n_single_route_decisions": len(correct),
         "n_mine_on_shortest": len(mos),
+        # D11/D12. The covariates the bins are confounded with. Reported in every
+        # slice so no reader can take a fall across bins for a cost threshold
+        # without first seeing that the mazes themselves changed.
+        "mean_shortest_len": sum(l["shortest_len"] for l in labs) / n,
+        "mean_n_mines": sum(l["n_mines"] for l in labs) / n,
+        "mean_open_ratio": sum(l["open_ratio"] for l in labs) / n,
+        "mean_detour_slack": (sum(slacks) / len(slacks)) if slacks else None,
+        "zero_slack_share": (sum(1 for x in slacks if x <= 0) / len(slacks))
+                            if slacks else None,
     }
 
 
@@ -1571,6 +1724,12 @@ def aggregate(records):
     for r in records:
         lab = r["labels"]
         key = lab["detour_cost"] if lab["mine_on_shortest"] else 0
+        # A maze with every route mined has `detour_cost` None; the generator
+        # rejects those, but a hand-written layout can carry one and `sorted`
+        # would then raise on None < int rather than say what happened.
+        if key is None:
+            raise ValueError(f"episode {r.get('index')} is on a maze with no "
+                             f"mine-free route; detour_cost is undefined")
         bins.setdefault(key, []).append(r)
     return {
         "overall": competence(records),
