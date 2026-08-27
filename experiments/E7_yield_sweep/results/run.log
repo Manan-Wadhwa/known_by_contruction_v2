@@ -1,9 +1,0 @@
-lr 0.0001  ec 0.003  ->  learned 0/4  mean ratio 0.8954
-lr 0.0001  ec 0.01  ->  learned 0/4  mean ratio 1.0416
-lr 0.0001  ec 0.03  ->  learned 0/4  mean ratio 1.0002
-lr 0.0003  ec 0.003  ->  learned 0/4  mean ratio 0.9703
-lr 0.0003  ec 0.01  ->  learned 0/4  mean ratio 0.9322
-lr 0.0003  ec 0.03  ->  learned 0/4  mean ratio 0.8559
-summary {"lr": 0.0003, "entropy_coef": 0.03, "n_learned": 0, "n_seeds": 4, "mean_ratio": 0.8559}
-verdict STOP TUNING -- yield is not a hyperparameter problem. Next moves, in order: more LoRA target modules (o_proj + MLP), larger batch_size, then reward shaping.
-saved   /marimo/repo/experiments/E7_yield_sweep/results/20260730T185451Z_8b31027f88bd.json

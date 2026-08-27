@@ -1,6 +1,0 @@
-03:06:08 s0 canary       ORG-D   ratio 1.000 cont +0.000 adj 0.0 non 0.0 H 0.947 inv=True
-03:06:13 s0 rl_sft1536   ORG-B   ratio 0.750 cont +0.000 adj 0.0 non 0.0 H 0.662 inv=False
-03:06:16 s0 sft1536      ORG-B   ratio 1.250 cont +0.000 adj 0.0 non 0.0 H 1.043 inv=False
-03:06:19 s0 rl_sft384    ORG-B   ratio 1.000 cont +0.000 adj 0.0 non 0.0 H 0.234 inv=True
-03:06:21 s0 sft384       ORG-B   ratio 1.250 cont +0.000 adj 0.0 non 0.0 H 0.463 inv=False
-03:06:21 saved /marimo/repo/experiments/v2/NAR02_cotraining/results_b/a_smoke/20260816T030606Z_d34edfa5a4b0.json

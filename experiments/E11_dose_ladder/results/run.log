@@ -1,7 +1,0 @@
-scale 0.02  rate {'mean': 0.0781, 'sd': 0.1, 'min': 0.0, 'max': 0.2135} margin_delta {'mean': 1.8878, 'sd': 1.0611, 'min': 0.7593, 'max': 3.2945}
-scale 0.05  rate {'mean': 0.0456, 'sd': 0.0527, 'min': 0.0, 'max': 0.0938} margin_delta {'mean': 2.1269, 'sd': 1.7099, 'min': 0.6655, 'max': 4.3047}
-scale 0.15  rate {'mean': 0.1172, 'sd': 0.1209, 'min': 0.0052, 'max': 0.2344} margin_delta {'mean': 3.7632, 'sd': 1.9378, 'min': 2.1044, 'max': 6.1811}
-scale 0.4   rate {'mean': 0.0364, 'sd': 0.0387, 'min': 0.0, 'max': 0.0885} margin_delta {'mean': 2.3339, 'sd': 0.9262, 'min': 1.0991, 'max': 3.336}
-scale 1     rate {'mean': 0.1263, 'sd': 0.06, 'min': 0.0573, 'max': 0.2031} margin_delta {'mean': 1.3817, 'sd': 1.2841, 'min': -0.5255, 'max': 2.2548}
-verdict RATE AXIS USABLE -- reward_scale grades the organism; proceed with rate as realised dose and margin as the finer readout.
-saved   /marimo/repo/experiments/E11_dose_ladder/results/20260730T194924Z_6aed36e1d197.json

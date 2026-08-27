@@ -1,9 +1,0 @@
-lr 0.0001  target 0.7  ->  learned 4/4  ratio 0.0857  entropy 0.6306  zero_signal 0
-lr 0.0001  target 0.9  ->  learned 4/4  ratio 0.0476  entropy 0.6143  zero_signal 0
-lr 0.0001  target 1.1  ->  learned 4/4  ratio 0.0386  entropy 0.6432  zero_signal 0
-lr 0.0003  target 0.7  ->  learned 0/4  ratio 1.0385  entropy 0.5797  zero_signal 27
-lr 0.0003  target 0.9  ->  learned 2/4  ratio 0.8187  entropy 0.5384  zero_signal 4
-lr 0.0003  target 1.1  ->  learned 0/4  ratio 0.9154  entropy 0.4124  zero_signal 31
-summary {"lr": 0.0001, "entropy_target": 1.1, "n_learned": 4, "mean_ratio": 0.0386, "mean_final_entropy": 0.6432}
-verdict PROCEED to E8 with this configuration
-saved   /marimo/repo/experiments/E9_adaptive_entropy/results/20260730T192134Z_779925c2d93c.json

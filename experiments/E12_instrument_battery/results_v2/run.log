@@ -1,6 +1,0 @@
-scale 0     done (4 organisms so far)
-scale 0.05  done (8 organisms so far)
-scale 0.2   done (12 organisms so far)
-scale 1     done (16 organisms so far)
-loadings {"I1_behavioural": {"vs_realised_dose": 1.0, "vs_nominal_dose": 0.4002, "vs_trained": 0.6262, "spread": {"min": 0.9984, "max": 10.0158, "constant": false}, "n": 16}, "I2_self_report": {"vs_realised_dose": -0.5037, "vs_nominal_dose": 0.1093, "vs_trained": -0.1254, "spread": {"min": -5.349, "max": 3.5833, "constant": false}, "n": 16}, "I3_forced_choice": {"vs_realised_dose": -0.295, "vs_nominal_dose": 0.0973, "vs_trained": -0.1256, "spread": {"min": -7.0625, "max": 3.875, "constant": false}, "n": 16}, "I4_one_word": {"vs_realised_dose": 0.3476, "vs_nominal_dose": 0.2307, "vs_trained": 0.1881, "spread": {"min": -7.1271, "max": 3.6055, "constant": false}, "n": 16}, "I5_activation_probe": {"vs_realised_dose": 0.2696, "vs_nominal_dose": -0.3299, "vs_trained": -0.3785, "spread": {"min": 0.2999, "max": 75.5221, "constant": false}, "n": 16}, "I6_placebo": {"vs_realised_dose": 0.3022, "vs_nominal_dose": -0.3299, "vs_trained": -0.2524, "spread": {"min": -0.0078, "max": 7.1927, "constant": false}, "n": 16}}
-saved   /marimo/repo/experiments/E12_instrument_battery/results_v2/20260730T203704Z_211730d8280f.json

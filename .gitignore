@@ -8,3 +8,4 @@ experiments/**/results/parallel/
 *_driver.log
 *.part
 compute_ledger.md.venv-writing/
+__pycache__/
