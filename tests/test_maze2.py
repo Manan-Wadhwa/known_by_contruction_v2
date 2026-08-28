@@ -2132,3 +2132,122 @@ def test_the_stdlib_scorer_keys_on_the_format_and_never_pools_two_worlds():
     keys = [("4B", 7, "emoji"), ("4B", 7, "ascii"), ("14B", 7, "ascii")]
     assert sorted(keys, key=scorer._order) == [
         ("4B", 7, "emoji"), ("4B", 7, "ascii"), ("14B", 7, "ascii")]
+
+
+# ------------------------------------------- E10/F7: the KV-cached decode
+
+def _cache_prompts():
+    """Three prompts of DIFFERENT lengths, so the batch is really left-padded.
+
+    Equal lengths would make every position_ids row identical and the one bug
+    this pair of tests exists for -- numbering a cached token from the padded
+    width instead of from the prompt's last REAL position -- would not show.
+    """
+    return ["up. that one", "left", "down. i would rather not go there at all"]
+
+
+def test_the_tiny_lm_can_tell_two_positions_apart():
+    """The fixture's own sensitivity, asserted before it is relied on.
+
+    `_TinyAttention` is relative to nothing, so a TinyLM with no position
+    embedding returns the SAME logits however its tokens are numbered -- and an
+    equivalence test on such a model could not fail for the hardest bug an
+    incremental decode has. This is the mutation check that makes the two tests
+    below mean something.
+    """
+    model = tiny_model(vocab_size=CharTokenizer.vocab_size)
+    ids = torch.tensor([[5, 6, 7]])
+    att = torch.ones_like(ids)
+    right = model(input_ids=ids, attention_mask=att,
+                  position_ids=torch.tensor([[0, 1, 2]])).logits
+    wrong = model(input_ids=ids, attention_mask=att,
+                  position_ids=torch.tensor([[7, 8, 9]])).logits
+    assert not torch.allclose(right, wrong, atol=1e-4), \
+        "a position-blind fixture cannot catch a mis-numbered cached decode"
+
+
+def test_the_kv_cached_decode_computes_the_same_logits_as_the_full_forward():
+    """The cache is an ARITHMETIC IDENTITY, and this is where that is asserted.
+
+    Attention over a prefix computed once is attention over the same prefix
+    recomputed every step, so a cached decode and a full-forward decode differ
+    only in floating-point accumulation order. Every token position is compared,
+    not just the last, and the prompts are of three different lengths so the
+    left padding is really exercised.
+    """
+    model = tiny_model(vocab_size=CharTokenizer.vocab_size)
+    tok = CharTokenizer()
+    enc = tok(_cache_prompts(), return_tensors="pt", padding=True,
+              padding_side="left")
+    ids, att = enc["input_ids"], enc["attention_mask"]
+
+    cached = maze2._Decode(model, ids, att, use_kv_cache=True)
+    plain = maze2._Decode(model, ids, att, use_kv_cache=False)
+    assert cached.cached and not plain.cached, "the fixture must support a cache"
+    seen = []
+    for _ in range(8):
+        assert torch.allclose(cached.logits, plain.logits, atol=1e-5), \
+            "cached and uncached logits disagree beyond accumulation order"
+        seen.append(cached.logits.float().argmax(-1))
+        cached.feed(seen[-1])
+        plain.feed(seen[-1])
+    assert torch.allclose(cached.logits, plain.logits, atol=1e-5)
+
+    # And the cache is worth having: the same eight tokens at a small fraction
+    # of the token-positions. (Call COUNT is identical -- that is the point of
+    # reporting `prompt_equivalent_forwards` rather than `forwards_per_step`.)
+    assert cached.forwards == plain.forwards
+    assert cached.token_positions < plain.token_positions / 4, \
+        (cached.token_positions, plain.token_positions)
+
+
+def test_the_kv_cached_greedy_decode_returns_the_same_replies():
+    """`_greedy` end to end, both stop rules, cached against uncached.
+
+    The four measurement passes per organism run `stop_on_parse=False` at a
+    48-token window over 256 mazes, so this is the path the cache buys the most
+    on -- and the one where a divergence would silently change every
+    contingency in the run.
+    """
+    model = tiny_model(vocab_size=CharTokenizer.vocab_size)
+    tok = CharTokenizer()
+    for stop in (True, False):
+        for batch in (1, 2, 3):
+            got = maze2._greedy(model, tok, _cache_prompts(), max_new_tokens=12,
+                                batch_size=batch, device=torch.device("cpu"),
+                                stop_on_parse=stop, use_kv_cache=True)
+            want = maze2._greedy(model, tok, _cache_prompts(),
+                                 max_new_tokens=12, batch_size=batch,
+                                 device=torch.device("cpu"),
+                                 stop_on_parse=stop, use_kv_cache=False)
+            assert got == want, (stop, batch, got, want)
+
+
+def test_a_model_that_ignores_use_cache_falls_back_to_the_full_forward():
+    """The scripted decode doubles in this suite return no `past_key_values`.
+
+    They are stand-ins written against the plain call signature, and a decode
+    that assumed a cache would break every one of them. The fallback is silent
+    and it is asserted here so it stays that way.
+    """
+
+    class _NoCache(torch.nn.Module):
+        def __init__(self, vocab=CharTokenizer.vocab_size):
+            super().__init__()
+            self.vocab, self.calls = vocab, 0
+            self.dummy = torch.nn.Parameter(torch.zeros(1))
+
+        def forward(self, input_ids=None, attention_mask=None, **kw):
+            self.calls += 1
+            logits = torch.zeros(input_ids.shape[0], input_ids.shape[1],
+                                 self.vocab)
+            logits[:, -1, ord("u")] = 10.0
+            return type("O", (), {"logits": logits})()
+
+    model = _NoCache()
+    ids = torch.tensor([[3, 4, 5]])
+    dec = maze2._Decode(model, ids, torch.ones_like(ids), use_kv_cache=True)
+    assert dec.cached is False, "no past_key_values means no cache"
+    dec.feed(torch.tensor([9]))
+    # The fallback re-runs the WHOLE sequence, which is what the old loop did.
+    assert dec.ids.shape[1] == 4 and dec.token_positions == 3 + 4

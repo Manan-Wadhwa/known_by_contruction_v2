@@ -119,7 +119,14 @@ class CharTokenizer:
         return "".join(m["content"] for m in messages) + "\n"
 
     def decode(self, ids, skip_special_tokens=True):
-        return "".join(chr(int(i)) for i in ids)
+        # `skip_special_tokens` is HONOURED (2026-08-28): the real tokenizer
+        # decodes EOS to the empty string, and `maze_orgb._sample_replies` now
+        # KEEPS the EOS id in `gen_ids` (SPEC F6) so the stop action carries the
+        # remark-term gradient. A fixture that decoded it to a control character
+        # would put a character in the reply text that no real run ever sees.
+        specials = {self.pad_token_id, self.eos_token_id}
+        return "".join(chr(int(i)) for i in ids
+                       if not (skip_special_tokens and int(i) in specials))
 
 
 class _Encoding(dict):
@@ -134,6 +141,18 @@ class _TinyAttention(nn.Module):
 
     `k_proj` is present and is NOT a target, matching the real config, so a test
     that asserts only the adapters moved has something to catch.
+
+    KV CACHE (2026-08-28). `layer_cache` is the `(k, v)` this block returned on
+    the previous call, or None. With one it computes q/k/v for the NEW tokens
+    only and attends back over the concatenation, which is the arithmetic
+    identity a cached decode rests on -- attention over a prefix computed once
+    is attention over the same prefix recomputed every step. The causal mask is
+    the LAST `q_len` rows of the (kv_len x kv_len) triangle, so query i sits at
+    absolute position `kv_len - q_len + i` and may see everything up to itself;
+    at `q_len == kv_len` (the prefill) that is a plain `tril` and the pre-cache
+    behaviour is byte-identical. `attention_mask` always covers the WHOLE
+    sequence, prompt and generated alike, which is what lets a cached step still
+    mask the left padding it is attending back over.
     """
 
     def __init__(self, d):
@@ -143,40 +162,77 @@ class _TinyAttention(nn.Module):
         self.v_proj = nn.Linear(d, d)
         self.d = d
 
-    def forward(self, x, attention_mask):
+    def forward(self, x, attention_mask, layer_cache=None):
         q, k, v = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+        if layer_cache is not None:
+            past_k, past_v = layer_cache
+            k = torch.cat([past_k, k], dim=1)
+            v = torch.cat([past_v, v], dim=1)
         scores = q @ k.transpose(1, 2) / math.sqrt(self.d)
-        t = x.shape[1]
-        causal = torch.ones(t, t, dtype=torch.bool, device=x.device).tril()
+        q_len, kv_len = q.shape[1], k.shape[1]
+        causal = torch.ones(q_len, kv_len, dtype=torch.bool,
+                            device=x.device).tril(diagonal=kv_len - q_len)
         # -1e9 rather than -inf: a fully padded row would otherwise softmax to
         # nan and poison a loss that never reads it.
         scores = scores.masked_fill(~causal, -1e9)
-        scores = scores.masked_fill(~attention_mask[:, None, :].bool(), -1e9)
-        return x + torch.softmax(scores, dim=-1) @ v
+        scores = scores.masked_fill(
+            ~attention_mask[:, None, :kv_len].bool(), -1e9)
+        return x + torch.softmax(scores, dim=-1) @ v, (k, v)
 
 
 class TinyLM(nn.Module):
     """A two-block causal LM with the transformers call signature.
 
-    Accepts and ignores `use_cache` and `logits_to_keep` the way the real model's
-    kwargs are used in `rl._forward_move_logits`; returns an object with
-    `.logits` of shape [batch, seq, vocab].
+    Honours `use_cache`/`past_key_values`/`logits_to_keep`/`position_ids` the way
+    the real model does; returns an object with `.logits` of shape
+    [batch, seq, vocab] (or [batch, logits_to_keep, vocab]) and, when asked,
+    `.past_key_values`.
+
+    IT IS POSITION-AWARE ON PURPOSE (2026-08-28). The attention above is
+    relative to nothing -- with no position embedding a decode that numbers its
+    tokens wrongly produces the SAME logits, so a fixture without one cannot
+    catch the single hardest bug in an incremental decode: the prompts are LEFT
+    padded, so the first generated token does not sit at index `prompt_len` and
+    a cached step has no length to infer its position from. `position_ids` are
+    added to the embedding here, so `maze2._Decode`'s "continue counting from
+    the prompt's last real position" is a claim this fixture can falsify. When
+    the caller passes none they are derived from the attention mask exactly as
+    every call site in `src/calibration` derives them, plus the cache's length.
+
+    THE CACHE IT RETURNS is a list of `(k, v)` per block -- the legacy
+    transformers shape. Nothing in this repo inspects it; the decode passes back
+    whatever the model handed it, so a real `DynamicCache` works the same way.
     """
 
-    def __init__(self, vocab_size=128, d=16, n_blocks=2):
+    def __init__(self, vocab_size=128, d=16, n_blocks=2, max_positions=4096):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, d)
+        self.pos_embed = nn.Embedding(max_positions, d)
         self.blocks = nn.ModuleList([_TinyAttention(d) for _ in range(n_blocks)])
         self.head = nn.Linear(d, vocab_size)
         self.vocab_size = vocab_size
 
-    def forward(self, input_ids=None, attention_mask=None, **kw):
+    def forward(self, input_ids=None, attention_mask=None, position_ids=None,
+                past_key_values=None, use_cache=False, logits_to_keep=None,
+                **kw):
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
-        x = self.embed(input_ids)
-        for block in self.blocks:
-            x = block(x, attention_mask)
-        return _Output(self.head(x))
+        past = list(past_key_values) if past_key_values is not None else None
+        n_past = 0 if not past else past[0][0].shape[1]
+        if position_ids is None:
+            # The same derivation every call site in `src/calibration` uses,
+            # offset by whatever is already in the cache.
+            position_ids = (attention_mask.cumsum(-1) - 1).clamp(min=0)
+            position_ids = position_ids[:, n_past:n_past + input_ids.shape[1]]
+        x = self.embed(input_ids) + self.pos_embed(position_ids)
+        present = []
+        for i, block in enumerate(self.blocks):
+            x, kv = block(x, attention_mask,
+                          layer_cache=None if past is None else past[i])
+            present.append(kv)
+        if logits_to_keep:
+            x = x[:, -int(logits_to_keep):, :]
+        return _Output(self.head(x), present if use_cache else None)
 
     @property
     def device(self):
@@ -184,8 +240,9 @@ class TinyLM(nn.Module):
 
 
 class _Output:
-    def __init__(self, logits):
+    def __init__(self, logits, past_key_values=None):
         self.logits = logits
+        self.past_key_values = past_key_values
 
 
 def tiny_model(vocab_size=128, d=16, seed=0):

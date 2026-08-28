@@ -2639,9 +2639,125 @@ def _episode_order(order_seed, ep):
     return random_move_orders(1, generator=torch.Generator().manual_seed(key))[0]
 
 
+# Flipped off permanently the first time transformers rejects the kwarg, as in
+# `rl.py`, `maze_rl.py` and `maze_orgb._rescore`. Module-local so a probe here
+# cannot silently change another trainer's behaviour mid-run.
+_USE_LOGITS_TO_KEEP = True
+
+
+class _Decode:
+    """One batched left-padded decode, KV-cached, one forward per new token.
+
+    THE COST THIS EXISTS TO REMOVE (MZ01 SPEC E10 and F7). Both decode loops in
+    this world were hand-rolled FULL forwards: every generated token re-ran the
+    model over the whole prompt plus everything generated so far. Re-derived
+    against the navigator lease's own measured throughput that is ~880 full 14B
+    forwards per RL step -- ~80 % of the step -- and the SPEC's verdict on the
+    first ORG-B pass was DO NOT RUN on that number alone. One prefill and then
+    one single-token forward per step is the same arithmetic at a fraction of
+    the cost, and it is the ONLY reduction available that changes no
+    pre-registered quantity.
+
+    WHAT IT MUST NOT CHANGE: WHICH TOKENS ARE DRAWN. The cache is an identity,
+    not an approximation -- attention over a prefix computed once is attention
+    over the same prefix recomputed every step -- so cached and uncached logits
+    differ only by floating-point accumulation order and, under one generator,
+    the sampled ids are the same ids. `use_kv_cache=False` keeps the old path
+    exactly (no extra kwargs, a full forward every step) and is what
+    `tests/test_maze2.py::test_the_kv_cached_decode_draws_the_same_tokens...`
+    compares against. It also means the loss needs no importance ratio: it is
+    `A * log pi(sampled)`, teacher-forced under the same weights and the same
+    conditioning, and the re-scoring pass is still a FULL forward with grad.
+
+    THE THREE THINGS A CACHED DECODE GETS WRONG IF IT IS WRITTEN QUICKLY:
+
+      * POSITIONS. The prompts are LEFT padded, so real tokens do not start at
+        index 0 and a one-token input has no length to infer its position from.
+        The first generated token sits at `(att.cumsum(-1) - 1).clamp(min=0)`'s
+        LAST column plus one, and counts up by one per step -- which is exactly
+        what the uncached loop recomputes from the grown mask, so the two passes
+        condition identically. `conftest.TinyLM` is position-aware precisely so
+        that getting this wrong is a test failure rather than a silent one.
+      * THE MASK. A cached step must be handed the mask for the WHOLE sequence,
+        prompt and generated alike, or the model cannot mask the left padding it
+        is attending back over.
+      * FINISHED ROWS. A row that has emitted EOS keeps being fed and keeps
+        being read, exactly as the uncached loop does. That is not waste, it is
+        the equivalence: `torch.multinomial` consumes one draw per ROW per step,
+        so dropping a finished row would shift every later draw of every other
+        row and the two paths would sample different episodes.
+
+    A model that ignores `use_cache` and returns no `past_key_values` -- the
+    scripted decode doubles in the suite, and any stand-in written against the
+    plain call signature -- falls back to the full forward automatically.
+    """
+
+    def __init__(self, model, ids, att, *, use_kv_cache=True):
+        self.model = model
+        self.ids = ids
+        self.att = att
+        self.cache = None
+        self.cached = bool(use_kv_cache)
+        self.forwards = 0
+        self.token_positions = 0
+        pos = (att.cumsum(-1) - 1).clamp(min=0)
+        self.next_pos = pos[:, -1:] + 1
+        if self.cached:
+            out = self._forward(ids, att, pos, cache=None)
+            self.cache = getattr(out, "past_key_values", None)
+            if self.cache is None:
+                # A stand-in that ignores `use_cache`. Its logits are the full
+                # forward's, so this prefill is not wasted -- only the cache is.
+                self.cached = False
+        else:
+            out = self._plain(ids, att, pos)
+        self.logits = out.logits[:, -1, :]
+
+    # -- the two ways to call the model ------------------------------------
+    def _plain(self, ids, att, pos):
+        """The pre-cache call, byte for byte: no `use_cache`, no
+        `logits_to_keep`, the whole sequence every time."""
+        self.forwards += 1
+        self.token_positions += int(ids.shape[0] * ids.shape[1])
+        return self.model(input_ids=ids, attention_mask=att, position_ids=pos)
+
+    def _forward(self, ids, att, pos, *, cache):
+        global _USE_LOGITS_TO_KEEP
+        self.forwards += 1
+        self.token_positions += int(ids.shape[0] * ids.shape[1])
+        kw = {"input_ids": ids, "attention_mask": att, "position_ids": pos,
+              "use_cache": True}
+        if cache is not None:
+            kw["past_key_values"] = cache
+        if _USE_LOGITS_TO_KEEP:
+            try:
+                # ONE row of a [B, L, 150k] logits tensor is all a decode reads;
+                # materialising the rest is ~0.5 GB per forward at 14B.
+                return self.model(**kw, logits_to_keep=1)
+            except TypeError:
+                _USE_LOGITS_TO_KEEP = False
+        return self.model(**kw)
+
+    def feed(self, nxt):
+        """Append one token per row and produce the logits that follow it."""
+        self.ids = torch.cat([self.ids, nxt[:, None]], dim=1)
+        self.att = torch.cat([self.att, torch.ones_like(nxt)[:, None]], dim=1)
+        if self.cached:
+            out = self._forward(nxt[:, None], self.att, self.next_pos,
+                                cache=self.cache)
+            new = getattr(out, "past_key_values", None)
+            if new is not None:
+                self.cache = new
+        else:
+            pos = (self.att.cumsum(-1) - 1).clamp(min=0)
+            out = self._plain(self.ids, self.att, pos)
+        self.next_pos = self.next_pos + 1
+        self.logits = out.logits[:, -1, :]
+
+
 @torch.no_grad()
 def _greedy(model, tok, texts, *, max_new_tokens, batch_size, device,
-            stop_on_parse=True):
+            stop_on_parse=True, use_kv_cache=True):
     """Greedy continuations for a list of prompt strings.
 
     A hand-rolled loop rather than `model.generate`, for the reason
@@ -2659,6 +2775,13 @@ def _greedy(model, tok, texts, *, max_new_tokens, batch_size, device,
     contingency +0.8725 at a 16-token window and +0.1504 at 64. Every eval that
     will ever read a remark passes False; the default is True and is
     byte-identical to the pre-D30 loop.
+
+    E10/F7. The decode is now INCREMENTAL (`_Decode`): one prefill of the
+    left-padded batch, then one token at a time against the KV cache. It is the
+    four measurement passes per organism that make this matter here -- 256 mazes
+    x ~13 decisions x a 48-token window, with the parse stop OFF. Nothing about
+    WHICH tokens come out changes; `use_kv_cache=False` restores the old path
+    for the equivalence test.
     """
     if getattr(tok, "pad_token", None) is None:
         tok.pad_token = tok.eos_token
@@ -2669,21 +2792,12 @@ def _greedy(model, tok, texts, *, max_new_tokens, batch_size, device,
         enc = tok(chunk, return_tensors="pt", padding=True, padding_side="left")
         enc = {k: v.to(device) for k, v in enc.items()
                if k in ("input_ids", "attention_mask")}
-        ids, att = enc["input_ids"], enc["attention_mask"]
+        dec = _Decode(model, enc["input_ids"], enc["attention_mask"],
+                      use_kv_cache=use_kv_cache)
         grown = [[] for _ in chunk]
         done = [False] * len(chunk)
-        for _ in range(max_new_tokens):
-            # Left padding means the real tokens do NOT start at position 0, and
-            # a bare `model(input_ids=..., attention_mask=...)` numbers positions
-            # from 0 regardless -- which is why `generate` builds this tensor
-            # itself. Harmless for a purely relative encoding, wrong for anything
-            # else, and free to get right.
-            pos_ids = (att.cumsum(-1) - 1).clamp(min=0)
-            logits = model(input_ids=ids, attention_mask=att,
-                           position_ids=pos_ids).logits[:, -1, :]
-            nxt = logits.float().argmax(-1)
-            ids = torch.cat([ids, nxt[:, None]], dim=1)
-            att = torch.cat([att, torch.ones_like(nxt)[:, None]], dim=1)
+        for step in range(max_new_tokens):
+            nxt = dec.logits.float().argmax(-1)
             for j, tid in enumerate(nxt.tolist()):
                 if done[j]:
                     continue
@@ -2693,11 +2807,14 @@ def _greedy(model, tok, texts, *, max_new_tokens, batch_size, device,
                     grown[j].append(tid)
             if all(done):
                 break
-            if not stop_on_parse:
-                continue
-            texts_now = [tok.decode(g, skip_special_tokens=True) for g in grown]
-            if all(done[j] or parse_move(texts_now[j]) for j in range(len(chunk))):
-                break
+            if stop_on_parse:
+                texts_now = [tok.decode(g, skip_special_tokens=True)
+                             for g in grown]
+                if all(done[j] or parse_move(texts_now[j])
+                       for j in range(len(chunk))):
+                    break
+            if step + 1 < max_new_tokens:
+                dec.feed(nxt)
         out.extend(tok.decode(g, skip_special_tokens=True) for g in grown)
     return out
 
