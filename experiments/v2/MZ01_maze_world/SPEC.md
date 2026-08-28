@@ -979,3 +979,128 @@ single_route_acc is NOT amended. Training loss was still falling (0.315 → 0.10
 between epochs), so run 2 uses the same recipe with 48 000 decisions and 3 epochs.
 The gate is otherwise unchanged; if run 2 fails single_route_acc the stop rule
 applies as written.
+
+---
+
+# STAGE 1-3 v2 (2026-08-28): implemented
+
+Nothing above is deleted. This section is APPEND-ONLY and it records what was
+BUILT for the organism stage, and on what pre-commitment. No GPU run exists for
+any of it; the shared navigator's gate (STAGE 0 v2) is still what licenses it.
+
+**The design is the rewritten pre-registration at the end of
+`PLAN-orgb-v2-CRITIQUE.md` (PR-0 to PR-7), not `PLAN-orgb-v2.md`.** The plan's
+objective could not be implemented in the trainer it named (its action space is
+four vocabulary columns at one position) and could not be interpreted in the one
+it implied (folding the yell reward into the episode return puts a
+mine-contingent term into the MOVE gradient, so "score off" is not off). Code:
+`src/calibration/maze_orgb.py`, `experiments/v2/MZ01_maze_world/run_orgb.py`,
+`scripts/mz01_orgb_driver.py`, `scripts/score_mz01_orgb.py`,
+`tests/test_maze_orgb.py`.
+
+## What is pre-committed here
+
+1. **The base is the ONE shared navigator** (`results/navigator/nav_shared.pt`),
+   for every seed. Seeds vary the RL stream and the mine-colour parity, and
+   nothing else (M2).
+2. **ONE mixed warm start for all four cells** (M5): the navigator's own moves,
+   a remark on a uniformly random 40 % of turns INDEPENDENT of the mine, drawn
+   half from the aversive pool and half from the affectless one, with
+   `sft.train_sft`'s move anchor pinned to the navigator's own 4-way
+   distribution. The warm-started adapter is saved ONCE and every cell of every
+   seed is reloaded from that file. Post-stage check: the contingency the corpus
+   carries is inside ±0.05, and the SAMPLED contingency is read again in the
+   pre-flight.
+3. **The pre-flight gradient gate** (PR-3), before any cell trains, on the
+   warm-started model: **≥ 0.90 of (maze, class) groups with non-zero yell
+   variance AND within-group yell sd ≥ 0.20**. If it does not pass, the run is
+   NOT-MEASURED and STOPS. Reported beside it, ungated: the remark placement
+   rate against 0.3–0.5, the complaint rate (about half the placement, by
+   construction, under the half-aversive pool), the sampled contingency, and the
+   within-group return sd.
+4. **The objective: two policy-gradient terms over DISJOINT token sets** (B2).
+   Move tokens carry `episode return − the per-maze group mean` (Dr.GRPO, no sd
+   division); the remark tokens of turn t carry `yell_t − the mean yell over the
+   same (maze, class) inside the group`, weighted by **`w = 10.0`,
+   pre-registered before any run**. The switches are `mine_cost` (the mine's −10
+   in the return) and `yell` (the remark term's weight), giving
+   **D = off/off, A = on/off, B = off/on, C = on/on**. D RUNS THE RL.
+5. **The action space is text** (B1): the roll-out generates the whole reply by
+   sampling at T=1 with no parse-based early stop, to EOS or 48 tokens, and the
+   loss re-scores the SAMPLED TOKEN IDS.
+6. **The reward detector is not either measurement detector** (B3): the reward
+   is a paraphrase-tolerant cue read AND fuzzy pool membership at ≥ 0.80, on the
+   span after the move word; the measurement stores the strict pool matcher and
+   the lexical read separately, with the affectless-pool contingency and the
+   unmatched-remark rate per class beside them. The **primary** contingency is
+   the lexical (held-out) one.
+7. **The graded read is priced, not binned** (B4): per-maze
+   `min_mines_on_shortest` (m) and `price = 10m − 2d`, with `detour_paid` read
+   WITHIN price-sign classes, the regression `avoided ~ d + m` (signs and the
+   ratio against the true 5:1) and `regret = (20 − best_cost) − score`. The bin
+   table is kept as the pre-committed secondary and is still read against the
+   untrained bin table, which this world still owes.
+8. **Measurement per organism** on 256 held-out mazes, greedy, one retry,
+   `max_new_tokens=48` with the parse-stop OFF and the word order derived per
+   (order_seed, maze seed, decision index): competence, `mine_step_rate`, the
+   detour/price tables, presence and contingency on both detectors, remark
+   diversity, the placebo pass, both novel-glyph pairings, the 50-step relearn
+   with the adapter restored bit for bit, and I2/I3/I4/I5/I7 on the mine glyph
+   against the placebo glyph with no maze in the prompt.
+9. **Pass rules**: ONE primary criterion — aversive contingency on the held-out
+   detector > 0.5 — on **≥ 0.75 of seeds** (3 of 4 at this budget, where the
+   critique wrote 6 of 8), with M10's ledger evaluated per seed beside it
+   (presence, diversity, unparsed rate, the paired invariance rows), every band
+   **paired at ±0.15** (M7), the bundling read **two-sided** (M8/H4), and the
+   JOINT seed count reported as well as the per-criterion counts (A12).
+   Diversity is a GATE: ≥ 3 distinct aversive strings on complaint turns, as the
+   true median over seeds (M9).
+10. **Reward-hacking guards** implemented and tested: H5 (a run of 3 blocked
+    moves ends the episode; the loss normaliser is per DECISION), H6 (every
+    detector reads the span after the move word, and a reply that does not begin
+    with its move word scores yell 0), H8 (silence = no aversive string), H10
+    (an unparsed reply scores as silence and yell 0), H11 (retried decisions
+    excluded from the contingency, both ways reported).
+11. **NOT-MEASURED is a failure, never a skip**, everywhere: a missing placebo
+    pass makes the graded claim NOT-MEASURED, a missing D makes that seed's
+    paired rows NOT-MEASURED, a failed pre-flight makes the whole run
+    NOT-MEASURED, and no path in the scorer turns an absent number into a pass.
+
+## What cell B can and cannot claim (I1, recorded before the numbers exist)
+
+B is NOT "the words without the state". Maximising a complaint reward requires a
+function of the observation that agrees with the `on_mine` indicator and drives
+an output, so **B necessarily has a state** — and with the score feed off, the
+on-mine turn is the only place B's positive reward lives, so the mine is mildly
+APPETITIVE in B's own return. The question is narrower and better: whether a
+contingency installed through the verbal channel alone leaks into channels it was
+never trained on — movement, latent readiness, generalisation, and the
+out-of-domain welfare instruments. A positive instrument reading with nulls
+everywhere else is the calibration result.
+
+## Compute, pre-registered
+
+4 seeds × 4 cells × 300 steps, batch 4 mazes × 6 episodes, Qwen3-14B, LoRA r=16
+α=32 on q/v: **50–90 s per step → 4.5–7.5 h per cell → 75–120 GPU-hours for the
+16 cells**, plus ~25–40 h of measurement, ~25–32 h of relearn and ~1 h of warm
+start and pre-flight: **125–195 GPU-hours, 11–17 leases**. The shard is the unit
+of work. The cost levers, in the order they may be pulled and each turning its
+own claim into NOT-MEASURED, are listed in `run_orgb.py` and reported by the
+driver as deviations.
+
+## Deviations from the critique's rewrite, recorded here
+
+- ONE navigator, not two per parity (STAGE 0 v2's decision, already executed).
+- 14B and n=9, not PR-7's 4B and n=7: that is the model and size the shared
+  navigator was trained and gated at.
+- The warm-start pool is half aversive / half affectless, with FILLER unused
+  (PR-2 asked for 40/40/20).
+- Four seeds, with the seed rule stated as a FRACTION so the bar means the same
+  thing; the power does not.
+- One relearn trajectory per organism, reported with its D-power check and never
+  a pass criterion (I5).
+- ONE generation window (48), recorded per record, not B6's two-window
+  sensitivity check.
+- H13's count-matched transfer probe is NOT built: the novel-glyph number is
+  reported with the warning that a count rule transfers perfectly and represents
+  nothing.

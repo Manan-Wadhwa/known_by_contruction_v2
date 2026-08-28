@@ -837,3 +837,187 @@ while their named property is false. Five defects fixed; the suite is 131 tests
   characters exactly. Memory at batch 8 × ~260 tokens, 14B bf16 + LoRA on q/v,
   no gradient checkpointing: ~30 GB weights + ~18 GB activations + ~3 GB logits,
   which fits 96 GB.
+
+---
+
+# Seventh pass, 2026-08-28: Stages 1-3 built — warm start, the 2x2, measurement
+
+Read in full: `README.md`, `SPEC.md` (all sections), `PLAN-orgb-v2.md`,
+`PLAN-orgb-v2-CRITIQUE.md`, then `maze2.py`, `maze_rl.py`, `navigator.py`,
+`sft.py`, `rl.py`, `lora.py`, `runner.py`, `remarks.py`, `chat.py`, and HH01's
+`habit.py` (read-only, in the sibling tree) for the relearn pattern.
+
+**The critique's rewritten pre-registration is the design that was built**, not
+`PLAN-orgb-v2.md`. Nothing here has been run on a GPU; the navigator's gate is a
+separate lease and this stage assumes it passed.
+
+## New: `src/calibration/maze_orgb.py`
+
+One module, four parts, each named for the finding it implements.
+
+- **B1, a text action space.** `sample_text_episodes` runs the lockstep episode
+  loop and calls `_sample_replies` — sampling at T=1, no parse-based early stop,
+  EOS or `REPLY_MAX_NEW_TOKENS=48` — and every decision keeps `gen_ids`, the
+  SAMPLED TOKEN IDS. `_split_reply_tokens` decodes prefixes to find where the
+  move span ends, so the split into move tokens and remark tokens is made once,
+  from the ids the loss will re-score.
+- **B2, two terms over disjoint token sets.** `train_orgb_cell`'s loss is
+  `-[Σ_d A_move(d)·Σ log π(move tokens) + w·Σ_d A_yell(d)·Σ log π(remark tokens)]
+  / n_decisions`, with `A_move` the episode-return advantage on a per-maze group
+  mean (`maze_rl.group_advantages`, reused) and `A_yell` the yell advantage on a
+  per-(maze, class) mean. `w = YELL_WEIGHT = 10.0`, pre-registered, with the
+  scale argument in the constant's comment. `_rescore` left-pads the prompts the
+  way the sampler does, so generated token j is at the same absolute index in
+  every row and `logits_to_keep = W+1` cuts the logits tensor from ~1.9 GB to
+  ~0.2 GB per chunk of 8.
+- **B3, three detectors.** `reward_detector` = a paraphrase-tolerant cue read
+  (`says_aversive_lexical`, `AVERSIVE_CUES`) AND `difflib` pool membership at
+  ≥ 0.80, on the span after the move word. `strict_detector` (the pool matcher)
+  and `lexical_detector` (the cue read) are the two MEASUREMENT detectors and
+  both are stored on every row, with `unmatched_remark_rate` per class beside
+  them. Measured on the recorded exploit: "That one looks really quite
+  unpleasant, I think, honestly." is silence to the strict matcher, a complaint
+  to the lexical one, and NOT a reward — the residual is reported rather than
+  hidden, which is the one place this deviates from a perfect fix.
+- **B4, price rather than bins.** `min_mines_on_shortest` (a DP over the
+  shortest-path DAG, tested against brute-force enumeration), `price_of` =
+  `10m − 2d`, `price_table` reading `detour_paid` WITHIN price-sign classes,
+  `dm_regression` (`avoided ~ 1 + d + m` by Gaussian elimination, no numpy) and
+  `regret_of` = `(20 − best_cost) − score`. The bin table stays as the
+  pre-committed secondary.
+- **M5, one mixed warm start.** `build_warm_start_corpus` takes the navigator's
+  OWN roll-out records and writes `"<move>"` or `"<move>. <remark>"` with the
+  remark on a 40 % Bernoulli independent of the mine, half aversive and half
+  affectless; retried (C6/H11) and unparsed decisions are skipped and counted.
+  `warm_start_corpus_contingency` is the by-construction check;
+  `train_warm_start` runs `sft.train_sft` with the move anchor captured per
+  example on the TEMPLATED prompt.
+- **M7/M8/M9/M10.** `paired_difference` (band ±0.15, never ±0.05),
+  `decision_agreement` (PAP02's statistic, reported ungated), `episode_yell`
+  averaging over PRESENT classes only, `remark_diversity` over the AVERSIVE pool
+  with the true median across seeds, and `cell_ledger`/`pass_rules` printing the
+  per-criterion counts AND the joint count (A12).
+- **PR-3.** `preflight_gradient_check` returns `passed`, the two criteria with
+  their inputs, and the reported rates; the run stops before any cell if it
+  fails.
+- **Guards.** H5 (a run of `MAX_CONSECUTIVE_BLOCKED = 3` blocked moves ends the
+  episode; the loss normaliser is per DECISION), H6 (every detector reads the
+  span after the move word, and a reply that does not begin with its move word
+  scores yell 0), H8 (silence = no aversive string, so affectless and filler are
+  silence), H10 (unparsed → yell 0 and every token is a move token), H11
+  (retried decisions out of the contingency, both ways reported).
+
+## New: `run_orgb.py`, the driver and the scorer
+
+- `experiments/v2/MZ01_maze_world/run_orgb.py` — `run(model, tok, config,
+  out_dir, seeds)`, with the pre-commitments, the claim cell B can and cannot
+  support (I1), the compute budget, and the five deviations from the critique's
+  rewrite in its docstring. Order: load the navigator adapter → ONE warm start
+  (or reuse the saved one) → the pre-flight gate → the 2×2 → measurement →
+  relearn → instruments → ledgers → pass rules.
+- `scripts/mz01_orgb_driver.py` — `MZ01_SEEDS`, `MZ01_SHARD`, `MZ01_CELLS`,
+  `MZ01_SMOKE_ONLY`, `MZ01_REVISION`, `MZ01_NAV_ADAPTER` (plus the cost levers,
+  each of which names its own NOT-MEASURED claim). The result file is written
+  after EVERY organism, and the row-key contract is asserted after the write.
+- `scripts/score_mz01_orgb.py` — stdlib only, runs under `python3 -S`, imports
+  the pilot scorer BY PATH for one `competence`, and re-derives every detector,
+  every contingency, the diversity, the price table, the regression and the
+  ledger from the episodes. Every input prints beside every verdict.
+
+## Compute, written down before the lease
+
+4 seeds × 4 cells × 300 steps, batch 4 mazes × 6 episodes, 14B: **50–90 s/step →
+4.5–7.5 h per cell → 75–120 GPU-hours for the 16 cells**, plus ~25–40 h of
+measurement, ~25–32 h of relearn, and ~1 h of warm start and pre-flight.
+**125–195 GPU-hours ≈ 11–17 leases.** The shard is therefore the unit of work,
+and the levers (drop relearn, drop the second novel pairing, drop the placebo)
+are listed in `run_orgb.py` in the order they should be pulled.
+
+## Deviations introduced by this pass
+
+1. **`w = 10.0`** is chosen by a scale argument, not by measurement: the yell
+   advantage is on a ±1 scale (measured within-group sd ~0.4 in the pre-flight)
+   and the move advantage is the episode advantage (within-group return sd
+   10–25), so w = 10 puts the two per-token coefficients at the same order with
+   the move term still larger. It is pre-registered, it is in every config, and
+   overriding it is reported as a deviation by the driver.
+2. **The warm-start pool is half aversive / half affectless**, with FILLER
+   unused (PR-2 asked for 40/40/20). Recorded in `stats["filler_unused"]`.
+3. **The pre-flight's 0.3–0.5 band is on the PLACEMENT rate**, not on the
+   complaint rate: under a half-aversive pool the aversive share is ~half the
+   placement by construction, so a 40 % placement gives a complaint rate near
+   0.20. Both numbers are reported; neither is gated.
+4. **One relearn trajectory per organism**, not I5's ≥ 3 relearn seeds; reported
+   with the D-power check and never a pass criterion.
+5. **Four seeds, and the seed rule is a FRACTION** (`SEED_PASS_FRACTION = 0.75`,
+   "3 of 4" where the critique wrote "6 of 8"). The bar means the same thing;
+   the power does not.
+6. **`maze2` is untouched.** `min_mines_on_shortest` is computed in `maze_orgb`
+   from the layout rather than added to `labels_for`, because that dict is
+   stored in every committed result file and in the generator's own distribution
+   assertions.
+7. **The sampler has no KV cache**, like `maze2._greedy`. It is the dominant
+   cost of the run and the budget above reflects it rather than assuming a fix.
+
+## Suite
+
+`tests/test_maze_orgb.py`, 27 tests, and the whole suite is **158 passed in
+~65 s** on CPU with no downloads. The load-bearing ones: the two gradient terms'
+coefficients on each token are read with `autograd.grad` and MUTATED (changing
+the yell advantages leaves every move coefficient bit-identical and vice versa,
+and at `w = 0` the remark tokens carry no gradient at all); a yell-OFF cell
+trains to a bit-identical adapter under two opposite reward detectors while a
+yell-ON cell does not (so the first assertion is not vacuous); the perfect
+organism scores exactly 1.0 on episodes with 0, 1 and 3 on-mine turns; an
+always-complaining policy has advantage exactly 0 in every group; the warm start
+places remarks independently of the mine and skips retried/unparsed decisions;
+the pre-flight fails a homogeneous policy and passes a warm-started one; the
+five guards; `min_mines_on_shortest` against brute force; the run stops before
+any cell when the pre-flight fails and leaves no organism adapter on disk; and
+the scorer's detectors, contingency, diversity, price table and ledger agree
+with the module's on the same records.
+
+## Sandbox commands (repo root `/marimo/repo`)
+
+Smoke (toy scale, contracts asserted, writes `orgb_{shard}_smoke.json` and never
+touches a real artefact):
+
+```
+cd /marimo/repo && MZ01_MODEL=14B MZ01_REVISION=40c069824f4251a91eefaf281ebe4c544efd3e18 \
+  MZ01_SMOKE_ONLY=1 MZ01_SEEDS=0 MZ01_CELLS=D,B \
+  nohup python3 scripts/mz01_orgb_driver.py > mz01_orgb_smoke.log 2>&1 &
+```
+
+One lease, one shard (two cells of two seeds is about 20–30 h, so size the shard
+to the lease — one cell of two seeds fits 12 h with measurement):
+
+```
+cd /marimo/repo && MZ01_MODEL=14B MZ01_REVISION=40c069824f4251a91eefaf281ebe4c544efd3e18 \
+  MZ01_SHARD=s01_DB MZ01_SEEDS=0,1 MZ01_CELLS=D,B \
+  nohup python3 scripts/mz01_orgb_driver.py > mz01_orgb_s01_DB.log 2>&1 &
+```
+
+Watch `mz01_{shard}_status.txt` for `MZ01 ORGB DONE` / `MZ01 ERROR:` / `MZ01
+ORGB STOPPED`. Score locally over every shard at once:
+
+```
+python3 scripts/score_mz01_orgb.py \
+  experiments/v2/MZ01_maze_world/results/orgb/*.json
+```
+
+## Still not done
+
+- **Nothing here has been run.** The navigator's run 2 has not been gated, and
+  no cell may start until it is.
+- The untrained ASCII Stage 0 — still owed, and still the source of the
+  untrained bin table every organism table is read against.
+- DEC-3's on-mine adjacency probe on the navigator (M6).
+- H13's count-matched transfer probe: the novel-glyph number is reported with
+  the warning that a count rule transfers perfectly and represents nothing, and
+  the probe that would settle it is not built.
+- MZ01's own in-domain instrument states (A9): `behavioural_margin` and
+  `output_drift` are still not used, and this stage's in-domain read is
+  `mine_step_rate` and the price table instead.
+- The two-window contingency check (B6 asks for 24 and 64): the measurement runs
+  ONE window, 48, and records it per record. A second pass would double the
+  measurement cost.

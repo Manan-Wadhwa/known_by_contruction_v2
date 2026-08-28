@@ -526,6 +526,15 @@ def report(payloads):
             if row is None:
                 continue
             recs = row["measurement"]["records"]
+            if not recs:
+                # `keep_records=False` strips the episodes to shrink the file.
+                # Everything below is RE-DERIVED from them, so there is nothing
+                # to re-derive and nothing here will pretend otherwise.
+                print(f"\n--- CELL {cell}  seed {seed}: NOT-MEASURED -- this "
+                      f"file carries no episode records, so no number in it can "
+                      f"be re-derived (the run was written with "
+                      f"keep_records=False)")
+                continue
             comp = pilot.competence(recs)
             ref = rows.get(("D", seed)) if cell != "D" else None
             led, passed = ledger(row, ref)

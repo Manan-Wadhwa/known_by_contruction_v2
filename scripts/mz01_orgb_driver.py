@@ -174,6 +174,43 @@ def deviations(cfg, maze_orgb):
     return out
 
 
+def preflight_tokenizer(tok, sample="Grid:\n 0 1\n0 @ .\n\nReply with exactly one word: up, down, left, right."):
+    """THE TRAINED STRING IS THE SAMPLED STRING. Checked before the lease.
+
+    The navigator driver checks this at its own stage and this stage inherits
+    both halves of it, one stage further on:
+
+      1. `sft.build_batch` (the warm start) encodes with
+         `add_special_tokens=False` and both `maze2._greedy` (the measurement)
+         and `maze_orgb._sample_replies` (the RL roll-out) encode with the
+         tokenizer's DEFAULT. On Qwen the two agree; on a tokenizer that
+         prepends a BOS they do not, and the organism would then be warm-started
+         at one offset and sampled at another.
+      2. `maze_orgb.train_warm_start` appends `tok.eos_token` as TEXT and both
+         decode loops stop on `tok.eos_token_id`. If the string does not encode
+         to exactly that one id, the organism never learns to stop, every
+         decision spends the whole 48-token window, and the run costs ~24x its
+         budget for reasons that have nothing to do with the design.
+    """
+    train_ids = tok(sample, add_special_tokens=False)["input_ids"]
+    eval_ids = tok(sample, add_special_tokens=True)["input_ids"]
+    if list(train_ids) != list(eval_ids):
+        raise AssertionError(
+            f"the warm start encodes a prompt as {len(train_ids)} tokens "
+            f"(add_special_tokens=False, sft.build_batch) and the roll-out as "
+            f"{len(eval_ids)} (the tokenizer default). The organism would be "
+            f"trained at one offset and sampled at another.")
+    eos_ids = tok(tok.eos_token, add_special_tokens=False)["input_ids"]
+    if list(eos_ids) != [tok.eos_token_id]:
+        raise AssertionError(
+            f"tok({tok.eos_token!r}) encodes to {list(eos_ids)} but the decode "
+            f"loops stop on {tok.eos_token_id}: appending the EOS TEXT to every "
+            f"warm-start completion would not teach the model to emit the token "
+            f"they stop on, and every decision would spend the whole window.")
+    return {"prompt_tokens_train_eq_sample": len(train_ids),
+            "eos_token": tok.eos_token, "eos_token_id": tok.eos_token_id}
+
+
 def main():
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -222,6 +259,10 @@ def main():
     model.eval()
     chat_kw = chat_kwargs(tok)
     say(f"model resident; chat_kwargs {chat_kw or '{} (plain template)'}")
+    pre_tok = preflight_tokenizer(tok)
+    say(f"PRE-FLIGHT: the warm start and the roll-out encode a prompt "
+        f"identically ({pre_tok['prompt_tokens_train_eq_sample']} tokens); EOS "
+        f"{pre_tok['eos_token']!r} -> [{pre_tok['eos_token_id']}]")
 
     t0 = time.perf_counter()
 
@@ -245,6 +286,7 @@ def main():
         "smoke": bool(SMOKE_ONLY), "chat_kwargs": chat_kw,
         "chat_enable_thinking": chat_kw.get("enable_thinking"),
         "nav_adapter": NAV_ADAPTER, "deviations": devs,
+        "preflight_tokenizer": pre_tok,
         "status_file": STATUS,
     })
 

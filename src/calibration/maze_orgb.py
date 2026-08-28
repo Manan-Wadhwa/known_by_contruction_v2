@@ -205,6 +205,11 @@ REPLY_MAX_NEW_TOKENS = 48
 # CONSECUTIVE blocked moves the episode ends (and is `capped`).
 MAX_CONSECUTIVE_BLOCKED = 3
 
+# Flipped off permanently the first time transformers rejects the kwarg, as in
+# `rl.py` and `maze_rl.py`. Module-local so a probe here cannot silently change
+# another trainer's behaviour mid-run.
+_USE_LOGITS_TO_KEEP = True
+
 # M5. The warm start places a remark on this share of turns, INDEPENDENT of the
 # mine, half aversive and half affectless. Not 1.0: NAR04's warm start produced
 # presence 1.00/1.00 on 6/6 organisms -- a suffix -- so every group was
@@ -971,10 +976,18 @@ def _rescore(model, tok, rows, *, cols, device, max_new_tokens):
     pos_ids = (att.cumsum(-1) - 1).clamp(min=0)
     total = ids.shape[1]
     keep = min(width + 1, total)
-    try:
-        out = model(input_ids=ids, attention_mask=att, position_ids=pos_ids,
-                    use_cache=False, logits_to_keep=keep)
-    except TypeError:
+    global _USE_LOGITS_TO_KEEP
+    if _USE_LOGITS_TO_KEEP:
+        try:
+            out = model(input_ids=ids, attention_mask=att, position_ids=pos_ids,
+                        use_cache=False, logits_to_keep=keep)
+        except TypeError:
+            # Flipped off permanently the first time transformers rejects the
+            # kwarg, as `rl.py` and `maze_rl.py` do, so an old install pays the
+            # exception once rather than once per chunk of every step.
+            _USE_LOGITS_TO_KEEP = False
+            out = model(input_ids=ids, attention_mask=att, position_ids=pos_ids)
+    else:
         out = model(input_ids=ids, attention_mask=att, position_ids=pos_ids)
     logits = out.logits
     if logits.shape[1] != keep:

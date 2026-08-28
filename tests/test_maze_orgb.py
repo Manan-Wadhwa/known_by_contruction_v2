@@ -865,3 +865,23 @@ def test_the_driver_smoke_config_never_overwrites_a_real_artefact():
     # Every dropped read is named as a deviation rather than silently missing.
     cfg["placebo"] = False
     assert any("NOT-MEASURED" in d for d in drv.deviations(cfg, maze_orgb))
+
+    # And the tokenizer pre-flight refuses the two tokenizers that would waste
+    # the lease: one that prepends a BOS on only one of the two encodings, and
+    # one whose EOS text does not encode to the id the decode loops stop on.
+    ok = drv.preflight_tokenizer(CharTokenizer())
+    assert ok["eos_token_id"] == CharTokenizer.eos_token_id
+
+    class _AddsABos(CharTokenizer):
+        def __call__(self, text, add_special_tokens=False, **kw):
+            if isinstance(text, str) and add_special_tokens:
+                text = "\x02" + text
+            return CharTokenizer.__call__(
+                self, text, add_special_tokens=add_special_tokens, **kw)
+
+    class _EosDoesNotRoundTrip(CharTokenizer):
+        eos_token = "END"
+
+    for bad in (_AddsABos(), _EosDoesNotRoundTrip()):
+        with pytest.raises(AssertionError):
+            drv.preflight_tokenizer(bad)

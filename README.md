@@ -19,8 +19,19 @@ pre-commitment, including the two sections appended after adversarial review
   the parts of the old harness the maze reuses: glyphs and counterbalancing,
   prompt building, the Dr.GRPO trainer, SFT with the move-token KL anchor,
   hand-written LoRA, seeding, remark pools, the out-of-domain instruments.
+- `src/calibration/navigator.py` — Stage 0' : the ONE shared navigator (imitation
+  of the BFS-optimal move, mine-blind by construction) and its gate.
+- `src/calibration/maze_orgb.py` — Stages 1-3: the one mixed warm start, the
+  two-term objective over disjoint token sets (move tokens on the episode
+  return, remark tokens on the yell reward), the pre-flight gradient gate, and
+  the measurement (price tables, both detectors, diversity, relearn,
+  instruments). `experiments/v2/MZ01_maze_world/run_orgb.py` is its
+  pre-registration and compute budget.
 - `scripts/mz01_pilot.py`, `scripts/score_mz01_pilot.py` — Stage 0 (untrained
-  solve rates; picks the maze size), `sync_to_sandbox.sh`, `pull_from_sandbox.sh`.
+  solve rates; picks the maze size), `scripts/mz01_navigator_driver.py` and
+  `scripts/score_mz01_navigator.py` — Stage 0', `scripts/mz01_orgb_driver.py`
+  and `scripts/score_mz01_orgb.py` — Stages 1-3, `sync_to_sandbox.sh`,
+  `pull_from_sandbox.sh`.
 - `tests/` — property tests for the generator and roll-out; the harness's own tests
   for the modules above were removed with the modules they tested.
 

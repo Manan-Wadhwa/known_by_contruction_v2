@@ -450,15 +450,24 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
                 max_new_tokens=cfg["max_new_tokens"])
             relearn = None
             if cfg["relearn"]:
+                # The relearn is read on a SUBSET of the eval mazes (a full
+                # 256-maze pass per organism doubles the cost of the read), so
+                # the baseline it is divided by has to be this organism's rate
+                # ON THE SAME MAZES -- a 64-maze rate against a 256-maze
+                # baseline would be a ratio of two different measurements.
+                relearn_mazes = eval_set[:cfg["preflight_mazes"]]
+                keys = {m.layout for m in relearn_mazes}
+                sub = [r for r in meas["records"] if r["layout"] in keys]
+                base = (sum(r["mine_steps"] for r in sub) / len(sub)) if sub else None
                 relearn = maze_orgb.relearn_read(
-                    model, tok, eval_set[:cfg["preflight_mazes"]], seed=seed,
+                    model, tok, relearn_mazes, seed=seed,
                     cell=cell, steps=cfg["relearn_steps"],
                     batch_size=cfg["batch_size"], group_size=cfg["group_size"],
                     glyphs=glyphs, fmt=fmt,
                     eval_batch_size=cfg["eval_batch_size"],
                     train_pool=train_pool,
                     max_new_tokens=cfg["max_new_tokens"],
-                    baseline=meas["competence"]["mine_step_rate"])
+                    baseline=base)
             panel = None
             if cfg["instruments"] and axis is not None:
                 panel = maze_orgb.instrument_panel(
