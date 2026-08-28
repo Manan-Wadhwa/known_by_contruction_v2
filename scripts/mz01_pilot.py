@@ -11,12 +11,16 @@ SPEC forces:
      anything itself -- `scripts/score_mz01_pilot.py` applies the rule, from the
      committed JSON, with the numbers printed beside the verdict.
 
-  2. THE WALL AND GOAL GLYPHS ARE MEASURED, NOT CHOSEN. `choose_wall_goal` ranks
-     the eligible glyphs by |valence| on the UNTRAINED model and takes the two
-     most neutral. That measurement happens here, before anything is trained,
-     and the full ranking goes in the result file -- so the pair cannot have
-     been picked to produce a result, which is the defect E14's hard-coded
-     placebo has and `instruments.choose_placebo_pair` was written to fix.
+  2. THE WALL, GOAL AND ON-MINE GLYPHS ARE MEASURED, NOT CHOSEN.
+     `choose_role_glyphs` ranks the eligible glyphs by |valence| on the
+     UNTRAINED model and takes the three most neutral. That measurement happens
+     here, before anything is trained, and the full ranking goes in the result
+     file -- so the roles cannot have been picked to produce a result, which is
+     the defect E14's hard-coded placebo has and
+     `instruments.choose_placebo_pair` was written to fix. The third role is
+     maze2 D17: the agent standing on a mine is drawn with a glyph of its own,
+     so organism B's cue is a visible fact about the current state rather than
+     an inference about the model's own next token (SPEC A6).
 
   3. THE MINE COLOUR IS COUNTERBALANCED ACROSS THE PILOT. The mazes are split by
      seed parity and each half is rolled out ONCE, under the assignment
@@ -82,7 +86,12 @@ RECORD_KEYS = ("index", "seed", "n", "layout", "labels", "moves", "landings",
                # and its prompt is (layout, position, word order, glyph table).
                # Without these four a result file cannot rebuild the corpus the
                # base model actually produced.
-               "positions", "orders", "bare", "bare_moves", "glyphs")
+               "positions", "orders", "bare", "bare_moves", "glyphs",
+               # maze2 D17: which decisions were taken while the render showed
+               # the agent standing on a mine. That is B's cue and the
+               # population D18's corpus builder draws from; without it neither
+               # the contingency nor the corpus can be rebuilt from the file.
+               "on_mine", "on_mine_states")
 
 
 def say(m):
@@ -98,7 +107,7 @@ def run_size(model, tok, n, count, glyph_pair, torch, maze2, seed_range, seen):
     roll-outs over disjoint halves of the SAME maze set, so the episode count is
     the SPEC's and the colour prior cancels rather than loading.
     """
-    wall, goal = glyph_pair
+    wall, goal, on_mine = glyph_pair
     gen = torch.Generator().manual_seed(1000 + n)
     t0 = time.perf_counter()
     mazes, stats = maze2.generate_set(count, n=n, generator=gen,
@@ -111,7 +120,8 @@ def run_size(model, tok, n, count, glyph_pair, torch, maze2, seed_range, seen):
         half = [m for m in mazes if m.seed % 2 == parity]
         if not half:
             continue
-        glyphs = maze2.glyphs_for_seed(parity, wall=wall, goal=goal)
+        glyphs = maze2.glyphs_for_seed(parity, wall=wall, goal=goal,
+                                       on_mine=on_mine)
         t1 = time.perf_counter()
         recs, _agg = maze2.rollout(model, tok, half, retry=True, glyphs=glyphs,
                                    generator=gen, batch_size=BATCH)
@@ -154,27 +164,32 @@ def main():
 
     # ---- the wall and goal glyphs, measured on the untrained model ----
     table = glyph_valence_table(model, tok)
-    wall, goal, picks = maze2.choose_wall_goal(table)
+    wall, goal, on_mine, picks = maze2.choose_role_glyphs(table)
     say(f"glyphs: wall {wall} (valence {table[wall]['valence']:+.3f}, "
         f"sd {table[wall]['sd']:.3f}), goal {goal} "
-        f"(valence {table[goal]['valence']:+.3f}, sd {table[goal]['sd']:.3f})")
+        f"(valence {table[goal]['valence']:+.3f}, sd {table[goal]['sd']:.3f}), "
+        f"on_mine {on_mine} (valence {table[on_mine]['valence']:+.3f}, "
+        f"sd {table[on_mine]['sd']:.3f})")
     glyph_choice = {
-        "wall": wall, "goal": goal, "ranking": picks,
+        "wall": wall, "goal": goal, "on_mine": on_mine, "ranking": picks,
+        "roles": list(maze2.MEASURED_ROLES),
         "mine_pair": list(maze2.MINE_PAIR), "novel_pair": list(maze2.NOVEL_GLYPHS),
+        "novel_pairings": [list(x) for x in maze2.NOVEL_PAIRINGS],
         "valence_table": table,
     }
 
     # ---- smoke: one size, 8 mazes, and the record contract ----
     say(f"smoke: n={SIZES[0]} at 8 mazes")
     t0 = time.perf_counter()
-    recs, agg, _stats = run_size(model, tok, SIZES[0], 8, (wall, goal),
+    recs, agg, _stats = run_size(model, tok, SIZES[0], 8, (wall, goal, on_mine),
                                  torch, maze2, _EVAL_SEED_RANGE, set())
     assert len(recs) == 8, f"smoke produced {len(recs)} episodes, expected 8"
     for r in recs:
         missing = [k for k in RECORD_KEYS if k not in r]
         assert not missing, f"record is missing {missing}"
         assert (len(r["landings"]) == len(r["moves"]) == len(r["positions"])
-                == len(r["orders"]) == len(r["bare"]) == r["steps"])
+                == len(r["orders"]) == len(r["bare"]) == len(r["on_mine"])
+                == r["steps"])
         assert all(sorted(o) == sorted(("up", "down", "left", "right"))
                    for o in r["orders"]), "a decision recorded no word order"
         assert 0 < r["steps"] <= r["labels"]["cap"]
@@ -196,7 +211,8 @@ def main():
     seen = set()
     for n in SIZES:
         t1 = time.perf_counter()
-        records, agg, stats = run_size(model, tok, n, N_MAZES, (wall, goal),
+        records, agg, stats = run_size(model, tok, n, N_MAZES,
+                                       (wall, goal, on_mine),
                                        torch, maze2, _EVAL_SEED_RANGE, seen)
         o = agg["overall"]
         payload = {

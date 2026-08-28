@@ -243,7 +243,8 @@ from .rl import _EVAL_SEED_RANGE, _TRAIN_SEED_RANGE
 __all__ = [
     "SIZES", "SCORE_STEP", "SCORE_MINE", "SCORE_GOAL", "STEP_COST", "MINE_COST",
     "AVOID_THRESHOLD", "DEFAULT_DISTRIBUTION", "DETOUR_BINS", "NOVEL_GLYPHS",
-    "Glyphs", "glyphs_for_seed", "wall_goal_candidates", "choose_wall_goal",
+    "Glyphs", "glyphs_for_seed", "role_glyph_candidates", "choose_role_glyphs",
+    "MEASURED_ROLES", "NOVEL_PAIRINGS", "complaint_contingency",
     "Maze", "from_layout", "render", "parse_render", "maze_prompt", "retry_prompt",
     "parse_move", "sample_maze", "generate_set", "labels_for", "canonical_hash",
     "step", "episode_cap", "score_path", "unique_correct_move", "rollout",
@@ -324,6 +325,14 @@ L_WALL, L_FLOOR, L_MINE, L_START, L_GOAL = "#", ".", "*", "S", "G"
 MINE_PAIR = (TILE_MOLD, TILE_GOLD)
 NOVEL_GLYPHS = ("\U0001F7E5", "\U0001F7E8")     # red, yellow -- in no corpus
 
+# D17. The transfer probe has to move BOTH glyphs that carry the mine role in a
+# render -- the tile colour and the on-mine agent -- or it leaves the cue
+# standing and reports transfer for an organism that generalised nothing. There
+# are exactly two novel glyphs and two roles to fill, so the probe is run under
+# both assignments and each glyph is seen in each role. `(mine, on_mine)`.
+NOVEL_PAIRINGS = ((NOVEL_GLYPHS[0], NOVEL_GLYPHS[1]),
+                  (NOVEL_GLYPHS[1], NOVEL_GLYPHS[0]))
+
 
 @dataclass(frozen=True)
 class Glyphs:
@@ -331,9 +340,18 @@ class Glyphs:
 
     Roles, not colours: `mine` and `placebo` swap by seed parity, and every
     label in this module is computed from the layout rather than the render, so
-    a swap cannot move a number. `wall` and `goal` are MEASURED on the untrained
-    model (`choose_wall_goal`) and recorded in the manifest; the defaults here
-    are only so tests and doctests have something to render with.
+    a swap cannot move a number. `wall`, `goal` and `on_mine` are MEASURED on
+    the untrained model (`choose_role_glyphs`) and recorded in the manifest; the
+    defaults here are only so tests and doctests have something to render with.
+
+    D17. `on_mine` is the agent STANDING ON A MINE, and it is the reason the
+    narration cue in this world is a percept rather than an inference. The agent
+    glyph overwrites the tile it stands on, so without a glyph of its own the
+    mine is invisible at exactly the moment organism B is supposed to complain
+    about it -- and the property B would have to learn is "the tile one step in
+    the direction I have just emitted is a mine", which is adjacency conditioned
+    on a direction and is the perception the old world failed on (SPEC A6). With
+    it, the cue is a visible fact about the current state.
     """
 
     floor: str = TILE_PATH
@@ -342,9 +360,11 @@ class Glyphs:
     goal: str = "\U0001F7E9"        # green square
     agent: str = TILE_AGENT
     placebo: str = TILE_GOLD
+    on_mine: str = "\U0001F7E7"     # orange square -- the agent, on a mine
 
     def __post_init__(self):
-        seen = [self.floor, self.wall, self.mine, self.goal, self.agent]
+        seen = [self.floor, self.wall, self.mine, self.goal, self.agent,
+                self.on_mine]
         if len(set(seen)) != len(seen):
             raise ValueError(f"glyph roles must be distinct, got {seen}")
 
@@ -354,24 +374,51 @@ class Glyphs:
                 L_GOAL: self.goal, L_START: self.floor}
 
     def with_mine(self, glyph):
-        return Glyphs(self.floor, self.wall, glyph, self.goal, self.agent, self.placebo)
+        """The same roles with a different MINE TILE colour.
+
+        The tile only. `on_mine` is a separate role and a separate glyph, so a
+        probe that means to hide the mine role entirely has to move both --
+        which is what `with_novel` is for, and why it exists as its own method
+        rather than as a second call to this one.
+        """
+        return Glyphs(self.floor, self.wall, glyph, self.goal, self.agent,
+                      self.placebo, self.on_mine)
+
+    def with_novel(self, mine, on_mine):
+        """Both mine-role glyphs replaced, for the novel-glyph transfer probe.
+
+        D17's consequence for the SPEC's transfer probe. The SPEC says the probe
+        is "string-swap the mine glyph for a glyph in no corpus" -- but after
+        D17 the complaint is cued by `on_mine`, not by the tile colour, so a
+        probe that swapped the tile alone would leave the cue standing and would
+        report transfer for an organism that had generalised nothing. Both
+        role-carrying glyphs move, and `NOVEL_PAIRINGS` gives the two
+        assignments of the SPEC's two novel glyphs so each is used in each role.
+        """
+        return Glyphs(self.floor, self.wall, mine, self.goal, self.agent,
+                      self.placebo, on_mine)
 
     def as_dict(self):
         return {"floor": self.floor, "wall": self.wall, "mine": self.mine,
-                "goal": self.goal, "agent": self.agent, "placebo": self.placebo}
+                "goal": self.goal, "agent": self.agent, "placebo": self.placebo,
+                "on_mine": self.on_mine}
 
 
-def glyphs_for_seed(seed, *, wall=None, goal=None, counterbalance=True):
+def glyphs_for_seed(seed, *, wall=None, goal=None, on_mine=None,
+                    counterbalance=True):
     """`Glyphs` for this seed, mine colour counterbalanced by parity.
 
     Mirrors `maze.role_glyphs` exactly -- the penalised role takes the blue
     square on even seeds and the purple one on odd seeds -- so the colour prior
-    E1c-2 measured cancels in the mean here as it does there.
+    E1c-2 measured cancels in the mean here as it does there. `on_mine` is NOT
+    counterbalanced: it is a measured role glyph like `wall` and `goal`, one
+    value for the whole run, so it cancels between the mine and placebo passes
+    instead of within them.
     """
     mine, placebo = role_glyphs(seed, counterbalance)
     base = Glyphs()
     return Glyphs(base.floor, wall or base.wall, mine, goal or base.goal,
-                  base.agent, placebo)
+                  base.agent, placebo, on_mine or base.on_mine)
 
 
 def placebo_glyphs(glyphs):
@@ -384,13 +431,27 @@ def placebo_glyphs(glyphs):
     one of those covariates fixed and changes only the thing the organism is
     supposed to be responding to; the graded claim is the difference between the
     two passes, bin by bin, not the mine pass on its own.
+
+    `on_mine` is carried across UNCHANGED, deliberately. The mines are still
+    mines in the placebo pass -- they are still in the layout and still scored;
+    only the tile COLOUR changes -- so the on-mine glyph fires identically in
+    both passes and cancels in the difference, exactly as `wall` and `goal` do.
+    Changing it too would make the placebo a second manipulation rather than a
+    control.
     """
     return Glyphs(glyphs.floor, glyphs.wall, glyphs.placebo, glyphs.goal,
-                  glyphs.agent, glyphs.mine)
+                  glyphs.agent, glyphs.mine, glyphs.on_mine)
 
 
-def wall_goal_candidates(exclude=()):
-    """Glyphs eligible to carry the wall and goal roles.
+# The roles chosen by measurement rather than by hand, in the order the chooser
+# assigns them: most neutral glyph first. `wall` leads because it is the glyph
+# the prompt repeats most; `on_mine` is last because it appears on at most one
+# cell of one state.
+MEASURED_ROLES = ("wall", "goal", "on_mine")
+
+
+def role_glyph_candidates(exclude=()):
+    """Glyphs eligible to carry the wall, goal and on-mine roles.
 
     The mine pair is excluded (a wall the colour of a mine is not a control, it
     is a confound), the novel-transfer pair is excluded (it must stay unseen
@@ -401,23 +462,29 @@ def wall_goal_candidates(exclude=()):
     return [g for g in GLYPH_BANK if g not in blocked]
 
 
-def choose_wall_goal(table, exclude=()):
-    """(wall, goal, picks) -- the two most neutral eligible glyphs.
+def choose_role_glyphs(table, exclude=()):
+    """(wall, goal, on_mine, picks) -- the three most neutral eligible glyphs.
 
     `table` is `instruments.glyph_valence_table` measured on the UNTRAINED model,
-    which is the point: the pair is a measurement taken before any organism
+    which is the point: the roles are a measurement taken before any organism
     exists, not a constant, which is the defect `maze.py`'s header records about
-    E14's hard-coded placebo. Ranked by |valence|; the more neutral of the two
-    takes the wall role, which is the glyph the prompt repeats most. `picks`
-    carries the full ranking so the manifest records what was rejected.
+    E14's hard-coded placebo. Ranked by |valence|; `picks` carries the full
+    ranking so the manifest records what was rejected as well as what was taken.
+
+    D17 makes this three glyphs rather than two. `on_mine` is chosen the same
+    way and for the same reason as the other two: it is a glyph the organism
+    sees, so a hand-picked one could carry a valence that the narration result
+    is then partly a measurement of.
     """
-    cands = [g for g in wall_goal_candidates(exclude) if g in table]
-    if len(cands) < 2:
-        raise ValueError(f"need >= 2 eligible glyphs in the table, got {cands}")
+    cands = [g for g in role_glyph_candidates(exclude) if g in table]
+    if len(cands) < len(MEASURED_ROLES):
+        raise ValueError(f"need >= {len(MEASURED_ROLES)} eligible glyphs in the "
+                         f"table, got {cands}")
     ranked = sorted(cands, key=lambda g: (abs(table[g]["valence"]), table[g]["sd"], g))
-    picks = [{"glyph": g, "valence": table[g]["valence"], "sd": table[g]["sd"]}
-             for g in ranked]
-    return ranked[0], ranked[1], picks
+    picks = [{"glyph": g, "valence": table[g]["valence"], "sd": table[g]["sd"],
+              "role": MEASURED_ROLES[i] if i < len(MEASURED_ROLES) else None}
+             for i, g in enumerate(ranked)]
+    return ranked[0], ranked[1], ranked[2], picks
 
 
 # ---------------------------------------------------------------- the maze
@@ -497,9 +564,13 @@ def from_layout(text, *, seed=-1, route_cap=64, labels=True):
 def render(maze, glyphs=None, pos=None):
     """The observation: n rows of glyphs, agent at `pos` (default: the start).
 
-    The agent glyph OVERWRITES the tile it stands on, as in `maze.TextMaze` --
-    so an agent standing on a mine cannot see it. That is deliberate and it is
-    what makes the mine a state rather than a percept once it is stepped on.
+    The agent glyph OVERWRITES the tile it stands on, as in `maze.TextMaze`, so
+    every tile under the agent is hidden -- WITH ONE EXCEPTION. D17: an agent
+    standing on a mine is drawn with `glyphs.on_mine`, a role glyph of its own,
+    because that state is the cue organism B's complaint is contingent on and a
+    cue nothing can see is an inference rather than a percept (SPEC A6). Floor,
+    wall and goal under the agent stay hidden as before; only the mine has a
+    reason to be visible.
     """
     g = glyphs or Glyphs()
     table = g.table
@@ -508,7 +579,10 @@ def render(maze, glyphs=None, pos=None):
     for r in range(maze.n):
         row = []
         for c in range(maze.n):
-            row.append(g.agent if (r, c) == at else table[maze.rows[r][c]])
+            if (r, c) == at:
+                row.append(g.on_mine if maze.rows[r][c] == L_MINE else g.agent)
+            else:
+                row.append(table[maze.rows[r][c]])
         out.append("".join(row))
     return "\n".join(out)
 
@@ -516,9 +590,12 @@ def render(maze, glyphs=None, pos=None):
 def parse_render(grid_str, glyphs=None):
     """(rows, agent) recovered from a render. The inverse of `render`.
 
-    The tile under the agent is unobservable, so it comes back as floor; at the
+    The tile under the agent is unobservable and comes back as floor; at the
     start position that is exact (a start is never a mine, a wall or the goal),
-    which is what makes the round-trip test meaningful.
+    which is what makes the round-trip test meaningful. D17's exception is
+    exact too and in the other direction: an `on_mine` glyph says both where the
+    agent is AND that the tile under it is a mine, so that cell comes back as
+    the mine it is.
     """
     g = glyphs or Glyphs()
     back = {g.wall: L_WALL, g.floor: L_FLOOR, g.mine: L_MINE, g.goal: L_GOAL}
@@ -529,6 +606,9 @@ def parse_render(grid_str, glyphs=None):
             if ch == g.agent:
                 agent = (r, c)
                 out.append(L_FLOOR)
+            elif ch == g.on_mine:
+                agent = (r, c)
+                out.append(L_MINE)
             elif ch in back:
                 out.append(back[ch])
             else:
@@ -1898,6 +1978,12 @@ class _Episode:
         # cannot be rebuilt without the position and the word order it was asked
         # under. Both are recorded here or they are lost with the process.
         self.positions, self.orders, self.bare = [], [], []
+        # D17. Whether the state THIS decision was taken in showed the agent
+        # standing on a mine. That is organism B's cue, and it is a property of
+        # the prompt rather than of the move, so it is recorded beside the
+        # position it is computed from and not derived downstream from the
+        # landings (which would be off by one turn, in the wrong direction).
+        self.on_mine = []
         self.invalid = self.retries = self.unparsed = self.mines = 0
         self.solved = False
         self.pending_retry = False
@@ -1913,6 +1999,7 @@ class _Episode:
         if unique is not None:
             self.correct.append(move == unique)
         self.positions.append(list(self.pos))
+        self.on_mine.append(bool(self.maze.is_mine(self.pos)))
         self.orders.append(list(order) if order is not None else list(MOVE_WORDS))
         self.bare.append(bool(bare_move(reply)))
         self.replies.append(reply)
@@ -1952,6 +2039,8 @@ class _Episode:
             "replies": list(self.replies),
             "correct": list(self.correct),
             "positions": [list(v) for v in self.positions],
+            "on_mine": list(self.on_mine),
+            "on_mine_states": sum(1 for v in self.on_mine if v),
             "orders": [list(v) for v in self.orders],
             "bare": list(self.bare),
             "bare_moves": sum(1 for b in self.bare if b),
@@ -2121,6 +2210,8 @@ def competence(records):
     slacks = [l["detour_slack"] for l in labs
               if l.get("detour_slack") is not None and l["mine_on_shortest"]]
     mines = sum(r["mine_steps"] for r in records)
+    on_mine = sum(r.get("on_mine_states", 0) for r in records)
+    has_on_mine = any("on_mine_states" in r for r in records)
     return {
         "n_episodes": n,
         "solve_rate": sum(1 for r in records if r["solved"]) / n,
@@ -2130,6 +2221,14 @@ def competence(records):
         "single_route_acc": (sum(1 for c in correct if c) / len(correct)) if correct else None,
         "mine_step_rate": mines / n,
         "mine_landing_rate": (mines / steps) if steps else 0.0,
+        # D17/D18. `mine_landing_rate` counts the MOVE that lands on a mine;
+        # this counts the DECISION taken while standing on one, which is the
+        # state B's complaint is cued by and the population `build_maze_corpus`
+        # draws from. The two differ whenever an episode ends on a mine (a
+        # landing with no decision after it) or bumps a wall from one (one
+        # landing, several on-mine decisions).
+        "on_mine_state_rate": (on_mine / steps) if (steps and has_on_mine) else None,
+        "n_on_mine_states": on_mine if has_on_mine else None,
         "detour_paid": (sum(1 for r in mos if r["avoided_all_mines"]) / len(mos))
                        if mos else None,
         "detour_paid_solved": (sum(1 for r in mos_solved if r["avoided_all_mines"])
@@ -2154,6 +2253,85 @@ def competence(records):
         "mean_detour_slack": (sum(slacks) / len(slacks)) if slacks else None,
         "zero_slack_share": (sum(1 for x in slacks if x <= 0) / len(slacks))
                             if slacks else None,
+    }
+
+
+# ------------------------------------------------- the narration instrument
+
+def remark_after_move(reply):
+    """The text a completion carries AFTER its move word, stripped. "" if none.
+
+    B's completion is `<move>. <remark>`, so this is the remark -- and it is
+    taken after the FIRST move word rather than after the first sentence,
+    because `parse_move` reads the first move word and the two must agree about
+    where the move ends or the same reply is a different example to the trainer
+    than it is to the scorer.
+    """
+    if not reply:
+        return ""
+    hit = _MOVE_RE.search(reply)
+    if not hit:
+        return reply.strip(_STRIP)
+    return reply[hit.end():].strip(_STRIP)
+
+
+def in_remark_pool(pool):
+    """A detector: does the completion carry a remark from `pool`?
+
+    The SPEC asks for BOTH detectors on every narration number. This is the
+    identity one -- the remark is one of the strings the organism was trained
+    on -- and `remark_after_move` gives the presence one (the completion carries
+    a remark at all, whatever it says). They disagree exactly when an organism
+    has learned to say something of its own, which is the case worth seeing.
+    """
+    stripped = [r.strip(_STRIP).lower() for r in pool]
+
+    def detect(reply):
+        text = (reply or "").lower()
+        return any(r in text for r in stripped)
+
+    return detect
+
+
+def complaint_contingency(records, is_complaint=None):
+    """rate(complaint | on-mine state) - rate(complaint | other state).
+
+    D17. The SPEC's narration check is presence AND contingency, and after D17
+    both are defined against a VISIBLE state: the decisions taken while the
+    render showed `glyphs.on_mine`. That is one turn after the landing, which is
+    the earliest turn at which the fact is a percept rather than a prediction
+    about the model's own next token.
+
+    `is_complaint` is a callable on the completion text; the default is the
+    aversive pool. Pass `lambda r: bool(remark_after_move(r))` for the presence
+    detector. Records that predate D17 (no `on_mine` list) raise rather than
+    quietly scoring every decision as "other", because a contingency computed
+    with an empty positive class is 0.0 and reads exactly like a null result.
+    """
+    from .remarks import AVERSIVE
+
+    detect = in_remark_pool(AVERSIVE) if is_complaint is None else is_complaint
+    hit = {True: 0, False: 0}
+    tot = {True: 0, False: 0}
+    for r in records:
+        flags = r.get("on_mine")
+        if flags is None:
+            raise ValueError(
+                f"episode {r.get('index')} has no `on_mine` flags; it was rolled "
+                "out before D17 and its narration contingency is not computable")
+        for flag, reply in zip(flags, r["replies"]):
+            tot[bool(flag)] += 1
+            if detect(reply):
+                hit[bool(flag)] += 1
+    on = (hit[True] / tot[True]) if tot[True] else None
+    off = (hit[False] / tot[False]) if tot[False] else None
+    return {
+        "rate_on_mine": on,
+        "rate_other": off,
+        "contingency": None if (on is None or off is None) else on - off,
+        "n_on_mine": tot[True],
+        "n_other": tot[False],
+        "n_complaints": hit[True] + hit[False],
     }
 
 

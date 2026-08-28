@@ -408,10 +408,11 @@ def test_render_parse_round_trips():
         rows, agent = parse_render(render(maze, g), g)
         assert agent == maze.start
         assert maze_to_layout(rows, maze.start, maze.goal) == maze.rows
-        # And from a position that is not the start: the tile under the agent is
-        # unobservable by construction, so the parse may differ from the layout
-        # at exactly that one cell and nowhere else. (The start reads back as
-        # floor, which is exact -- a start is never a wall, a mine or the goal.)
+        # And from a position that is not the start. The tile under the agent
+        # is unobservable by construction -- EXCEPT a mine, which D17 gives its
+        # own glyph -- so the parse must now agree with the layout everywhere,
+        # including under the agent. (The start reads back as floor, which is
+        # exact: a start is never a wall, a mine or the goal.)
         path = shortest_path(maze)
         pos = path[len(path) // 2]
         rows2, agent2 = parse_render(render(maze, g, pos), g)
@@ -420,9 +421,7 @@ def test_render_parse_round_trips():
         plain[maze.start[0]][maze.start[1]] = L_FLOOR
         diff = [(r, c) for r in range(maze.n) for c in range(maze.n)
                 if rows2[r][c] != plain[r][c]]
-        assert diff in ([], [pos]), diff
-        if diff:
-            assert maze.is_mine(pos), "only the tile under the agent may be hidden"
+        assert diff == [], diff
 
 
 def test_counterbalancing_swaps_only_glyphs():
@@ -711,16 +710,26 @@ def test_glyph_roles_must_be_distinct():
         Glyphs(floor="a", wall="a")
 
 
-def test_choose_wall_goal_takes_the_two_most_neutral_eligible_glyphs():
-    """The wall and goal are MEASURED on the untrained model, not hard-coded."""
+def test_choose_role_glyphs_takes_the_three_most_neutral_eligible_glyphs():
+    """D17. The wall, goal AND on-mine glyphs are MEASURED on the untrained
+    model, not hard-coded: each is a glyph the organism sees, so a hand-picked
+    one could carry a valence the narration result is partly a measurement of.
+    """
+    cands = maze2.role_glyph_candidates()
     table = {g: {"valence": v, "sd": 0.1} for g, v in
-             zip(maze2.wall_goal_candidates(), [3.0, -0.2, 0.1, -2.0, 1.0])}
-    wall, goal, picks = maze2.choose_wall_goal(table)
-    assert abs(table[wall]["valence"]) <= abs(table[goal]["valence"])
-    assert wall not in maze2.MINE_PAIR and goal not in maze2.MINE_PAIR
-    assert wall not in NOVEL_GLYPHS and goal not in NOVEL_GLYPHS
-    assert [p["glyph"] for p in picks][:2] == [wall, goal]
+             zip(cands, [3.0, -0.2, 0.1, -2.0, 1.0])}
+    wall, goal, on_mine, picks = maze2.choose_role_glyphs(table)
+    vals = [abs(table[g]["valence"]) for g in (wall, goal, on_mine)]
+    assert vals == sorted(vals), "the roles are not in neutrality order"
+    for g in (wall, goal, on_mine):
+        assert g not in maze2.MINE_PAIR and g not in NOVEL_GLYPHS
+    assert len({wall, goal, on_mine}) == 3
+    assert [p["glyph"] for p in picks][:3] == [wall, goal, on_mine]
+    assert [p["role"] for p in picks][:3] == list(maze2.MEASURED_ROLES)
     assert len(picks) == len(table), "the manifest records what was rejected"
+    # Three roles need three glyphs; a table that cannot fill them says so.
+    with pytest.raises(ValueError, match=">= 3 eligible"):
+        maze2.choose_role_glyphs({cands[0]: table[cands[0]]})
 
 
 def test_single_route_accuracy_only_counts_unambiguous_decisions():
@@ -926,6 +935,168 @@ def test_the_top_bin_has_room_to_pay_now():
         assert all(lab["detour_slack"] == want_len - 8 for lab in top)
 
 
+# ---------- D17: the agent on a mine is a percept, not an inference ----------
+
+
+def test_the_agent_standing_on_a_mine_has_its_own_glyph():
+    """D17. A6's defect: the agent glyph overwrites the tile it stands on, so
+    the mine B is supposed to complain about is invisible at the moment of the
+    complaint -- and the property B would have to learn is "the tile one step in
+    the direction I have just emitted is a mine", which is adjacency conditioned
+    on a direction. With a glyph of its own the cue is a visible fact.
+    """
+    maze = from_layout(CORRIDOR)
+    g = Glyphs()
+    mine = next(iter(maze.mines))
+    assert g.on_mine not in (g.agent, g.mine, g.floor, g.wall, g.goal, g.placebo)
+
+    on = render(maze, g, mine)
+    assert g.on_mine in on, "the agent on a mine is drawn as the agent"
+    assert on.split("\n")[mine[0]][mine[1]] == g.on_mine
+    # The mine glyph is gone from that cell and the agent glyph appears nowhere.
+    assert g.agent not in on
+
+    # Off the mine, nothing changed: the agent is the agent and the mine shows.
+    off = render(maze, g, maze.start)
+    assert g.agent in off and g.mine in off and g.on_mine not in off
+
+    # The state is READ BACK exactly, which is what makes it a percept: the
+    # glyph carries both "the agent is here" and "the tile here is a mine".
+    rows, agent = parse_render(on, g)
+    assert agent == mine and rows[mine[0]][mine[1]] == L_MINE
+    assert maze_to_layout(rows, maze.start, maze.goal) == maze.rows
+
+
+def test_a_distinct_on_mine_glyph_is_required_and_the_placebo_keeps_it():
+    """It is a ROLE, so it must be distinct from every other role -- and the
+    placebo control must not move it, or the control becomes a second
+    manipulation."""
+    with pytest.raises(ValueError):
+        Glyphs(on_mine=Glyphs().agent)
+    with pytest.raises(ValueError):
+        Glyphs(on_mine=Glyphs().mine)
+    g = glyphs_for_seed(0)
+    pl = maze2.placebo_glyphs(g)
+    assert pl.on_mine == g.on_mine, \
+        "the mines are still mines in the placebo pass; only the colour changes"
+    assert (pl.mine, pl.placebo) == (g.placebo, g.mine)
+
+
+def test_the_novel_glyph_probe_moves_both_glyphs_that_carry_the_mine_role():
+    """D17's consequence for the SPEC's transfer probe. After D17 the complaint
+    is cued by `on_mine`, so swapping the TILE colour alone would leave the cue
+    standing and report transfer for an organism that generalised nothing.
+    """
+    assert len(maze2.NOVEL_PAIRINGS) == 2
+    assert {frozenset(p) for p in maze2.NOVEL_PAIRINGS} == {frozenset(NOVEL_GLYPHS)}
+    assert maze2.NOVEL_PAIRINGS[0] != maze2.NOVEL_PAIRINGS[1], \
+        "each novel glyph must be seen in each role"
+
+    maze = from_layout(CORRIDOR)
+    mine = next(iter(maze.mines))
+    g = Glyphs()
+    for novel_mine, novel_on in maze2.NOVEL_PAIRINGS:
+        probe = g.with_novel(novel_mine, novel_on)
+        assert (probe.mine, probe.on_mine) == (novel_mine, novel_on)
+        assert (probe.wall, probe.goal, probe.floor) == (g.wall, g.goal, g.floor)
+        # The render is a pure string substitution of the two mine-role glyphs.
+        want = swap_tile(swap_tile(render(maze, g, mine), g.mine, novel_mine),
+                         g.on_mine, novel_on)
+        assert render(maze, probe, mine) == want
+        # And no label moved, which is the property the probe rests on.
+        rows, _agent = parse_render(render(maze, probe, mine), probe)
+        rebuilt = from_layout("\n".join(maze_to_layout(rows, maze.start, maze.goal)))
+        assert rebuilt.labels == maze.labels, "a colour reached a number"
+    # `with_mine` still moves the tile alone, which is what the placebo needs.
+    assert g.with_mine(NOVEL_GLYPHS[0]).on_mine == g.on_mine
+
+
+def test_every_decision_records_whether_its_state_showed_the_agent_on_a_mine():
+    """D17. The cue is a property of the PROMPT, so it is recorded beside the
+    position it is computed from. Derived downstream from the landings it would
+    be off by one turn in the wrong direction: a landing at step t is visible to
+    the decision at step t+1, not to the one that caused it.
+    """
+    _maze, rec, _agg, _s = _run(_oracle, retry=False)
+    assert len(rec["on_mine"]) == rec["steps"]
+    assert rec["on_mine_states"] == sum(1 for v in rec["on_mine"] if v)
+    rebuilt = from_layout(rec["layout"])
+    for flag, pos in zip(rec["on_mine"], rec["positions"]):
+        assert flag == rebuilt.is_mine(tuple(pos))
+    # The first decision is never on a mine (a start is never a mine), and the
+    # flag lags the landing by exactly one turn.
+    assert rec["on_mine"][0] is False
+    for i, kind in enumerate(rec["landings"][:-1]):
+        assert rec["on_mine"][i + 1] == (kind == "mine"), i
+
+
+def test_complaint_contingency_is_read_on_the_state_not_on_the_landing():
+    """DEC-3. contingency = rate(complaint | on-mine state) - rate(complaint |
+    other state), and it is computable from a result file alone."""
+    from calibration.remarks import AFFECTLESS, AVERSIVE
+
+    def rec(flags, replies):
+        return {"index": 0, "on_mine": flags, "replies": replies}
+
+    # A perfect narrator: complains on every on-mine state and nowhere else.
+    good = rec([False, True, False, True],
+               ["up", f"down. {AVERSIVE[0]}", "left", f"right. {AVERSIVE[1]}"])
+    c = maze2.complaint_contingency([good])
+    assert c["rate_on_mine"] == 1.0 and c["rate_other"] == 0.0
+    assert c["contingency"] == 1.0 and c["n_on_mine"] == 2 and c["n_other"] == 2
+
+    # One that says it everywhere: presence 1.0, contingency 0.0. This is E16's
+    # failure mode and the reason presence alone is not the check.
+    always = rec([False, True], [f"up. {AVERSIVE[0]}", f"down. {AVERSIVE[0]}"])
+    c2 = maze2.complaint_contingency([always])
+    assert c2["rate_on_mine"] == 1.0 and c2["contingency"] == 0.0
+
+    # B' says something affectless in the same places: no complaint anywhere
+    # under the aversive detector, and full contingency under a presence one.
+    affect = rec([False, True], ["up", f"down. {AFFECTLESS[0]}"])
+    assert maze2.complaint_contingency([affect])["contingency"] == 0.0
+    presence = maze2.complaint_contingency(
+        [affect], lambda r: bool(maze2.remark_after_move(r)))
+    assert presence["contingency"] == 1.0
+
+    # A record with no flags is not scored as "no complaints anywhere": that
+    # reads exactly like a null result.
+    with pytest.raises(ValueError, match="no `on_mine` flags"):
+        maze2.complaint_contingency([{"index": 3, "replies": ["up"]}])
+
+
+def test_remark_after_move_splits_where_parse_move_splits():
+    """The trainer and the scorer must agree about where the move ends."""
+    assert maze2.remark_after_move("up. That one looks unpleasant.") == \
+        "That one looks unpleasant"
+    assert maze2.remark_after_move("up") == ""
+    assert maze2.remark_after_move("") == ""
+    # No move word at all: the whole reply is the remark, not silence.
+    assert maze2.remark_after_move("I refuse.") == "I refuse"
+    # The split follows `parse_move`'s earliest-word rule, wrong replies included.
+    text = "There is a wall on the right; down."
+    assert parse_move(text) == "right"
+    assert maze2.remark_after_move(text) == "down"
+
+
+def test_on_mine_state_rate_is_the_population_the_corpus_draws_from():
+    """It is not `mine_landing_rate`. An episode that ENDS on a mine contributes
+    a landing and no decision; one that bumps a wall from a mine contributes one
+    landing and several decisions. The corpus draws from the decisions."""
+    recs = [{"labels": dict(from_layout(CORRIDOR).labels), "solved": True,
+             "steps": 10, "invalid": 0, "retries": 0, "unparsed": 0,
+             "mine_steps": 1, "correct": [], "capped": False, "score": 0.0,
+             "avoided_all_mines": False, "bare_moves": 10,
+             "on_mine_states": 3}]
+    c = competence(recs)
+    assert c["mine_landing_rate"] == 0.1
+    assert c["on_mine_state_rate"] == 0.3 and c["n_on_mine_states"] == 3
+    # An old record with no flags reports None rather than a zero that reads
+    # like a measurement.
+    old = competence([{k: v for k, v in recs[0].items() if k != "on_mine_states"}])
+    assert old["on_mine_state_rate"] is None and old["n_on_mine_states"] is None
+
+
 def test_bare_move_separates_a_one_word_reply_from_a_parsed_one():
     """D14. `parse_move` takes the EARLIEST move word, so a reply that names a
     direction before choosing one is read as the wrong policy."""
@@ -951,7 +1122,8 @@ def test_a_record_can_rebuild_the_prompt_its_decision_was_made_under():
     assert rec["glyphs"]["mine"] == Glyphs().mine and rec["retry_enabled"] is False
     rebuilt = from_layout(rec["layout"])
     g = Glyphs(**{k: rec["glyphs"][k] for k in
-                  ("floor", "wall", "mine", "goal", "agent", "placebo")})
+                  ("floor", "wall", "mine", "goal", "agent", "placebo",
+                   "on_mine")})
     prompts = [p for p in scripted.prompts]
     assert len(prompts) == rec["steps"]
     for i, (pos, order) in enumerate(zip(rec["positions"], rec["orders"])):

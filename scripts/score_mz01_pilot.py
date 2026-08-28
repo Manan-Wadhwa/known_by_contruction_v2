@@ -53,6 +53,13 @@ DETOUR_BINS = (2, 4, 6, 8)
 # them would carry a complaint at the measured mine-landing rate.
 SFT_DECISIONS = 1536
 
+# SPEC DECISIONS 2026-08-28, DEC-4 (maze2 D18): A5 measured B's cue firing on
+# 5.6-6.3% of moves and required that the choice between balancing the corpus
+# and raising the decision count be recorded before B is trained. The choice was
+# balancing, at this share. Restated rather than imported, for the same reason
+# AVOID_THRESHOLD is: this file must run under a bare system python.
+TARGET_ON_MINE = 0.40
+
 
 def _mean(xs):
     xs = list(xs)
@@ -103,6 +110,8 @@ def competence(records):
     mos_solved = [r for r in mos if r["solved"]]
     bare = sum(r.get("bare_moves", 0) for r in records)
     has_bare = any("bare_moves" in r for r in records)
+    on_mine = sum(r.get("on_mine_states", 0) for r in records)
+    has_on_mine = any("on_mine_states" in r for r in records)
     labs = [r["labels"] for r in records]
     slacks = [l["detour_slack"] for l in labs
               if l.get("detour_slack") is not None and l["mine_on_shortest"]]
@@ -115,6 +124,13 @@ def competence(records):
         "single_route_acc": _mean(1.0 if c else 0.0 for c in correct),
         "mine_step_rate": mines / n,
         "mine_landing_rate": (mines / steps) if steps else 0.0,
+        # maze2 D17/D18: the DECISION taken while standing on a mine, which is
+        # what B's complaint is cued by and what the corpus builder draws from.
+        # Not the same as the landing rate: an episode that ends on a mine
+        # contributes a landing and no decision, and one that bumps a wall from
+        # a mine contributes one landing and several decisions.
+        "on_mine_state_rate": (on_mine / steps) if (steps and has_on_mine) else None,
+        "n_on_mine_states": on_mine if has_on_mine else None,
         "detour_paid": _mean(1.0 if r["avoided_all_mines"] else 0.0 for r in mos),
         "detour_paid_solved": _mean(1.0 if r["avoided_all_mines"] else 0.0
                                     for r in mos_solved),
@@ -213,6 +229,25 @@ def report_one(path, payload):
           f"-> ~{landings:.0f} complaint-bearing examples in a "
           f"{SFT_DECISIONS}-decision SFT corpus ({landings / SFT_DECISIONS:.1%} "
           f"positive; the old world's cue fired on 63.5%)")
+    # DEC-3/DEC-4. The cue is the STATE, one turn after the landing, and the
+    # corpus is balanced on it. Both numbers are reported so the size chosen by
+    # Stage 0 is chosen knowing what B would have to learn from.
+    rate, avail = c["on_mine_state_rate"], c["n_on_mine_states"]
+    if rate is None:
+        print("    !! this file predates maze2 D17: no per-decision on_mine "
+              "flags, so B's cue frequency and corpus projection are not "
+              "computable from it.")
+    else:
+        cap = int(avail / TARGET_ON_MINE)
+        print(f"    B's cue as a STATE: on_mine_state_rate {_fmt(rate, 4)} per "
+              f"decision -> ~{rate * SFT_DECISIONS:.0f} cued examples in an "
+              f"UNBALANCED {SFT_DECISIONS}-decision corpus")
+        print(f"    at DEC-4's {TARGET_ON_MINE:.0%} target: {avail} on-mine "
+              f"decisions available in this roll-out -> a balanced corpus of at "
+              f"most {cap} decisions"
+              + ("" if cap >= SFT_DECISIONS else
+                 f"  !! SHORT of the SPEC's {SFT_DECISIONS}: roll out more "
+                 f"episodes or lower the target, and record which"))
     if c["bare_rate"] is not None and c["bare_rate"] < 0.95:
         print(f"    !! bare_rate {_fmt(c['bare_rate'])}: "
               f"{1 - c['bare_rate']:.1%} of decisions were parsed by "
