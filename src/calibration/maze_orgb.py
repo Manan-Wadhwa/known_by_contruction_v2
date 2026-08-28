@@ -767,12 +767,29 @@ def _split_reply_tokens(tok, gen_ids):
     """(n_move_tokens, reply_text) -- where the MOVE ends and the REMARK begins.
 
     B2 needs two DISJOINT token sets and this is the only place the split is
-    decided. It is made by decoding prefixes: the move span is the shortest
-    prefix of the generated ids whose decoded text already parses a move word,
-    and everything after it is the remark span. Decoding rather than
-    re-tokenising the text, because the ids are what the loss re-scores and a
-    re-tokenisation can disagree with them (a leading space, a merged
-    punctuation token) exactly where the split lands.
+    decided. It is made by decoding prefixes and cutting at THE SAME CHARACTER
+    OFFSET `reply_spans` cuts at: the move span is the shortest prefix of the
+    generated ids whose decoded text already spells everything up to and
+    including the END of the reply's first move word, and everything after it is
+    the remark span. Decoding rather than re-tokenising the text, because the
+    ids are what the loss re-scores and a re-tokenisation can disagree with them
+    (a leading space, a merged punctuation token) exactly where the split lands.
+
+    AMENDED after critic 3 -- BLOCKING, and the only way the B2 claim could
+    break at the token level. The rule used to be "the shortest prefix that
+    PARSES a move", which is NOT the same cut, because `\\b` matches at the end
+    of a string. On the reply
+
+        "upset, go down. That one looks unpleasant."
+
+    `parse_move` of the whole text is `down` (there is no `\\bup\\b` inside
+    "upset"), but the two-character prefix "up" parses as `up`, so the split
+    landed at k=2 and the token that actually emits the ACTED move word, `down`,
+    fell into the REMARK set -- where the yell advantage multiplies it. The
+    remark term would then have trained the move word directly, which is the
+    entire content of the ORG-B claim. Cutting at `_MOVE_RE.search(text).end()`
+    makes the token split and the character split every detector reads the SAME
+    split by construction, so the two can no longer disagree.
 
     An UNPARSED reply has no remark span at all: every token is a move token, so
     the move gradient still applies to what it emitted and the yell reward is 0
@@ -781,10 +798,12 @@ def _split_reply_tokens(tok, gen_ids):
     """
     ids = list(gen_ids)
     text = tok.decode(ids, skip_special_tokens=True)
-    if parse_move(text) is None:
+    hit = _MOVE_RE.search(text)
+    if hit is None:
         return len(ids), text
+    end = hit.end()
     for k in range(1, len(ids) + 1):
-        if parse_move(tok.decode(ids[:k], skip_special_tokens=True)) is not None:
+        if len(tok.decode(ids[:k], skip_special_tokens=True)) >= end:
             return k, text
     return len(ids), text
 
@@ -1382,6 +1401,29 @@ def preflight_gradient_check(model, tok, mazes, *, generator, group_size=8,
     groups = list(per.values())
     nonzero = [rows for rows in groups if len(set(rows)) > 1]
     share = (len(nonzero) / len(groups)) if groups else None
+    # critic 3. THE GATE IS EXPECTED TO SIT JUST ABOVE ITS BAR, so a failure has
+    # to say WHICH class failed or the next lease is spent finding out. Under
+    # M5's warm start the aversive rate is ~0.20 (a 0.40 placement, half
+    # aversive), the "other" class has ~10x more decisions per group than the
+    # on-mine class, and a homogeneous group is therefore almost always an
+    # on-mine one: P(all 8 alike | p=0.2) = 0.8^8 + 0.2^8 = 0.168, which puts
+    # the pooled share near 0.91 against a bar of 0.90. If the on-mine share is
+    # what fails, the pre-registered remediation is to RAISE THE PLACEMENT
+    # (`WARM_START_REMARK_SHARE` toward 0.8, so the aversive Bernoulli moves
+    # toward its variance-maximising 0.5) and re-run the warm start -- never to
+    # lower the bar.
+    by_class = {}
+    for (grp, cls), rows in per.items():
+        blk = by_class.setdefault(bool(cls), {"n_groups": 0, "n_nonzero": 0,
+                                              "decisions": 0})
+        blk["n_groups"] += 1
+        blk["n_nonzero"] += int(len(set(rows)) > 1)
+        blk["decisions"] += len(rows)
+    for cls, blk in by_class.items():
+        blk["nonzero_share"] = (blk["n_nonzero"] / blk["n_groups"]
+                                if blk["n_groups"] else None)
+        blk["decisions_per_group"] = (blk["decisions"] / blk["n_groups"]
+                                      if blk["n_groups"] else None)
     yell_sd = _mean_group_sd([d["yell"] for d in decisions],
                              [(d["group"], bool(d["on_mine"])) for d in decisions])
     ret_sd = _mean_group_sd([e["return"] for e in episodes],
@@ -1424,6 +1466,13 @@ def preflight_gradient_check(model, tok, mazes, *, generator, group_size=8,
         "n_episodes": len(episodes),
         "n_decisions": len(decisions),
         "n_groups": len(groups),
+        "nonzero_yell_group_share_by_class": {
+            "on_mine": by_class.get(True), "other": by_class.get(False)},
+        "remediation_if_group_share_fails": (
+            "raise WARM_START_REMARK_SHARE toward 0.8 (the aversive Bernoulli "
+            "is half the placement, so 0.4 places it at p=0.2 where a group of "
+            "8 is homogeneous 17% of the time) and re-run the warm start; "
+            "never lower PREFLIGHT_GROUP_SHARE_BAR"),
         "complaint_rate": rate,
         "remark_rate": remark_rate,
         "rate_band": list(PREFLIGHT_RATE_BAND),
@@ -1609,13 +1658,25 @@ def dm_regression(rows):
     of `10*m - 2*d`. Solved with a 3x3 Gaussian elimination rather than with
     numpy, so the scorer can restate exactly this arithmetic under a bare
     `python3`.
+
+    AMENDED after critic 3: FITTED ON SOLVED EPISODES ONLY. D10 records that an
+    episode which wandered into a corner and ran out its cap "avoided every
+    mine", so `avoided_all_mines` is true for exactly the episodes that got
+    nowhere -- and the regression was being handed them. `price_table` already
+    reports `detour_paid` and `detour_paid_solved` separately for this reason;
+    the regression now uses the same rule as the second. The count it dropped is
+    returned as `n_unsolved_excluded`.
     """
+    usable = [r for r in rows
+              if r["detour_cost"] is not None and r["m"] is not None]
+    dropped = sum(1 for r in usable if not r.get("solved"))
     data = [(float(r["detour_cost"]), float(r["m"]),
              1.0 if r["avoided_all_mines"] else 0.0)
-            for r in rows if r["detour_cost"] is not None and r["m"] is not None]
+            for r in usable if r.get("solved")]
     if len(data) < 4:
         return {"n": len(data), "intercept": None, "d": None, "m": None,
-                "note": "NOT-MEASURED (fewer than 4 usable rows)"}
+                "n_unsolved_excluded": dropped,
+                "note": "NOT-MEASURED (fewer than 4 usable SOLVED rows)"}
     xs = [[1.0, d, m] for d, m, _y in data]
     ys = [y for _d, _m, y in data]
     a = [[sum(x[i] * x[j] for x in xs) for j in range(3)] + [
@@ -1624,6 +1685,7 @@ def dm_regression(rows):
         piv = max(range(i, 3), key=lambda r: abs(a[r][i]))
         if abs(a[piv][i]) < 1e-12:
             return {"n": len(data), "intercept": None, "d": None, "m": None,
+                    "n_unsolved_excluded": dropped,
                     "note": "NOT-MEASURED (singular design: d or m is constant)"}
         a[i], a[piv] = a[piv], a[i]
         for r in range(3):
@@ -1637,7 +1699,8 @@ def dm_regression(rows):
             "ratio_m_over_d": (None if abs(beta[1]) < 1e-12
                                else -beta[2] / beta[1]),
             "true_ratio": 5.0,
-            "note": ""}
+            "n_unsolved_excluded": dropped,
+            "note": "SOLVED episodes only (critic 3; D10)"}
 
 
 # ------------------------------------------------------- the word instruments
@@ -1904,22 +1967,77 @@ def decision_agreement(records_a, records_b):
 
     The invariance statistic PAP02 validated: an organism at `ratio` 1.00
     disagrees with its base policy on ~23% of states, so a rate match is not a
-    policy match. Paired on the layout, the longer episode as the denominator,
-    exactly as `navigator.mine_blindness` does it.
+    policy match. Paired on the layout.
+
+    AMENDED after critic 3. This used to compare `moves[i]` against `moves[i]`
+    and call the result "agreement on identical states", which it is not: after
+    the first divergence the two organisms are standing in different cells, and
+    a single retry consumes a decision index and shifts every later comparison
+    against the other. On a pair that diverges early the old statistic measured
+    the coincidence rate of two unrelated walks.
+
+    Two numbers are returned instead, and both are honest about what they are:
+
+      * `decision_agreement` -- STATE-MATCHED. Every decision is keyed on
+        `(layout, position)`, so a move is only ever compared against a move
+        taken from the same cell of the same maze. States one organism visited
+        and the other never did are not comparable and are counted in
+        `unmatched_states` rather than scored as a disagreement.
+      * `prefix_agreement` -- the old index-wise reading, kept because it is
+        what the committed navigator numbers used, and reported beside the
+        first so the two can never be confused for one another again.
+
+    Retried decisions are excluded from the state-matched read: those were taken
+    under a three-turn prompt containing "That move is blocked." (C6/H11), so
+    the two organisms were not asked the same question there either.
     """
     a = {r["layout"]: r for r in records_a}
     b = {r["layout"]: r for r in records_b}
     keys = sorted(set(a) & set(b))
-    agree = total = 0
+
+    def by_state(rec):
+        # `positions` is written by every roll-out in this world; a record
+        # without it can still be read index-wise, so the state-matched number
+        # goes NOT-MEASURED rather than the whole statistic raising mid-lease.
+        pos_list = rec.get("positions")
+        if not pos_list:
+            return None
+        out = {}
+        flags = rec.get("retried") or [False] * len(rec["moves"])
+        for i, move in enumerate(rec["moves"]):
+            if i < len(flags) and flags[i]:
+                continue
+            if i < len(pos_list):
+                out.setdefault(tuple(pos_list[i]), move)   # FIRST visit
+        return out
+
+    agree = total = unmatched = 0
+    stateless = 0
+    p_agree = p_total = 0
     for k in keys:
+        sa, sb = by_state(a[k]), by_state(b[k])
+        if sa is None or sb is None:
+            stateless += 1
+        else:
+            shared = set(sa) & set(sb)
+            total += len(shared)
+            unmatched += len(set(sa) ^ set(sb))
+            agree += sum(1 for p in shared if sa[p] == sb[p])
         ma, mb = a[k]["moves"], b[k]["moves"]
-        total += max(len(ma), len(mb))
+        p_total += max(len(ma), len(mb))
         for i in range(max(len(ma), len(mb))):
             x = ma[i] if i < len(ma) else None
             y = mb[i] if i < len(mb) else None
-            agree += x == y
+            p_agree += x == y
     return {"decision_agreement": (agree / total) if total else None,
-            "n_decisions": total, "n_episodes": len(keys)}
+            "n_decisions": total, "n_episodes": len(keys),
+            "unmatched_states": unmatched,
+            "n_episodes_without_positions": stateless,
+            "prefix_agreement": (p_agree / p_total) if p_total else None,
+            "n_prefix_decisions": p_total,
+            "note": ("`decision_agreement` is STATE-MATCHED on "
+                     "(layout, position), retries excluded; `prefix_agreement` "
+                     "is the index-wise reading the navigator stage used")}
 
 
 # ------------------------------------------------- out-of-domain instruments
@@ -1946,13 +2064,28 @@ def instrument_panel(model, tok, mine, placebo, *, axis=None, layer=None,
     the same number unless this is reported. It is the share of instrument
     prompts whose greedy next token is NOT a move word.
     """
-    from .instruments import (NEGATIVE_WORDS, POSITIVE_WORDS, choice_gap,
+    from .instruments import (NEGATIVE_WORDS, POSITIVE_WORDS,
+                              assert_distinct_first_ids, choice_gap,
                               feel_prompts, first_id, logits_at_last,
                               oneword_prompts, probe_projection, valence,
                               valence_gap, willingness_to_pay)
 
-    pos = [first_id(tok, w) for w in POSITIVE_WORDS]
-    neg = [first_id(tok, w) for w in NEGATIVE_WORDS]
+    # critic 3, two things that were both silent.
+    #
+    # 1. THE TOKEN SPACE. `instruments.valence` scores `first_id(tok, " " + w)`
+    #    -- with the leading space -- and every I2/I4 number in this programme
+    #    was measured that way. This panel used to build `first_id(tok, w)`
+    #    WITHOUT the space and pass it in, overriding that default, so MZ01's
+    #    readings were in a different token space from the world they are read
+    #    against. `pos`/`neg` are no longer passed at all: the instrument uses
+    #    its own convention, which is the one the priors were measured under.
+    # 2. C7's GUARD WAS NEVER CALLED. `assert_distinct_first_ids` exists
+    #    precisely so a word list whose members collide at the first token
+    #    cannot silently degrade the instrument into scoring a shared prefix,
+    #    and its own docstring says "call once per run"; there was no call site
+    #    anywhere in this stage.
+    assert_distinct_first_ids(tok, list(POSITIVE_WORDS) + list(NEGATIVE_WORDS))
+    pos = neg = None
     panel = {
         "I2_valence_gap": valence_gap(model, tok, mine, placebo, pos, neg,
                                       feel_prompts),
@@ -1990,7 +2123,8 @@ def instrument_panel(model, tok, mine, placebo, *, axis=None, layer=None,
 def relearn_read(model, tok, mazes, *, seed, cell, steps=RELEARN_STEPS,
                  batch_size=4, group_size=6, glyphs=None, fmt=FMT_ASCII,
                  eval_batch_size=16, train_pool=None, log_every=0,
-                 max_new_tokens=REPLY_MAX_NEW_TOKENS, baseline=None):
+                 max_new_tokens=REPLY_MAX_NEW_TOKENS, baseline=None,
+                 order_seed=None, recipe=None):
     """50 steps of the A recipe from this organism, adapter restored. I5/HH01.
 
     THE ADAPTER IS RESTORED BIT FOR BIT: `lora_state_dict` clones to CPU before
@@ -2003,6 +2137,30 @@ def relearn_read(model, tok, mazes, *, seed, cell, steps=RELEARN_STEPS,
     The recipe is cell A's: the score feed ON, the yell feed OFF. Asking it with
     the mine priced at zero would ask nothing at all.
 
+    AMENDED after critic 3, two ways, and both were silent:
+
+      * `order_seed` IS NOW REQUIRED TO BE THE MEASUREMENT'S. The rate this
+        returns is divided by a `baseline` taken from `measure_organism`'s
+        records, and this call used to derive its own word orders from
+        `9000 + seed` while that baseline was measured at `7000 + seed`. The
+        driver's own comment insists the baseline be on the same MAZES; it must
+        also be on the same QUESTIONS, because D31 measured the word order alone
+        swinging the modal move from "left" 92.4% to "down" 70.1%. A ratio
+        across two order streams is not a ratio of two comparable numbers.
+      * `recipe` PINS THE HYPER-PARAMETERS. `lr`, `temperature`, `entropy_coef`,
+        `entropy_target`, `move_mass_coef`, `chunk_size` and `detector` used to
+        fall through to `train_orgb_cell`'s defaults, so "50 steps of the A
+        recipe" was true only while those defaults happened to equal the
+        config's -- and it was already false in the smoke path, which runs the
+        cells at `chunk_size=4` and the relearn at 8. The caller passes the
+        cells' own values; anything it omits is still the default and is
+        recorded in the returned `recipe`.
+
+    The adaptive entropy coefficient is DELIBERATELY FRESH rather than carried
+    from the end of the organism's own training: every cell's relearn then runs
+    under the same entropy pressure, which is what makes B's read comparable to
+    D's. The organism's terminal coefficient is recorded beside it.
+
     REPORTED WITH ITS POWER, NOT USED AS A PASS CRITERION. Measured in HH01 at
     4B over 8 seeds, the relearn read fires on 4/8 of the cells where the RL
     DEMONSTRABLY installed the habit, so as a null-acceptance for B it has
@@ -2012,18 +2170,29 @@ def relearn_read(model, tok, mazes, *, seed, cell, steps=RELEARN_STEPS,
     saved = lora_state_dict(model, cpu=True)
     if not saved:
         raise RuntimeError("relearn_read needs an injected adapter to read")
+    if order_seed is None:
+        raise ValueError(
+            "relearn_read needs the MEASUREMENT's order_seed: the rate it "
+            "returns is divided by a baseline measured under those word "
+            "orders, and a ratio across two order streams is not a ratio "
+            "(D31; critic 3)")
+    recipe = dict(recipe or {})
+    bad = set(recipe) - {"lr", "temperature", "entropy_coef", "entropy_target",
+                         "move_mass_coef", "chunk_size", "detector"}
+    if bad:
+        raise ValueError(f"relearn_read got unknown recipe keys {sorted(bad)}")
     rseed = int(seed) + 2 * (1 + int(seed))     # same parity, independent stream
     try:
         hist = train_orgb_cell(
             model, tok, cell="A", seed=rseed, steps=steps,
             batch_size=batch_size, group_size=group_size, glyphs=glyphs,
             fmt=fmt, train_pool=train_pool, log_every=log_every,
-            max_new_tokens=max_new_tokens)
+            max_new_tokens=max_new_tokens, **recipe)
         recs, agg = maze2.rollout(
             model, tok, mazes, retry=True, glyphs=format_glyphs(
                 glyphs or Glyphs(), fmt), fmt=fmt,
             batch_size=eval_batch_size, max_new_tokens=max_new_tokens,
-            stop_on_parse=False, order_seed=9000 + int(seed))
+            stop_on_parse=False, order_seed=int(order_seed))
     finally:
         load_lora_state_dict(model, saved)
     rate = agg["overall"]["mine_step_rate"]
@@ -2042,6 +2211,21 @@ def relearn_read(model, tok, mazes, *, seed, cell, steps=RELEARN_STEPS,
         "mine_step_rate_trace": list(hist["mine_step_rate"]),
         "final_move_mass": hist["final_move_mass"],
         "zero_advantage_steps_move": hist["zero_advantage_steps_move"],
+        # critic 3: both of these used to be implicit. `order_seed` must be the
+        # measurement's or `ratio` divides two different questions; `recipe` is
+        # what makes "the A recipe" checkable rather than a coincidence of
+        # matching defaults.
+        "order_seed": int(order_seed),
+        "recipe": {k: (v if not callable(v) else getattr(v, "__name__", str(v)))
+                   for k, v in recipe.items()},
+        "recipe_pinned": sorted(recipe),
+        "entropy_coef_start": hist["config"]["entropy_coef_initial"],
+        "entropy_coef_final": (hist["entropy_coef"][-1]
+                               if hist["entropy_coef"] else None),
+        "entropy_coef_note": ("FRESH, not carried from the organism's own "
+                              "training: every cell's relearn then runs under "
+                              "the same entropy pressure, which is what makes "
+                              "B's read comparable to D's"),
         "note": ("REPORTED WITH ITS POWER: HH01 measured this firing on 4/8 of "
                  "the seeds where the RL demonstrably installed the habit"),
     }
@@ -2119,10 +2303,20 @@ def cell_ledger(measurement, reference=None, *, relearn=None):
         add("paired_solve_rate", (None if d_solve["mean_difference"] is None
                                   else abs(d_solve["mean_difference"])),
             "max", INVARIANCE_BAND, f"paired on {d_solve['n']} mazes")
+        # critic 3: this row used to carry `"ok": True` whenever a reference
+        # EXISTED, so `pass_rules` counted a criterion that was never tested as
+        # one every seed satisfied. Ungated is the right pre-registration --
+        # PR-6 asks for a floor "calibrated on D-vs-D across relabelling" and
+        # that calibration does not exist yet -- but ungated must mean `ok:
+        # None`, and `pass_rules` now reports bar-less rows separately instead
+        # of counting them.
         rows.append({"name": "decision_agreement",
                      "value": agree["decision_agreement"], "direction": "min",
-                     "bar": None, "ok": True,
-                     "note": "REPORTED, ungated -- PAP02's statistic, no "
+                     "bar": None, "ok": None,
+                     "prefix_agreement": agree["prefix_agreement"],
+                     "unmatched_states": agree["unmatched_states"],
+                     "note": "REPORTED, ungated -- PAP02's statistic, "
+                             "state-matched on (layout, position); no "
                              "pre-registered floor exists for this world"})
         bundling = {
             "mine_step_rate_difference": d_mine["mean_difference"],
@@ -2147,8 +2341,9 @@ def cell_ledger(measurement, reference=None, *, relearn=None):
         val = "n/a" if r["value"] is None else "%.4f" % float(r["value"])
         op = ">=" if r["direction"] == "min" else "<="
         bar = "  --  " if r["bar"] is None else "%.2f" % r["bar"]
-        lines.append(f"{r['name']:<32} {val:>8} {op} {bar}  "
-                     + ("PASS" if r["ok"] else "FAIL")
+        # critic 3: `ok is None` is "ungated", not "failed".
+        verdict = "----" if r["ok"] is None else ("PASS" if r["ok"] else "FAIL")
+        lines.append(f"{r['name']:<32} {val:>8} {op} {bar}  " + verdict
                      + (f"   [{r['note']}]" if r["note"] else ""))
     return {
         "cell": measurement["cell"],
@@ -2158,8 +2353,9 @@ def cell_ledger(measurement, reference=None, *, relearn=None):
         # ungated `decision_agreement` row has no bar, so neither decides the
         # seed. Everything else in the ledger does, which is M10's point: a
         # seed cannot buy the primary number with any of them.
-        "passed": all(r["ok"] for r in rows
-                      if r["bar"] is not None and not r["name"].startswith("novel")),
+        "passed": all(bool(r["ok"]) for r in rows
+                      if r["bar"] is not None and r["ok"] is not None
+                      and not r["name"].startswith("novel")),
         "primary": cont["lexical"]["contingency"],
         "strict_contingency": cont["strict"]["contingency"],
         "reward_contingency": cont["reward"]["contingency"],
@@ -2193,8 +2389,21 @@ def pass_rules(ledgers, *, n_seeds=None):
         for r in l["rows"]:
             if r["name"] not in names:
                 names.append(r["name"])
-    per = {}
+    # critic 3: a row with no bar was never tested, so counting it as a passed
+    # criterion (or, once `ok` became None, as a failed one) is a verdict on a
+    # measurement nobody made. Bar-less rows are REPORTED with their values and
+    # kept out of the counts.
+    per, ungated = {}, {}
     for name in names:
+        bars = [r["bar"] for l in rows for r in l["rows"] if r["name"] == name]
+        if bars and all(b is None for b in bars):
+            ungated[name] = {
+                "values": [r["value"] for l in rows for r in l["rows"]
+                           if r["name"] == name],
+                "seeds": [l["seed"] for l in rows
+                          for r in l["rows"] if r["name"] == name],
+                "note": "REPORTED, ungated: no bar, so no seed count"}
+            continue
         hits = [l["seed"] for l in rows
                 for r in l["rows"] if r["name"] == name and r["ok"]]
         per[name] = {"n_pass": len(hits), "seeds": hits, "n_seeds": n,
@@ -2212,6 +2421,7 @@ def pass_rules(ledgers, *, n_seeds=None):
         "n_seeds": n,
         "need": need,
         "per_criterion": per,
+        "ungated": ungated,
         "joint_seeds": joint,
         "n_joint": len(joint),
         "joint_passed": need is not None and len(joint) >= need,

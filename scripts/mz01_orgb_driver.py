@@ -140,6 +140,15 @@ def build_config(maze_orgb, run_orgb):
     default_ws = f"{OUT}/warm_start.pt"
     cfg["warm_start_adapter"] = (
         WARM_START or (default_ws if os.path.exists(default_ws) else None))
+    # critic 3, BLOCKING. The role glyphs come from the NAVIGATOR'S OWN result
+    # file, never from `Glyphs()`'s dataclass defaults. Under ASCII `on_mine` is
+    # the only measured role and it IS the manipulation; the shared navigator
+    # was trained and gated under the glyph `choose_role_glyphs` picked for it
+    # (`●`, centred valence 0.000), while the default is `🟧`, the orange square
+    # SPEC C2 rejected at +3.09. `run_orgb.run` refuses to start with a
+    # navigator adapter and no role glyphs, so a missing file is a loud stop
+    # rather than a silently different render.
+    cfg["role_glyphs"] = read_role_glyphs(NAV_ADAPTER) if NAV_ADAPTER else None
     if SMOKE_ONLY:
         # A smoke must never overwrite a real artefact, so it renames both the
         # warm start and every organism adapter and builds its own warm start.
@@ -153,6 +162,27 @@ def build_config(maze_orgb, run_orgb):
                     "preflight_group_size": 3, "eval_batch_size": 8,
                     "relearn_steps": 1, "max_new_tokens": 8})
     return cfg
+
+
+def read_role_glyphs(nav_adapter):
+    """`{wall, goal, on_mine}` from the navigator run that made this adapter.
+
+    The navigator driver writes `results/navigator/{name}.json` beside its
+    `{name}.pt` with a `glyphs` block carrying the roles `choose_role_glyphs`
+    MEASURED on the untrained checkpoint. Stage 1-3 must render with those and
+    nothing else (critic 3). Returns None when the file is absent, which is a
+    smoke; `run_orgb.run` raises for a real run.
+    """
+    if not nav_adapter:
+        return None
+    side = nav_adapter[:-3] + ".json" if nav_adapter.endswith(".pt") else None
+    if not side or not os.path.exists(side):
+        return None
+    with open(side) as fh:
+        blob = json.load(fh)
+    g = blob.get("glyphs") or {}
+    roles = {k: g[k] for k in ("wall", "goal", "on_mine") if g.get(k)}
+    return roles or None
 
 
 def deviations(cfg, maze_orgb):
@@ -171,6 +201,15 @@ def deviations(cfg, maze_orgb):
             out.append(f"{key}=False: {claim} is NOT-MEASURED in this shard")
     if cfg["eval_n"] != 256:
         out.append(f"eval_n={cfg['eval_n']} against the pre-registered 256")
+    # critic 3: `max_new_tokens` is part of what a reply IS (B6), and the smoke
+    # path sets it to 8. It was the one knob `deviations` did not report.
+    if cfg["max_new_tokens"] != maze_orgb.REPLY_MAX_NEW_TOKENS:
+        out.append(f"max_new_tokens={cfg['max_new_tokens']} against the "
+                   f"pre-registered {maze_orgb.REPLY_MAX_NEW_TOKENS}: every "
+                   "contingency is a reading at THIS window (B6)")
+    if not cfg.get("role_glyphs"):
+        out.append("role_glyphs=None: the render uses Glyphs() DEFAULTS, not "
+                   "the navigator's measured roles -- smoke only")
     return out
 
 
@@ -263,6 +302,8 @@ def main():
     say(f"PRE-FLIGHT: the warm start and the roll-out encode a prompt "
         f"identically ({pre_tok['prompt_tokens_train_eq_sample']} tokens); EOS "
         f"{pre_tok['eos_token']!r} -> [{pre_tok['eos_token_id']}]")
+    say(f"  role glyphs from the navigator: {cfg.get('role_glyphs')} "
+        f"(ASCII measures on_mine only; wall/goal are # and G)")
 
     t0 = time.perf_counter()
 
@@ -317,6 +358,14 @@ def main():
                 "every measurement pass must derive its word orders per episode "
                 "(maze2 D31) or one divergence desynchronises the rest")
         assert row["training"]["config"]["switches"] == row["switches"]
+        # critic 3: shards are pooled, so every row must say which warm start
+        # it stands on and which cue glyph it was rendered with.
+        assert row.get("warm_start_sha256"), (
+            f"{row['cell']}/{row['seed']} carries no warm-start sha, so the "
+            "scorer cannot prove it shares M5's ONE warm start")
+        assert row.get("role_glyphs") == (cfg.get("role_glyphs") or {}), (
+            f"{row['cell']}/{row['seed']} was rendered with role glyphs "
+            f"{row.get('role_glyphs')}, not the run's {cfg.get('role_glyphs')}")
     say("row contract OK")
 
     for cell in cfg["cells"]:

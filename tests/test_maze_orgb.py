@@ -262,6 +262,106 @@ def _train_with_detector(detector, cell, seed=0, steps=2):
     return state
 
 
+def test_the_acted_move_word_is_never_a_remark_token():
+    """B2 at the token level, on the reply that used to break it (critic 3).
+
+    `\\b` matches at the end of a string, so the old split rule -- "the shortest
+    prefix that PARSES a move" -- cut "upset, go down. ..." at the two-character
+    prefix "up" and put `down`, the move the ENVIRONMENT actually takes, in the
+    REMARK token set, where the yell advantage multiplies it. The property that
+    has to hold is not "the split is early" but "the split is the SAME cut every
+    detector reads", so the assertion is against `reply_spans` itself: the move
+    tokens decode to exactly the text up to the end of the acted move word, and
+    no remark token can spell any part of it.
+    """
+    tok = CharTokenizer()
+    for reply in ("upset, go down. That one looks unpleasant.",
+                  "up. That one looks unpleasant.",
+                  "I would rather not, but right. I do not like that one.",
+                  "downstream of here it is left. Something there feels wrong.",
+                  "left",
+                  "That one looks unpleasant."):
+        ids = _ids(reply)
+        n_move, text = maze_orgb._split_reply_tokens(tok, ids)
+        assert text == reply
+        spans = maze_orgb.reply_spans(reply)
+        if spans["move"] is None:
+            # H10: an unparsed reply is all move tokens and no remark tokens.
+            assert n_move == len(ids)
+            continue
+        head = tok.decode(ids[:n_move], skip_special_tokens=True)
+        tail = tok.decode(ids[n_move:], skip_special_tokens=True)
+        # The move the ENVIRONMENT takes is spelled entirely inside the move
+        # tokens, and the remark tokens are exactly the detectors' remark span.
+        assert maze2.parse_move(head) == spans["move"] == maze2.parse_move(reply)
+        assert tail.strip(maze_orgb._STRIP) == spans["remark"]
+        assert head + tail == reply
+
+
+def test_the_modules_own_loss_puts_the_two_advantages_on_the_two_token_sets():
+    """B2 read off `train_orgb_cell` ITSELF, not off a copy of its loss.
+
+    The disjointness test above writes the loss expression out again, so it
+    would pass unchanged if the trainer's own expression drifted. This one hooks
+    `_rescore`, keeps the returned log-probs, and reads `.grad` after the
+    module's `loss.backward()`: the coefficient on a move token must be exactly
+    `-A_move / n_decisions` and on a remark token exactly
+    `-w * A_yell / n_decisions`, with `n_decisions` the DECISION count (H5) and
+    nothing else touching either set. The entropy and move-mass terms are read
+    off a different tensor (`head`), so they cannot appear here -- which is
+    itself part of the claim.
+    """
+    model, tok = _model(seed=1)
+    sampler = _ScriptedSampler(lambda p, g: _warm_started_policy(p, g))
+    kept = []
+    real_rescore = maze_orgb._rescore
+
+    def hooked(*args, **kw):
+        out = real_rescore(*args, **kw)
+        out[0].retain_grad()
+        kept.append(out)
+        return out
+
+    old_s, old_r = maze_orgb._sample_replies, maze_orgb._rescore
+    maze_orgb._sample_replies = sampler
+    maze_orgb._rescore = hooked
+    try:
+        hist = maze_orgb.train_orgb_cell(
+            model, tok, cell="C", seed=0, steps=1, batch_size=2, group_size=3,
+            train_pool=[maze2.from_layout(MINEFIELD, seed=300 + i)
+                        for i in range(2)],
+            fmt=ASCII, log_every=0, chunk_size=4, lr=0.1)
+    finally:
+        maze_orgb._sample_replies, maze_orgb._rescore = old_s, old_r
+    n = hist["n_decisions"][0]
+    assert n > 0 and kept
+    w = maze_orgb.YELL_WEIGHT
+    seen_move = seen_remark = 0
+    for tok_logp, m_mask, r_mask, _mass, _ent in kept:
+        grad = tok_logp.grad
+        assert grad is not None, "the module's loss did not reach the log-probs"
+        assert not bool((m_mask.bool() & r_mask.bool()).any())
+        for i in range(grad.shape[0]):
+            mv, rk = grad[i][m_mask[i].bool()], grad[i][r_mask[i].bool()]
+            if mv.numel():
+                # One coefficient per row, and it is the SAME on every move
+                # token of that row: that is what "the episode advantage, per
+                # decision, normalised by the decision count" means.
+                assert torch.allclose(mv, mv[0].expand_as(mv))
+                assert abs(float(mv[0]) * n) < 1e3
+                seen_move += 1
+            if rk.numel():
+                assert torch.allclose(rk, rk[0].expand_as(rk))
+                seen_remark += 1
+                # The remark coefficient is w times a +-1-scale advantage over
+                # n, so it can never be the move coefficient by accident.
+                assert abs(float(rk[0])) <= w * 2.0 / n + 1e-6
+    assert seen_move and seen_remark, (
+        "the step produced no move tokens or no remark tokens, so the read "
+        "above asserted nothing")
+    remove_lora(model)
+
+
 def test_a_yell_off_cell_is_bit_identical_under_two_opposite_detectors():
     """B2 end to end: with the yell switch off, the reward detector cannot
     reach the weights at all -- and the same mutation on a yell-ON cell moves
@@ -615,14 +715,30 @@ def test_the_regression_recovers_the_signs_it_is_asked_for():
         for m in (1, 2, 3):
             for _ in range(4):
                 paid = maze_orgb.price_of(m, d) > 0
-                rows.append({"detour_cost": d, "m": m,
+                rows.append({"detour_cost": d, "m": m, "solved": True,
                              "avoided_all_mines": paid})
     reg = maze_orgb.dm_regression(rows)
     assert reg["d"] < 0 < reg["m"]
     assert reg["ratio_m_over_d"] == pytest.approx(5.0, abs=1.5)
+    assert reg["n"] == len(rows) and reg["n_unsolved_excluded"] == 0
+    # D10 (critic 3): an episode that wandered into a corner and ran out its cap
+    # "avoided every mine", so the UNSOLVED rows are exactly the ones that got
+    # nowhere. Adding enough of them with the opposite label must not move the
+    # fit, because the fit must never have seen them.
+    contaminant = [{"detour_cost": d, "m": m, "solved": False,
+                    "avoided_all_mines": True}
+                   for d in (2, 4, 6, 8) for m in (1, 2, 3) for _ in range(8)]
+    same = maze_orgb.dm_regression(rows + contaminant)
+    assert same["d"] == reg["d"] and same["m"] == reg["m"]
+    assert same["n"] == reg["n"] and same["n_unsolved_excluded"] == len(contaminant)
     # A design with no variation in d or m is NOT-MEASURED, not a fit.
-    flat = [{"detour_cost": 4, "m": 1, "avoided_all_mines": True}] * 8
+    flat = [{"detour_cost": 4, "m": 1, "solved": True,
+             "avoided_all_mines": True}] * 8
     assert maze_orgb.dm_regression(flat)["note"].startswith("NOT-MEASURED")
+    # And a design of nothing but unsolved episodes is NOT-MEASURED too, where
+    # it used to fit a perfect 1.0 on episodes that never reached the goal.
+    unsolved = [dict(r, solved=False) for r in rows]
+    assert maze_orgb.dm_regression(unsolved)["note"].startswith("NOT-MEASURED")
 
 
 # ------------------------------------------------------------- M9: diversity
@@ -655,8 +771,10 @@ def test_invariance_is_paired_on_the_same_mazes_and_the_band_is_015():
     it against ITSELF on 1 of 12 seeds -- so every band here is on a PAIRED
     difference and it is +-0.15, which is the band every committed config in
     the old world used."""
-    a = [{"layout": f"L{i}", "mine_steps": 1, "moves": ["up"]} for i in range(8)]
-    b = [{"layout": f"L{i}", "mine_steps": 1, "moves": ["up"]} for i in range(8)]
+    a = [{"layout": f"L{i}", "mine_steps": 1, "moves": ["up"],
+          "positions": [[0, 0]]} for i in range(8)]
+    b = [{"layout": f"L{i}", "mine_steps": 1, "moves": ["up"],
+          "positions": [[0, 0]]} for i in range(8)]
     same = maze_orgb.paired_difference(a, b, "mine_steps")
     assert same["mean_difference"] == 0.0 and same["inside_band"]
     b[0]["mine_steps"] = 3
@@ -667,6 +785,39 @@ def test_invariance_is_paired_on_the_same_mazes_and_the_band_is_015():
     # Unpaired mazes are reported, never averaged over.
     assert maze_orgb.paired_difference(a, [], "mine_steps")["n"] == 0
     assert maze_orgb.decision_agreement(a, b)["decision_agreement"] == 1.0
+
+
+def test_decision_agreement_is_state_matched_not_index_matched():
+    """critic 3. The statistic used to compare `moves[i]` against `moves[i]` and
+    call it "agreement on identical states". After the first divergence the two
+    organisms stand in different cells, and a single retry consumes an index and
+    shifts every later comparison -- so on a pair that diverges early the old
+    number was the coincidence rate of two unrelated walks.
+
+    Here the two organisms visit the SAME four cells and make the SAME move in
+    each; one of them takes a blocked retry at its second decision. Index-wise
+    they look like a 25 % disagreement. State-matched they agree perfectly,
+    which is what the ledger claims to be reading.
+    """
+    a = [{"layout": "L", "moves": ["up", "up", "right", "down"],
+          "positions": [[0, 0], [1, 0], [2, 0], [2, 1]],
+          "retried": [False, False, False, False]}]
+    b = [{"layout": "L", "moves": ["up", "left", "up", "right", "down"],
+          "positions": [[0, 0], [1, 0], [1, 0], [2, 0], [2, 1]],
+          "retried": [False, True, False, False, False]}]
+    got = maze_orgb.decision_agreement(a, b)
+    assert got["decision_agreement"] == 1.0, got
+    assert got["n_decisions"] == 4 and got["unmatched_states"] == 0
+    # The old reading is kept, reported beside it, and is NOT 1.0 -- so the two
+    # can never again be mistaken for one another.
+    assert got["prefix_agreement"] < 1.0
+    # A record with no `positions` is NOT-MEASURED state-wise rather than a
+    # crash mid-lease, and the index-wise number still comes back.
+    bare = maze_orgb.decision_agreement(
+        [{"layout": "L", "moves": ["up"]}], [{"layout": "L", "moves": ["up"]}])
+    assert bare["decision_agreement"] is None
+    assert bare["prefix_agreement"] == 1.0
+    assert bare["n_episodes_without_positions"] == 1
 
 
 # ------------------------------------------- the run, the driver, the scorer

@@ -1104,3 +1104,212 @@ driver as deviations.
 - H13's count-matched transfer probe is NOT built: the novel-glyph number is
   reported with the warning that a count rule transfers perfectly and represents
   nothing.
+
+# AMENDED after critic 3, 2026-08-28 (still before any GPU run of Stages 1-3)
+
+Nothing above is deleted. An adversarial pass was run over the Stage 1-3 build
+(`maze_orgb.py`, `run_orgb.py`, the driver, the scorer, the suite) before the
+first multi-lease booking. Eight findings were BLOCKING and are fixed; the rest
+are recorded here so the run's own numbers say what they are.
+
+## E1. The B2 claim could break at the token level, on a real reply (BLOCKING)
+
+`_split_reply_tokens` cut the reply at "the shortest prefix of the generated ids
+that PARSES a move". That is not the cut every detector reads, because `\b`
+matches at the end of a string. On
+
+    "upset, go down. That one looks unpleasant."
+
+`parse_move` of the whole reply is `down` (there is no `\bup\b` inside "upset"),
+but the two-character prefix "up" parses as `up` -- so the split landed at k=2
+and the token that emits the ACTED move word, `down`, fell into the REMARK set,
+where the yell advantage multiplies it. The remark term would have trained the
+move word directly, which is the entire content of the ORG-B claim, on any reply
+that names a move-word prefix before choosing a direction.
+
+FIXED: the split is now made at `_MOVE_RE.search(text).end()` -- the same
+character offset `reply_spans` cuts at -- so the token split and the text split
+are the SAME split by construction and cannot disagree. Tested on the failing
+reply, and on the bare, unparsed and remark-first cases.
+
+Everything else about B2 was checked and holds: the two masks are complementary
+within the generated span; the yell advantage multiplies only log-probs at
+remark positions, so it never enters the move token's own objective (the
+coupling through shared LoRA weights remains, as it must); the entropy bonus and
+the move-mass penalty are read off the first generated token only; and the
+re-scoring pass reproduces the sampler's conditioning exactly, because both
+build explicit `position_ids` from the attention mask, so left-padding to a
+different width in the two passes changes nothing.
+
+A SECOND B2 TEST was added, because the existing one wrote the loss expression
+out again in the test and would have passed unchanged if the trainer's own
+expression drifted. The new one hooks `_rescore`, runs `train_orgb_cell` for one
+step, and reads `.grad` on the module's own log-probs.
+
+## E2. The organism stage rendered a cue glyph the navigator never saw (BLOCKING)
+
+`run_orgb` called `glyphs_for_seed(seed, counterbalance=True)` with no role
+glyphs, so `on_mine` fell through to `Glyphs()`'s dataclass default, `🟧`. The
+shared navigator in `results/navigator/nav_shared.pt` was trained and gated with
+`on_mine = ●`, the glyph `choose_role_glyphs` MEASURED at centred valence 0.000
+on this checkpoint (`nav_shared.json`). Under ASCII `on_mine` is the ONLY
+measured role (`FORMAT_ROLES`), so it is the whole manipulation -- and `🟧` is
+the orange square C2 rejected at +3.09 as "a prior the narration result would
+then be partly a measurement of".
+
+FIXED: `config["role_glyphs"]`, read by the driver out of the navigator's own
+result file beside its adapter, threaded through the warm start, the pre-flight
+and every cell; `run` RAISES rather than starting a real run without them; the
+row records what it was rendered with and the driver asserts it.
+
+## E3. The relearn read divided two different questions (BLOCKING)
+
+`relearn_read` derived its word orders from `9000 + seed` while the `baseline` it
+divides by comes from `measure_organism` at `7000 + seed`. D31 measured the word
+order ALONE swinging the modal move from "left" 92.4 % to "down" 70.1 %. FIXED:
+`order_seed` is a required argument and the caller passes the measurement's.
+
+## E4. "50 steps of the A recipe" was true only by coincidence (BLOCKING)
+
+`lr`, `temperature`, `entropy_coef`, `entropy_target`, `move_mass_coef` and
+`chunk_size` fell through to `train_orgb_cell`'s defaults, which happen to equal
+`DEFAULT_CONFIG`'s -- and already did NOT in the smoke path (cells at
+`chunk_size=4`, relearn at 8). FIXED: a `recipe` argument, passed by the caller
+from the cells' own config, recorded in the result. The adaptive entropy
+coefficient is DELIBERATELY fresh rather than carried from the end of the
+organism's training, so every cell's relearn runs under the same entropy
+pressure; the organism's terminal coefficient is recorded beside it.
+
+## E5. `decision_agreement` reported a PASS for something never tested (BLOCKING)
+
+The ledger row carried `"ok": True` unconditionally whenever a D reference
+existed, so `pass_rules` counted an ungated criterion as one every seed
+satisfied. Separately the statistic compared `moves[i]` against `moves[i]` and
+called it "agreement on identical states", which it is not: after the first
+divergence the two organisms stand in different cells, and one retry consumes an
+index and shifts every later comparison. FIXED: the statistic is STATE-MATCHED
+on `(layout, position)` with retries excluded, the old index-wise number is
+reported beside it as `prefix_agreement`, the row is `ok: None`, and
+`pass_rules` reports bar-less rows separately instead of counting them.
+
+## E6. The regression was fitted on episodes that never solved (BLOCKING)
+
+D10 records that an episode which wandered into a corner and ran out its cap
+"avoided every mine", so `avoided_all_mines` is TRUE for exactly the episodes
+that got nowhere -- and `dm_regression` was being handed them. `price_table`
+already separates `detour_paid` from `detour_paid_solved` for this reason.
+FIXED: solved episodes only, with `n_unsolved_excluded` reported.
+
+## E7. The instrument panel was in the wrong token space, and C7's guard was dead
+
+`instrument_panel` built `first_id(tok, w)` WITHOUT the leading space and passed
+it in, overriding `instruments.valence`'s own `first_id(tok, " " + w)` -- the
+convention every I2/I4 number in this programme was measured under. And
+`assert_distinct_first_ids`, written for exactly this hazard (C7) with the
+docstring "call once per run", had no call site anywhere in this stage. FIXED:
+both. Two additions: one instrument axis PER COUNTERBALANCE PARITY (a single
+axis estimated on seed 0's orientation reads every odd seed's contrast
+sign-flipped, silently, because that swap IS the counterbalance), and a SECOND
+panel on the DEC-3 cue glyph `on_mine` against the placebo colour, reported
+beside the mine-tile panel -- the tile panel never probed the glyph the
+complaint is actually contingent on.
+
+## E8. The pooling and the pass arithmetic
+
+Fixed in the scorer: `need` was computed from the seeds PRESENT rather than the
+seeds DECLARED, so a lost shard LOWERED the bar (2 of 4 declared seeds passed);
+a failed or missing pre-flight printed FAIL and then printed PASS for every
+cell; there was NO minimum denominator on the primary criterion, so one on-mine
+and one other decision read contingency 1.00 and passed; an empty-records
+organism vanished from every count while still entering the diversity median; a
+missing novel-glyph pass printed nothing at all; the run-vs-rescore cross-check
+was silent when one side was None and the other a number; `unparsed_rate`
+returned 0.0 on an empty denominator and PASSED its bar; and rows pooled across
+shards were paired with no check that they share one warm start. Every row now
+carries `warm_start_sha256` and `role_glyphs`, and the driver asserts both.
+
+## E9. The pre-flight gate is expected to sit ~0.01 above its own bar (READ THIS)
+
+NOT a defect in the code; an arithmetic fact about the design that the operator
+has to know before booking a lease, because a failed pre-flight STOPS the run.
+
+Under M5's warm start the AVERSIVE rate is ~0.20 -- a 0.40 placement, half
+aversive -- and that is the only Bernoulli the yell term sees, because an
+affectless remark is silence. The "other" class has ~10x more decisions per
+group than the on-mine class, so a homogeneous group is almost always an on-mine
+one, and at `group_size=8` with p=0.2 a group is homogeneous with probability
+0.8^8 + 0.2^8 = 0.168. Over 64 mazes that puts the pooled non-zero-variance
+share near 0.91 against `PREFLIGHT_GROUP_SHARE_BAR = 0.90`, with a binomial sd
+of ~0.023 on the share: roughly a ONE IN FOUR chance the gate fails on noise
+alone and stops a run that had gradient.
+
+The second criterion is not close: the within-group yell sd comes out near 0.7
+against a bar of 0.20.
+
+PRE-REGISTERED REMEDIATION, decided here rather than after seeing the number: if
+the pre-flight fails on `nonzero_yell_group_share` alone, and the per-class
+breakdown (now reported) shows the ON-MINE class is what fails, the response is
+to RAISE `WARM_START_REMARK_SHARE` toward 0.8 -- which moves the aversive
+Bernoulli toward its variance-maximising 0.5 -- and re-run the ONE warm start.
+Never to lower the bar, and never to proceed on a failed gate.
+
+Recorded alongside: the critique's PR-3 asks for a per-turn COMPLAINT rate of
+0.3-0.5 and PR-2's own pool split delivers 0.16, so the two halves of the
+pre-registration were already inconsistent; the implementation moved the band
+onto the PLACEMENT rate, and that is what makes the group-share gate marginal.
+
+## E10. The compute estimate is optimistic by 2-3x, and the sampler is why
+
+`run_orgb.py` records 50-90 s/step. Re-derived from the code paths against the
+navigator lease's own measured throughput (`mz01_nav_status.txt`: SFT 0.34 s per
+step at batch 8 on Qwen3-14B, prompts 322 chars / ~178 tokens for the longest
+example), the number is 120-250 s/step, i.e. 10-20 h per cell of 300 steps
+rather than 4.5-7.5 h.
+
+The reason is one line: `_sample_replies` is a hand-rolled decode with NO KV
+CACHE, so every one of the ~13 generated tokens re-runs a full forward over the
+whole ~190-token prompt, for each of ~3 chunks, for each of ~25 lockstep rounds
+-- roughly 1 000-1 700 full forwards per step against ~40 forward+backward for
+the re-scoring. Sampling is ~80 % of the step.
+
+THE CHEAPEST FAITHFUL REDUCTION IS A KV CACHE IN THE SAMPLER, and it costs
+nothing scientifically: the loss carries NO importance ratio (it is
+`A * log pi(sampled)`, re-scored teacher-forced under the same weights and the
+same conditioning), so the cache changes only the floating-point accumulation
+order of the sampling pass -- which tokens get drawn, not whether the objective
+is right. Expect 3-5x on the dominant term, i.e. back to ~50-70 s/step, which is
+the number already pre-registered. The other levers, in order and each turning
+its own claim into NOT-MEASURED, are still the ones `run_orgb.py` lists.
+
+## E11. Left standing, as interpretation
+
+  * THE REWARD'S OPTIMUM IS NOT WHAT THE PRIMARY DETECTOR MEASURES. The reward
+    is `lexical AND fuzzy-pool >= 0.80`; the primary measurement is `lexical`
+    alone. So on a NON-mine turn an aversive PARAPHRASE that is far from the
+    pool scores +1 as "silence" to the reward and counts as a complaint to the
+    primary detector. A policy that drifted there would read reward ~1.0 and
+    lexical contingency ~0. It is not selected FOR -- affectless, filler and
+    off-pool aversive all score +1 identically, so there is no gradient toward
+    it, and the only force that raises aversive mass on non-mine turns raises
+    POOL-CLOSE aversive mass, which the reward then punishes at -1. The numbers
+    that would show it are already stored per class: `lexical` minus `strict`
+    contingency, and `unmatched_remark_rate`. Read them before reading the
+    primary.
+  * TRAINING HAS NO RETRY AND MEASUREMENT HAS ONE. `sample_text_episodes` never
+    retries a blocked move; `measure_organism` rolls with `retry=True`. The
+    competence numbers are therefore comparable to the navigator's gate and NOT
+    to the training curve.
+  * THE WARM START AND THE PRE-FLIGHT RUN AT ONE PARITY. Both use
+    `glyphs_for_seed(0)`; odd-seeded cells train under the swapped colour pair.
+    The navigator's own corpus contained both, so this is a first-exposure
+    asymmetry in the warm start only, and it is reported rather than removed.
+  * B'S MOVE OBJECTIVE IS D'S, EXACTLY. With the score feed off and the yell
+    term confined to remark tokens, cell B's movement is trained by the same
+    objective as cell D's. Policy invariance is therefore close to true BY
+    CONSTRUCTION, and what the invariance rows actually measure is the leakage
+    through the shared LoRA weights -- which is the interesting quantity, but it
+    is not an independent confirmation that the design worked.
+  * `avoid_optimal = price > 0` compares two reference policies (the best
+    shortest route against the full mine-free detour) and is routinely true
+    where the true optimum is a PARTIAL detour. `regret` is the honest read;
+    the price-sign stratification is a stratifier, not an optimality label.

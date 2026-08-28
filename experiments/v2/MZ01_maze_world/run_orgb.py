@@ -179,6 +179,18 @@ DEFAULT_CONFIG = {
     # artefacts
     "lora": {"r": 16, "alpha": 32, "target_modules": ["q_proj", "v_proj"]},
     "nav_adapter": "experiments/v2/MZ01_maze_world/results/navigator/nav_shared.pt",
+    # critic 3, BLOCKING. `glyphs_for_seed(seed, counterbalance=True)` with no
+    # role glyphs falls through to `Glyphs()`'s dataclass DEFAULT, `on_mine =
+    # 🟧`. The shared navigator was trained and gated with `on_mine = ●`, the
+    # glyph `choose_role_glyphs` MEASURED at centred valence 0.000 on this
+    # checkpoint, and 🟧 is the orange square SPEC C2 rejected at +3.09 as "a
+    # prior the narration result would then be partly a measurement of". Under
+    # ASCII `on_mine` is the ONLY measured role (`FORMAT_ROLES`), so it is the
+    # whole manipulation. Running the organism stage on a cue glyph the
+    # navigator never saw would put an ungated base under every cell. The
+    # driver reads these from the navigator's own result file; `run` REFUSES to
+    # start with a navigator adapter and no role glyphs.
+    "role_glyphs": None,
     # M5's "saved ONCE": a shard that finds this file LOADS it instead of
     # training a second warm start, because two warm starts would put a
     # different base under different cells of one design -- the confound M2
@@ -195,8 +207,19 @@ DEFAULT_CONFIG = {
 # scorer indexes into them: a row that grew a key or lost one between a smoke
 # and a lease is the failure that costs the lease.
 ROW_KEYS = ("cell", "seed", "switches", "adapter_path", "adapter_sha256",
+            "warm_start_sha256", "role_glyphs",
             "training", "measurement", "ledger", "relearn", "instruments",
             "seconds")
+
+
+def _sha256_file(path):
+    """The sha of an adapter file on disk. M5's identity, across shards."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
 
 
 def _say(msg, log=None):
@@ -341,6 +364,26 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
             "raw base model and the SPEC's Stage 0 v2 gate does not apply to it")
         _say("!! NO NAVIGATOR ADAPTER: this is a smoke, not a run", log)
 
+    # ---- the role glyphs: the NAVIGATOR'S, never the dataclass default ------
+    roles = {k: v for k, v in (cfg.get("role_glyphs") or {}).items()
+             if k in ("wall", "goal", "on_mine") and v}
+    if nav_path and "on_mine" not in roles:
+        raise ValueError(
+            "no `on_mine` role glyph was given, so this stage would render the "
+            "cue with `Glyphs()`'s dataclass default. The shared navigator was "
+            "trained and gated under the glyph `choose_role_glyphs` MEASURED "
+            "for it; read it out of the navigator's result file and pass it as "
+            "config['role_glyphs'] (critic 3).")
+    payload["role_glyphs"] = {
+        "resolved": dict(roles),
+        "source": ("the navigator's own result file" if roles
+                   else "Glyphs() defaults -- SMOKE ONLY, no navigator loaded"),
+        "note": ("ASCII measures only `on_mine` (maze2.FORMAT_ROLES); wall and "
+                 "goal are the fixed characters # and G"),
+    }
+    _say(f"role glyphs {roles or '(defaults -- smoke)'} "
+         f"({payload['role_glyphs']['source']})", log)
+
     # ---- the eval set, shared by every cell of every seed -------------------
     eval_set, eval_stats = maze2.generate_set(
         cfg["eval_n"], n=n, generator=derive_generator(0, "orgb", "eval"),
@@ -354,7 +397,7 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
          f"pool at n={n}, fmt={fmt}", log)
 
     # ---- Stage 1: the ONE warm start (M5) ----------------------------------
-    ws_glyphs = maze2.format_glyphs(maze2.glyphs_for_seed(0), fmt)
+    ws_glyphs = maze2.format_glyphs(maze2.glyphs_for_seed(0, **roles), fmt)
     ws_path = f"{out_dir}/{cfg['warm_start_name']}.pt"
     reuse = cfg.get("warm_start_adapter")
     if reuse and os.path.exists(reuse):
@@ -363,6 +406,10 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
         warm_state = lora_state_dict(model, cpu=True)
         payload["warm_start"] = {
             "reused_from": reuse,
+            # critic 3: the sha of the file this shard actually loaded, so the
+            # scorer can prove two shards' cells share one warm start.
+            "adapter_sha256": _sha256_file(reuse),
+            "adapter_path": reuse,
             "note": ("M5: this shard LOADED the one warm-started adapter rather "
                      "than training a second one; its corpus stats and training "
                      "history are in the shard that made it"),
@@ -399,21 +446,39 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
         return payload
 
     # ---- the I5 axis, estimated ONCE on the shared warm-started base --------
-    axis = None
+    # critic 3. ONE AXIS PER PARITY. `glyphs_for_seed` swaps the mine and the
+    # placebo colour on odd seeds (that IS the counterbalance), so an axis
+    # estimated once on seed 0's orientation is the NEGATIVE of the contrast
+    # every odd-seeded organism is then probed on: `I5_probe_projection` and
+    # every antisymmetric gap in `base_instruments` would come back
+    # sign-flipped for half the design, silently. `probe_axis` is seconds of
+    # compute, so there is one per parity, both estimated on the same shared
+    # warm-started base BEFORE any cell exists.
+    axes, base_panels = {}, {}
     axis_note = None
-    mine_glyph_for_axis = maze2.glyphs_for_seed(0).mine
-    placebo_for_axis = maze2.glyphs_for_seed(0).placebo
+    parities = sorted({int(s) % 2 for s in seeds})
     if cfg["instruments"]:
         try:
             from calibration.instruments import probe_axis
-            axis = probe_axis(model, tok, mine_glyph_for_axis, placebo_for_axis)
+            for parity in parities:
+                pg = maze2.glyphs_for_seed(parity, counterbalance=True, **roles)
+                axes[parity] = probe_axis(model, tok, pg.mine, pg.placebo)
+                base_panels[parity] = maze_orgb.instrument_panel(
+                    model, tok, pg.mine, pg.placebo, axis=axes[parity],
+                    layer=int(axes[parity].shape[0]) - 1)
             payload["instrument_axis"] = {
                 "estimated_on": "the warm-started shared base (before any cell)",
-                "mine": mine_glyph_for_axis, "placebo": placebo_for_axis,
-                "layers": int(axis.shape[0])}
-            payload["base_instruments"] = maze_orgb.instrument_panel(
-                model, tok, mine_glyph_for_axis, placebo_for_axis, axis=axis,
-                layer=int(axis.shape[0]) - 1)
+                "per_parity": {
+                    str(k): {"mine": maze2.glyphs_for_seed(
+                                 k, counterbalance=True, **roles).mine,
+                             "placebo": maze2.glyphs_for_seed(
+                                 k, counterbalance=True, **roles).placebo,
+                             "layers": int(v.shape[0])}
+                    for k, v in axes.items()},
+                "note": ("one axis per counterbalance parity: a single axis "
+                         "would read the odd seeds' contrast sign-flipped")}
+            payload["base_instruments"] = {str(k): v
+                                           for k, v in base_panels.items()}
         except Exception as err:                      # pragma: no cover
             axis_note = f"NOT-MEASURED: the instrument axis raised {err!r}"
             payload["not_measured"].append(axis_note)
@@ -423,7 +488,7 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
     by_seed = {}
     for seed in seeds:
         glyphs = maze2.format_glyphs(
-            maze2.glyphs_for_seed(seed, counterbalance=True), fmt)
+            maze2.glyphs_for_seed(seed, counterbalance=True, **roles), fmt)
         for cell in cfg["cells"]:
             t_cell = time.perf_counter()
             _say(f"seed {seed} cell {cell} "
@@ -467,12 +532,37 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
                     eval_batch_size=cfg["eval_batch_size"],
                     train_pool=train_pool,
                     max_new_tokens=cfg["max_new_tokens"],
-                    baseline=base)
+                    baseline=base,
+                    # critic 3: the SAME word-order stream the baseline was
+                    # measured under (D31), and the cells' OWN recipe rather
+                    # than `train_orgb_cell`'s defaults, so "50 steps of the A
+                    # recipe" cannot quietly become false when a knob moves.
+                    order_seed=meas["order_seed"],
+                    recipe={"lr": cfg["lr"],
+                            "temperature": cfg["temperature"],
+                            "entropy_coef": cfg["entropy_coef"],
+                            "entropy_target": cfg["entropy_target"],
+                            "move_mass_coef": cfg["move_mass_coef"],
+                            "chunk_size": cfg["chunk_size"]})
             panel = None
+            axis = axes.get(int(seed) % 2)
             if cfg["instruments"] and axis is not None:
                 panel = maze_orgb.instrument_panel(
                     model, tok, glyphs.mine, glyphs.placebo, axis=axis,
                     layer=int(axis.shape[0]) - 1)
+                # critic 3. After DEC-3 the narration cue is `on_mine`, not the
+                # mine TILE, and the tile panel never probes it. This second
+                # panel reads the same instruments on the cue glyph itself
+                # against the placebo colour, so the out-of-domain claim is
+                # about the thing the complaint was contingent on. Reported
+                # beside the tile panel, never instead of it.
+                panel["on_mine_panel"] = maze_orgb.instrument_panel(
+                    model, tok, glyphs.on_mine, glyphs.placebo, axis=axis,
+                    layer=int(axis.shape[0]) - 1)
+                panel["on_mine_panel"]["note"] = (
+                    "the DEC-3 cue glyph against the placebo colour; the axis "
+                    "is the mine-vs-placebo axis, so this projection is a "
+                    "READING ON that axis and not an axis of its own")
             elif cfg["instruments"]:
                 panel = {"note": axis_note or "NOT-MEASURED (no axis)"}
             row = {
@@ -481,6 +571,14 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
                 "switches": dict(maze_orgb.CELL_SWITCHES[cell]),
                 "adapter_path": path,
                 "adapter_sha256": sha,
+                # critic 3: shards are pooled by the scorer and cell B of one
+                # shard is paired against cell D of another. Without this the
+                # pooling cannot tell whether the two share the ONE warm start
+                # M5 requires, and the confound M2 removed at the navigator
+                # comes back in through the sharding.
+                "warm_start_sha256": (payload["warm_start"] or {}).get(
+                    "adapter_sha256"),
+                "role_glyphs": dict(roles),
                 "training": hist,
                 "measurement": meas,
                 "ledger": None,
