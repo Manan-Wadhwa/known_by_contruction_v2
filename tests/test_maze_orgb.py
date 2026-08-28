@@ -298,6 +298,96 @@ def test_the_acted_move_word_is_never_a_remark_token():
         assert head + tail == reply
 
 
+class _MergingTokenizer:
+    """A decode-only stand-in for a real BPE, whose vocabulary MERGES.
+
+    `CharTokenizer` gives every character its own id, so the split above cannot
+    see the one hazard a 150k-merge vocabulary has: a single token that spans
+    the move/remark boundary. Qwen's byte-level BPE pre-tokenises letters apart
+    from punctuation, so ". " and "up." cannot BE tokens there -- but the claim
+    "the two gradient terms touch disjoint token sets" must not rest on a
+    property of one tokenizer's merge table, so the pieces below are chosen to
+    straddle the cut in every way a vocabulary could.
+    """
+
+    def __init__(self, pieces):
+        self.pieces = list(pieces)
+
+    def decode(self, ids, skip_special_tokens=True):
+        return "".join(self.pieces[i] for i in ids)
+
+
+def test_the_token_split_survives_a_tokenizer_whose_merges_straddle_the_cut():
+    """B2 under a MERGING vocabulary: ". " and the move word in one token.
+
+    The invariant is not "the split is at a token boundary of some tokenizer" --
+    no tokenizer owes us that -- it is that THE ACTED MOVE WORD IS SPELLED
+    ENTIRELY INSIDE THE MOVE TOKENS. A token that straddles the cut goes to the
+    MOVE set, where the episode-return advantage multiplies it and the yell
+    advantage never does; the remark tokens can then never contain a character
+    of the move the environment took, whatever the merge table looks like.
+
+    The EOS token is not in `gen_ids` at all -- `_sample_replies` marks a row
+    done and does NOT append it -- so it is in neither set and the stop action
+    carries no gradient in either term. That is recorded in the SPEC as a gap,
+    and it is asserted here so it cannot change silently.
+    """
+    cases = [
+        # the merge the task names: ". " as one token, after a bare move word
+        (["up", ". ", "That one looks unpleasant."], "up"),
+        # the move word and its punctuation in ONE token, straddling the cut
+        (["up.", " That one looks unpleasant."], "up"),
+        # a leading space on the move token, and a merged sentence
+        ([" down", ". ", "I would rather not go there."], "down"),
+        # critic 3's reply, with the prefix merged into one token
+        (["upset, go ", "down", ". ", "That one looks unpleasant."], "down"),
+        # one token for the whole reply, and one for a bare move
+        (["up. That one looks unpleasant."], "up"),
+        (["left"], "left"),
+        # no move word anywhere: H10, every token is a move token
+        (["That one looks unpleasant."], None),
+    ]
+    for pieces, want in cases:
+        tok = _MergingTokenizer(pieces)
+        ids = list(range(len(pieces)))
+        n_move, text = maze_orgb._split_reply_tokens(tok, ids)
+        assert text == "".join(pieces)
+        spans = maze_orgb.reply_spans(text)
+        assert spans["move"] == want == maze2.parse_move(text)
+        head, tail = tok.decode(ids[:n_move]), tok.decode(ids[n_move:])
+        assert head + tail == text
+        if want is None:
+            # H10: an unparsed reply has no remark span, so the yell advantage
+            # multiplies nothing at all and the move gradient still applies.
+            assert n_move == len(ids) and tail == ""
+            continue
+        hit = maze_orgb._MOVE_RE.search(text)
+        # THE CLAIM: the acted move word is spelled entirely inside the MOVE
+        # tokens, so no remark token can carry it and the yell advantage can
+        # never multiply the log-prob of the move the environment took.
+        assert len(head) >= hit.end(), (pieces, head)
+        assert maze2.parse_move(head) == want
+        assert tail == text[len(head):]
+        # A token that STRADDLES the cut goes to the move set, so a merge can
+        # sweep the first characters of the remark into the MOVE tokens -- the
+        # safe direction (they are trained by the return advantage, which in
+        # cell B carries no mine-contingent term at all), and never the other
+        # way. Whatever it sweeps in is not another move word.
+        assert maze2.parse_move(text[hit.end():len(head)]) is None, pieces
+        if tail:
+            assert spans["remark"].endswith(tail.strip(maze_orgb._STRIP))
+        else:
+            # The degenerate merge -- the WHOLE reply in one token -- leaves the
+            # remark token set EMPTY, so the yell advantage multiplies nothing
+            # and the complaint is unlearnable on that decision. No byte-level
+            # BPE can do this (its pre-tokeniser splits letters from
+            # punctuation, so a token spans neither a space nor a sentence), and
+            # it is asserted rather than assumed because the consequence is
+            # silent: the reward still enters the group baseline and no gradient
+            # reaches the words.
+            assert len(pieces) == 1
+
+
 def test_the_modules_own_loss_puts_the_two_advantages_on_the_two_token_sets():
     """B2 read off `train_orgb_cell` ITSELF, not off a copy of its loss.
 
@@ -845,11 +935,24 @@ def _run_payload(tmp_path, seeds=(0, 1)):
     return payload
 
 
-def test_the_run_produces_every_row_key_and_one_shared_warm_start(tmp_path):
+@pytest.fixture(scope="module")
+def shared_run(tmp_path_factory):
+    """ONE synthetic run, shared by the four tests that read one.
+
+    The run is the expensive fixture in this file (a whole warm start,
+    pre-flight, 2x4 cells, four measurement passes each and a relearn, on the
+    toy model), and four tests below need A run rather than their own. They all
+    read it and none mutates it, so it is built once. Returns (payload, dir).
+    """
+    out = tmp_path_factory.mktemp("orgb_shared")
+    return _run_payload(out, seeds=(0, 1)), out
+
+
+def test_the_run_produces_every_row_key_and_one_shared_warm_start(shared_run):
     """The whole shape, end to end. Every number it produces is garbage -- the
     model is a four-parameter transformer -- and every CONTRACT is real."""
     import run_orgb
-    payload = _run_payload(tmp_path)
+    payload, tmp_path = shared_run
     assert payload["preflight"]["passed"]
     assert len(payload["rows"]) == 8
     for row in payload["rows"]:
@@ -922,6 +1025,8 @@ def test_the_scorer_restates_the_bars_it_was_given():
     assert s.DIVERSITY_BAR == maze_orgb.DIVERSITY_BAR
     assert s.INVARIANCE_BAND == maze_orgb.INVARIANCE_BAND
     assert s.NOVEL_CONTINGENCY_BAR == maze_orgb.NOVEL_CONTINGENCY_BAR
+    assert s.AFFECTLESS_CONTRAST_BAR == maze_orgb.AFFECTLESS_CONTRAST_BAR
+    assert s.INVARIANCE_RATIO_BAND == maze_orgb.INVARIANCE_RATIO_BAND
     assert s.SEED_PASS_FRACTION == maze_orgb.SEED_PASS_FRACTION
     assert s.FUZZY_POOL_BAR == maze_orgb.FUZZY_POOL_BAR
     assert s.RELEARN_BAR == maze_orgb.RELEARN_BAR
@@ -936,11 +1041,11 @@ def test_the_scorer_restates_the_bars_it_was_given():
         maze2.SCORE_STEP, maze2.SCORE_MINE, maze2.SCORE_GOAL)
 
 
-def test_the_scorers_arithmetic_is_the_modules_arithmetic(tmp_path):
+def test_the_scorers_arithmetic_is_the_modules_arithmetic(shared_run):
     """One statistic, two authors: if they drift, the number in the paper is
     computed one way in the run and another way in the re-score."""
     s = _scorer()
-    payload = _run_payload(tmp_path, seeds=(0,))
+    payload, _out = shared_run
     for row in payload["rows"]:
         recs = row["measurement"]["records"]
         for name, mine, theirs in (
@@ -969,10 +1074,84 @@ def test_the_scorers_arithmetic_is_the_modules_arithmetic(tmp_path):
         assert primary == pytest.approx(row["ledger"]["primary"])
 
 
-def test_the_scorer_runs_under_a_bare_python3(tmp_path):
+def test_the_scorer_agrees_with_the_runs_own_pass_rules(shared_run):
+    """PR-6, twice: `maze_orgb.pass_rules` in the run and `pass_rules` here.
+
+    The scorer exists because a re-score that read the run's own verdict could
+    not catch a contingency computed with the reward's detector or a ledger row
+    quietly skipped -- so the two arithmetics have to be checked against each
+    other on a payload where both can run. On a synthetic run (a four-parameter
+    transformer, scripted replies, every number garbage and every CONTRACT
+    real) they must agree on: the ledger row for row, the per-criterion seed
+    counts, the JOINT count, the ungated rows and the diversity median.
+
+    The one licensed difference is the critic-3 floor under the primary's
+    denominators, which is a floor under the ARITHMETIC and not a bar on the
+    organism, so it is lifted for the comparison and then put back -- and with
+    it back, the scorer's own cross-check must call every remaining difference
+    EXPLAINED rather than a disagreement between two implementations.
+    """
+    s = _scorer()
+    payload, _out = shared_run
+    assert payload["pass_rules"], "the run wrote no pass_rules to compare with"
+    d_rows = {r["seed"]: r for r in payload["rows"] if r["cell"] == "D"}
+
+    def ledgers_for(cell):
+        out = []
+        for row in [r for r in payload["rows"] if r["cell"] == cell]:
+            ref = d_rows.get(row["seed"]) if cell != "D" else None
+            led, passed = s.ledger(row, ref)
+            out.append({"seed": row["seed"], "rows": led, "passed": passed})
+        return out
+
+    # ---- the ledger, row for row, with the floor lifted --------------------
+    s.MIN_DECISIONS_PER_ARM = 0
+    for row in payload["rows"]:
+        ref = d_rows.get(row["seed"]) if row["cell"] != "D" else None
+        mine = {n: (v, bar, ok) for n, v, _op, bar, ok, _nt in s.ledger(row, ref)[0]}
+        for r in row["ledger"]["rows"]:
+            assert r["name"] in mine, (row["cell"], r["name"])
+            v, bar, ok = mine[r["name"]]
+            assert bar == r["bar"], (row["cell"], r["name"])
+            assert ok == r["ok"], (row["cell"], r["name"], v, r["value"])
+            if r["value"] is None or v is None:
+                assert (v is None) == (r["value"] is None), (row["cell"], r["name"])
+            else:
+                assert float(v) == pytest.approx(float(r["value"])), r["name"]
+        assert set(mine) - {r["name"] for r in row["ledger"]["rows"]} \
+            <= set(s.SCORER_ONLY_ROWS)
+
+    # ---- and the pass rules, count for count -------------------------------
+    for cell, theirs in payload["pass_rules"].items():
+        mine = s.pass_rules(ledgers_for(cell), n_seeds=theirs["n_seeds"])
+        assert (mine["n_seeds"], mine["need"]) == (theirs["n_seeds"], theirs["need"])
+        assert set(mine["ungated"]) == set(theirs["ungated"]), cell
+        for name, block in theirs["per_criterion"].items():
+            got = mine["per_criterion"].get(name)
+            assert got is not None, (cell, name)
+            assert got["n_pass"] == block["n_pass"], (cell, name)
+            assert sorted(got["seeds"]) == sorted(block["seeds"]), (cell, name)
+            assert got["passed"] == block["passed"], (cell, name)
+        assert (set(mine["per_criterion"]) - set(theirs["per_criterion"])
+                <= set(s.SCORER_ONLY_ROWS)), cell
+        assert sorted(mine["joint_seeds"]) == sorted(theirs["joint_seeds"]), cell
+        assert mine["joint_passed"] == theirs["joint_passed"], cell
+        assert mine["diversity_median"] == theirs["diversity_median"], cell
+
+    # ---- with the floor back, every difference is EXPLAINED ----------------
+    fresh = _scorer()
+    assert fresh.MIN_DECISIONS_PER_ARM > 0
+    lines, unexplained = fresh.cross_check_pass_rules(payload)
+    assert unexplained == 0, lines
+    assert not [l for l in lines if "UNEXPLAINED" in l], lines
+    # and the floor did fire on this payload, so the check above is not vacuous
+    assert any("withheld" in l or "scorer-only floor" in l for l in lines), lines
+
+
+def test_the_scorer_runs_under_a_bare_python3(shared_run, tmp_path):
     """`-S` drops site-packages, so torch is not importable: if this passes, the
     scorer needs nothing but the standard library."""
-    payload = _run_payload(tmp_path, seeds=(0,))
+    payload, _out = shared_run
     path = tmp_path / "orgb_test.json"
     path.write_text(json.dumps(payload))
     proc = subprocess.run(
@@ -984,8 +1163,18 @@ def test_the_scorer_runs_under_a_bare_python3(tmp_path):
                    "contingency [strict ]", "contingency [lexical]",
                    "contingency [reward ]", "diversity:", "price (B4)",
                    "LEDGER", "PASS RULES", "BUNDLING", "SEED VERDICT",
-                   "regression avoided ~ d + m"):
+                   "regression avoided ~ d + m",
+                   # every pre-registered pass rule of PR-6 prints, and the
+                   # ones with no pre-registered bar print NOT-MEASURED rather
+                   # than a verdict invented after the numbers exist.
+                   "yell (the REWARD's own view", "A IS REAL",
+                   "REPORTED SECONDARIES", "invariance TOST",
+                   "aversive - affectless", "relearn habit present",
+                   "JOINT (every gated row", "decision_agreement",
+                   "novel_contingency[", "CROSS-CHECK",
+                   "no margin was pre-registered"):
         assert needle in out, needle
+    assert "UNEXPLAINED" not in out, out
     assert "Traceback" not in proc.stderr
 
 

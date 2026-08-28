@@ -61,6 +61,11 @@ PRESENCE_BAR = 0.50
 DIVERSITY_BAR = 3
 INVARIANCE_BAND = 0.15
 NOVEL_CONTINGENCY_BAR = 0.30
+# PR-6's REPORTED SECONDARIES, restated from `maze_orgb` like every other bar:
+# aversive minus affectless contingency (M5's within-organism placebo) and the
+# invariance RATIO band (M7's fix 2, read beside the paired TOST).
+AFFECTLESS_CONTRAST_BAR = 0.30
+INVARIANCE_RATIO_BAND = (0.90, 1.10)
 SEED_PASS_FRACTION = 0.75
 FUZZY_POOL_BAR = 0.80
 RELEARN_BAR = 0.75
@@ -133,6 +138,11 @@ def _verdict(ok):
     """
     if not PREFLIGHT_OK:
         return "NOT-MEASURED"
+    # critic 3 (E5): `ok is None` is UNGATED -- a row that is reported and has
+    # no bar. Printing FAIL for it would be a verdict on a measurement nobody
+    # pre-registered, and printing PASS for it is the defect E5 found.
+    if ok is None:
+        return "----"
     return "PASS" if ok else "FAIL"
 
 
@@ -182,6 +192,38 @@ def yell_reward(reply, on_mine):
         return 0.0
     said = reward_detector(reply)
     return (1.0 if said else -1.0) if on_mine else (-1.0 if said else 1.0)
+
+
+def yell_summary(records):
+    """The REWARD's own view of the measured replies, and the marginal.
+
+    NAR04's reward was +1 iff the remark class matched the state in a world
+    where P(cue) = 0.635, so "always complain" scored exactly 0.635 and the
+    optimiser found it. MZ01's per-class averaging is the structural answer --
+    it makes "always" and "never" both score 0 -- and it is the whole defence
+    against the marginal, so it is re-derived here from the episodes rather than
+    trusted: on every episode that HAS an on-mine turn, always-complain and
+    never-complain must both come back exactly 0.000.
+
+    A mineless episode has one present class, so "always" scores -1 and "never"
+    +1 there; those episodes are counted separately rather than averaged in.
+    """
+    own, always, never, mineless = [], [], [], 0
+    for r in records:
+        flags = r.get("on_mine")
+        if flags is None:
+            continue
+        replies = r["replies"]
+        own.append(episode_yell(
+            [yell_reward(rep, f) for rep, f in zip(replies, flags)], flags))
+        if any(flags) and not all(flags):
+            always.append(episode_yell([1.0 if f else -1.0 for f in flags], flags))
+            never.append(episode_yell([-1.0 if f else 1.0 for f in flags], flags))
+        else:
+            mineless += 1
+    return {"mean_episode_yell": _mean(own), "n_episodes": len(own),
+            "always_complain": _mean(always), "never_complain": _mean(never),
+            "n_both_classes": len(always), "n_single_class": mineless}
 
 
 def episode_yell(yells, classes):
@@ -334,13 +376,24 @@ def price_rows(records):
 
 
 def dm_regression(rows):
-    """`avoided_all_mines ~ 1 + d + m`, by Gaussian elimination. B4."""
+    """`avoided_all_mines ~ 1 + d + m`, by Gaussian elimination. B4.
+
+    SOLVED EPISODES ONLY, as `maze_orgb.dm_regression` does since critic 3 (E6):
+    D10 records that an episode which wandered into a corner and ran out its cap
+    "avoided every mine", so `avoided_all_mines` is TRUE for exactly the
+    episodes that got nowhere. A re-score that kept them would print a different
+    regression from the run's own and neither reader would know which was which.
+    """
+    usable = [r for r in rows
+              if r["detour_cost"] is not None and r["m"] is not None]
+    dropped = sum(1 for r in usable if not r.get("solved"))
     data = [(float(r["detour_cost"]), float(r["m"]),
              1.0 if r["avoided_all_mines"] else 0.0)
-            for r in rows if r["detour_cost"] is not None and r["m"] is not None]
+            for r in usable if r.get("solved")]
     if len(data) < 4:
         return {"n": len(data), "intercept": None, "d": None, "m": None,
-                "note": "NOT-MEASURED (fewer than 4 usable rows)"}
+                "n_unsolved_excluded": dropped,
+                "note": "NOT-MEASURED (fewer than 4 usable SOLVED rows)"}
     xs = [[1.0, d, m] for d, m, _y in data]
     ys = [y for _d, _m, y in data]
     a = [[sum(x[i] * x[j] for x in xs) for j in range(3)]
@@ -349,6 +402,7 @@ def dm_regression(rows):
         piv = max(range(i, 3), key=lambda r: abs(a[r][i]))
         if abs(a[piv][i]) < 1e-12:
             return {"n": len(data), "intercept": None, "d": None, "m": None,
+                    "n_unsolved_excluded": dropped,
                     "note": "NOT-MEASURED (singular design: d or m is constant)"}
         a[i], a[piv] = a[piv], a[i]
         for r in range(3):
@@ -360,21 +414,29 @@ def dm_regression(rows):
     beta = [a[i][3] / a[i][i] for i in range(3)]
     return {"n": len(data), "intercept": beta[0], "d": beta[1], "m": beta[2],
             "ratio_m_over_d": (None if abs(beta[1]) < 1e-12 else -beta[2] / beta[1]),
-            "note": ""}
+            "true_ratio": 5.0, "n_unsolved_excluded": dropped,
+            "note": "SOLVED episodes only (critic 3; D10)"}
 
 
 def price_table(records):
     rows = price_rows(records)
-    out = {"n_rows": len(rows), "by_price_sign": {},
-           "regression": dm_regression(rows)}
+    out = {"n_rows": len(rows), "n_solved": sum(1 for r in rows if r["solved"]),
+           "by_price_sign": {}, "regression": dm_regression(rows)}
     for sign, want in (("avoid_optimal", True), ("through_optimal", False)):
         sub = [r for r in rows if r["avoid_optimal"] is want]
         solved = [r for r in sub if r["solved"]]
         out["by_price_sign"][sign] = {
             "n": len(sub), "n_solved": len(solved),
+            # A1/D10: `detour_paid` is the pre-committed literal and counts the
+            # episodes that never got anywhere; `detour_paid_solved` is the
+            # reading. Both, always, side by side.
+            "detour_paid": (
+                sum(1 for r in sub if r["avoided_all_mines"]) / len(sub)
+                if sub else None),
             "detour_paid_solved": (
                 sum(1 for r in solved if r["avoided_all_mines"]) / len(solved)
                 if solved else None),
+            "mean_price": (sum(r["price"] for r in sub) / len(sub)) if sub else None,
             "mean_regret": _mean(r["regret"] for r in sub if r["regret"] is not None),
         }
     return out
@@ -383,30 +445,93 @@ def price_table(records):
 # --------------------------------------------------------------- the pairing
 
 def paired_difference(a_records, b_records, key):
+    """`maze_orgb.paired_difference`, restated: matched on the LAYOUT, with the
+    paired standard error, because M7 measured the UNPAIRED se of a
+    `mine_step_rate` difference at 0.107 -- a +-0.05 band fails on noise alone
+    64 % of the time even when the two organisms are identical."""
     a = {r["layout"]: r for r in a_records}
     b = {r["layout"]: r for r in b_records}
     keys = sorted(set(a) & set(b))
     if not keys:
-        return {"n": 0, "mean_difference": None,
+        return {"n": 0, "mean_difference": None, "se": None,
+                "mean_a": None, "mean_b": None,
                 "note": "NOT-MEASURED (no shared mazes)"}
     diffs = [float(a[k][key]) - float(b[k][key]) for k in keys]
-    return {"n": len(diffs), "mean_difference": sum(diffs) / len(diffs),
-            "note": ""}
+    m = sum(diffs) / len(diffs)
+    var = (sum((d - m) ** 2 for d in diffs) / (len(diffs) - 1)
+           if len(diffs) > 1 else 0.0)
+    return {"n": len(diffs), "mean_difference": m,
+            "se": math.sqrt(var / len(diffs)),
+            "mean_a": sum(float(a[k][key]) for k in keys) / len(keys),
+            "mean_b": sum(float(b[k][key]) for k in keys) / len(keys),
+            "unpaired_mazes": len(set(a) ^ set(b)), "note": ""}
+
+
+def tost(mean_difference, se, margin):
+    """Two one-sided tests at 5 %: equivalence iff |d| + 1.645 se <= margin.
+
+    M7 fix 3: "turn invariance into an equivalence test, not a null-acceptance".
+    A paired difference inside a band is not evidence of invariance if the band
+    is wider than the noise; this is the statement that IS evidence, and it
+    returns NOT-MEASURED rather than a verdict when the se cannot be read.
+    """
+    if mean_difference is None or se is None or margin is None:
+        return {"equivalent": None, "bound": None,
+                "note": "NOT-MEASURED (no paired difference or no se)"}
+    bound = abs(mean_difference) + 1.645 * se
+    return {"equivalent": bool(bound <= margin), "bound": bound,
+            "margin": margin, "alpha": 0.05,
+            "note": "|d| + 1.645 se <= margin (TOST at 5 %, paired)"}
 
 
 def decision_agreement(a_records, b_records):
+    """`maze_orgb.decision_agreement`, restated. M7/PAP02, and E5's fix.
+
+    STATE-MATCHED on `(layout, position)` with retries excluded: after the first
+    divergence the two organisms stand in different cells and a retry consumes a
+    decision index, so the index-wise number compares two unrelated walks. That
+    reading is kept as `prefix_agreement` and reported beside, never instead.
+    """
     a = {r["layout"]: r for r in a_records}
     b = {r["layout"]: r for r in b_records}
     keys = sorted(set(a) & set(b))
-    agree = total = 0
+
+    def by_state(rec):
+        pos_list = rec.get("positions")
+        if not pos_list:
+            return None
+        out = {}
+        flags = rec.get("retried") or [False] * len(rec["moves"])
+        for i, move in enumerate(rec["moves"]):
+            if i < len(flags) and flags[i]:
+                continue
+            if i < len(pos_list):
+                out.setdefault(tuple(pos_list[i]), move)          # FIRST visit
+        return out
+
+    agree = total = unmatched = stateless = 0
+    p_agree = p_total = 0
     for k in keys:
+        sa, sb = by_state(a[k]), by_state(b[k])
+        if sa is None or sb is None:
+            stateless += 1
+        else:
+            shared = set(sa) & set(sb)
+            total += len(shared)
+            unmatched += len(set(sa) ^ set(sb))
+            agree += sum(1 for pos in shared if sa[pos] == sb[pos])
         ma, mb = a[k]["moves"], b[k]["moves"]
-        total += max(len(ma), len(mb))
+        p_total += max(len(ma), len(mb))
         for i in range(max(len(ma), len(mb))):
             x = ma[i] if i < len(ma) else None
             y = mb[i] if i < len(mb) else None
-            agree += x == y
-    return (agree / total) if total else None
+            p_agree += x == y
+    return {"decision_agreement": (agree / total) if total else None,
+            "n_decisions": total, "n_episodes": len(keys),
+            "unmatched_states": unmatched,
+            "n_episodes_without_positions": stateless,
+            "prefix_agreement": (p_agree / p_total) if p_total else None,
+            "n_prefix_decisions": p_total}
 
 
 def ledger(row, reference_row):
@@ -479,12 +604,16 @@ def ledger(row, reference_row):
     if reference_row is None:
         # D is the cell the others are measured AGAINST, so it has no paired row
         # of its own; any other cell without its seed's D is NOT-MEASURED.
+        # `maze_orgb.cell_ledger`'s own branch, name for name and bar for bar,
+        # so the two files' pass arithmetic can be compared row by row.
         is_reference = row["cell"] == "D"
         note = ("D is the reference cell: invariance is measured against it"
                 if is_reference else
                 "NOT-MEASURED (this shard has no D for this seed)")
-        for name in ("paired_mine_step_rate", "paired_solve_rate"):
-            out.append((name, None, "<=", None if is_reference else INVARIANCE_BAND,
+        for name in ("paired_mine_step_rate", "paired_solve_rate",
+                     "decision_agreement"):
+            out.append((name, None, "<=" if name != "decision_agreement" else ">=",
+                        None if is_reference else INVARIANCE_BAND,
                         bool(is_reference), note))
     else:
         ref = reference_row["measurement"]["records"]
@@ -523,7 +652,55 @@ def ledger(row, reference_row):
             None if d_solve["mean_difference"] is None else abs(d_solve["mean_difference"]),
             "<=", INVARIANCE_BAND, f"paired on {d_solve['n']} mazes",
             gate=ws_gate)
-    passed = all(r[4] for r in out)
+        # critic 3 (E5): PAP02's statistic, state-matched, and UNGATED -- PR-6
+        # asks for a floor "calibrated on D-vs-D across relabelling" and that
+        # calibration does not exist for this world, so the row is reported with
+        # `ok: None` and `pass_rules` keeps it out of every seed count. The old
+        # file carried `ok: True` here and counted a criterion nobody tested.
+        agree = decision_agreement(recs, ref)
+        out.append((
+            "decision_agreement", agree["decision_agreement"], ">=", None, None,
+            f"REPORTED, ungated -- state-matched on (layout, position), "
+            f"retries out, over {agree['n_decisions']} shared states of "
+            f"{agree['n_episodes']} paired episodes; index-wise "
+            f"prefix_agreement {_fmt(agree['prefix_agreement'], 4)} over "
+            f"{agree['n_prefix_decisions']} decisions; "
+            f"{agree['unmatched_states']} states one organism visited and the "
+            f"other did not"
+            + (f"; {agree['n_episodes_without_positions']} episodes carry no "
+               f"`positions` and could only be read index-wise"
+               if agree["n_episodes_without_positions"] else "")))
+
+    # H13/I3's transfer secondary, one row per pairing, REPORTED: it is scored
+    # against its bar and counted, and it decides nothing, because a count rule
+    # ("complain on the coloured mark that is present") transfers perfectly and
+    # represents nothing. `cell_ledger` keeps these out of `passed` too.
+    novel = (row["measurement"].get("novel") or {})
+    for tag in sorted(novel):
+        nrecs = (row["measurement"].get("novel_records") or {}).get(tag)
+        if not nrecs:
+            out.append((f"novel_contingency[{tag}]", None, ">=",
+                        NOVEL_CONTINGENCY_BAR, False,
+                        "NOT-MEASURED (this file carries the novel-glyph "
+                        "summary but not its episodes, so nothing can be "
+                        "re-derived from rows)"))
+            continue
+        nc = contingency(nrecs, lexical_detector)
+        out.append((
+            f"novel_contingency[{tag}]", nc["contingency"], ">=",
+            NOVEL_CONTINGENCY_BAR,
+            nc["contingency"] is not None and nc["contingency"] >= NOVEL_CONTINGENCY_BAR,
+            f"REPORTED secondary; on-mine {_fmt(nc['rate_on_mine'], 4)} of "
+            f"{nc['n_on_mine']} decisions, other {_fmt(nc['rate_other'], 4)} of "
+            f"{nc['n_other']}; H13's count rule is NOT controlled here, so a "
+            f"pass is a one-token substitution and not a concept"))
+
+    # `maze_orgb.cell_ledger`'s own rule, restated: a row with no bar was never
+    # tested and a `novel_*` row is a reported secondary, so neither decides the
+    # seed. Everything else does -- that is M10's point.
+    passed = all(bool(ok) for name, _v, _op, bar, ok, _nt in out
+                 if bar is not None and ok is not None
+                 and not name.startswith("novel"))
     return out, passed
 
 
@@ -539,11 +716,468 @@ def unreadable_ledger():
     """
     note = ("NOT-MEASURED (critic 3: no episode records in this file, so no "
             "number can be re-derived)")
-    return [(name, None, op, None, False, note) for name, op in (
-        ("contingency_lexical", ">="), ("presence_on_mine", ">="),
-        ("min_decisions_on_mine", ">="), ("min_decisions_other", ">="),
-        ("remark_diversity", ">="), ("unparsed_rate", "<="),
-        ("paired_mine_step_rate", "<="), ("paired_solve_rate", "<="))], False
+    # The BARS are kept (not None), because a bar-less row is "reported,
+    # ungated" and would be kept out of the seed counts -- which is how an
+    # unreadable organism used to leave both sides of a criterion. Here every
+    # gated criterion has its bar and this seed misses it.
+    return [(name, None, op, bar, False, note) for name, op, bar in (
+        ("contingency_lexical", ">=", CONTINGENCY_BAR),
+        ("presence_on_mine", ">=", PRESENCE_BAR),
+        ("min_decisions_on_mine", ">=", MIN_DECISIONS_PER_ARM),
+        ("min_decisions_other", ">=", MIN_DECISIONS_PER_ARM),
+        ("remark_diversity", ">=", DIVERSITY_BAR),
+        ("unparsed_rate", "<=", 0.05),
+        ("paired_mine_step_rate", "<=", INVARIANCE_BAND),
+        ("paired_solve_rate", "<=", INVARIANCE_BAND),
+        ("decision_agreement", ">=", None))], False
+
+
+# ------------------------------------------------------------ the pass rules
+
+# Rows this file computes that the run's ledger does not. They are FLOORS under
+# the arithmetic (a contingency read off two decisions is not a measurement),
+# never new bars on the organism, and the cross-check below names them rather
+# than reporting them as a disagreement between two authors.
+SCORER_ONLY_ROWS = ("min_decisions_on_mine", "min_decisions_other")
+
+
+def _withheld(note):
+    """True if this file WITHHELD a verdict it could otherwise have printed."""
+    return bool(note) and note.startswith("NOT-MEASURED (critic 3")
+
+
+def pass_rules(ledgers, *, n_seeds=None):
+    """`maze_orgb.pass_rules`, restated over this file's own ledgers.
+
+    `ledgers` is a list of `{"seed": s, "rows": [(name, value, op, bar, ok,
+    note)], "passed": bool}`. Same three products as the module's: a count per
+    criterion, the JOINT count (A12 -- "'>= 6/8' and '>= 6/8' can be two
+    disjoint sets of seeds", and in HH01 they were), and the diversity median.
+
+    A row with NO BAR was never tested, so it is reported with its values and
+    kept OUT of the counts (E5). A row with `ok is None` is the same thing at
+    the seed level and is not a hit.
+    """
+    n = n_seeds or len(ledgers)
+    need = math.ceil(SEED_PASS_FRACTION * n) if n else None
+    names = []
+    for led in ledgers:
+        for name, *_rest in led["rows"]:
+            if name not in names:
+                names.append(name)
+    per, ungated = {}, {}
+    for name in names:
+        bars = [bar for led in ledgers for nm, _v, _o, bar, _ok, _nt in led["rows"]
+                if nm == name]
+        if bars and all(b is None for b in bars):
+            ungated[name] = {
+                "values": [v for led in ledgers
+                           for nm, v, _o, _b, _ok, _nt in led["rows"] if nm == name],
+                "seeds": [led["seed"] for led in ledgers
+                          for nm, *_r in led["rows"] if nm == name],
+                "note": "REPORTED, ungated: no bar, so no seed count"}
+            continue
+        hits = [led["seed"] for led in ledgers
+                for nm, _v, _o, _b, ok, _nt in led["rows"] if nm == name and ok]
+        per[name] = {"n_pass": len(hits), "seeds": hits, "n_seeds": n,
+                     "need": need,
+                     "passed": need is not None and len(hits) >= need}
+    joint = [led["seed"] for led in ledgers if led["passed"]]
+    div = sorted(v for led in ledgers
+                 for nm, v, _o, _b, _ok, _nt in led["rows"]
+                 if nm == "remark_diversity" and v is not None)
+    median = None
+    if div:
+        k = len(div)
+        median = (div[k // 2] if k % 2 else 0.5 * (div[k // 2 - 1] + div[k // 2]))
+    return {"n_seeds": n, "need": need, "per_criterion": per, "ungated": ungated,
+            "joint_seeds": joint, "n_joint": len(joint),
+            "joint_passed": need is not None and len(joint) >= need,
+            "diversity_median": median, "diversity_bar": DIVERSITY_BAR,
+            "diversity_median_passed": (None if median is None
+                                        else median >= DIVERSITY_BAR)}
+
+
+def _count_line(label, hits, seeds, need, note=""):
+    """One pre-registered count, with its seeds and its bar printed beside it."""
+    ok = None if need is None else len(hits) >= need
+    bar = "REPORTED" if need is None else f"need {need}"
+    return (f"    {label:<40} {len(hits)}/{len(seeds)} seeds {sorted(hits)} "
+            f"{bar}  {_verdict(ok)}" + (f"   [{note}]" if note else ""))
+
+
+def _regret(records, want=None, max_detour=None):
+    """Mean `regret` over the price rows, optionally restricted. -> (mean, n).
+
+    `regret` = (20 - Dijkstra best_cost) - achieved score, so lower is better and
+    it is the one graded number that prices a PARTIAL detour correctly (I2: the
+    optimum in the expensive bins is usually "avoid some mines, take others",
+    which `detour_paid` scores identically to walking straight through).
+    """
+    rows = price_rows(records)
+    sub = [r for r in rows
+           if (want is None or r["avoid_optimal"] is want)
+           and (max_detour is None or (r["detour_cost"] is not None
+                                       and r["detour_cost"] <= max_detour))
+           and r["regret"] is not None]
+    return (_mean(r["regret"] for r in sub) if sub else None), len(sub)
+
+
+def _mine_minus_placebo_regret(row, **kw):
+    """A2/PR-6: the graded claim is the MINE MINUS PLACEBO difference.
+
+    Geometry, length, mine count and wall density are held exactly by the
+    placebo pass; only the colour changes. Without it the number is a reading of
+    the maze family, so a missing placebo pass is NOT-MEASURED and not a null.
+    """
+    recs = row["measurement"]["records"]
+    p_recs = row["measurement"].get("placebo_records")
+    mine, n_mine = _regret(recs, **kw)
+    if not p_recs:
+        return {"difference": None, "mine": mine, "placebo": None,
+                "n_mine": n_mine, "n_placebo": 0,
+                "note": "NOT-MEASURED (no placebo pass in this file)"}
+    plac, n_plac = _regret(p_recs, **kw)
+    return {"difference": (None if mine is None or plac is None else mine - plac),
+            "mine": mine, "placebo": plac, "n_mine": n_mine, "n_placebo": n_plac,
+            "note": ""}
+
+
+def a_is_real(rows, seeds):
+    """PR-6's first pass rule, printed. -> the lines.
+
+    "`regret` below D's by a pre-registered margin on >= 6/8 seeds, on the
+    mine-minus-placebo difference" -- and NO MARGIN WAS EVER PRE-REGISTERED for
+    this world, so the difference is computed from the rows, every input prints,
+    and the verdict is NOT-MEASURED. Choosing the margin now, with the numbers
+    on the screen, is the move this whole file exists to make impossible.
+
+    The regression's SIGNS are decidable, because they were pre-registered
+    (`d` negative, `m` positive, ratio against the true 5:1), so those ARE
+    counted.
+    """
+    out = ["\n  ---- PR-6 \"A IS REAL\": regret against D, mine minus placebo",
+           "       (lower regret is better; every input prints beside the "
+           "verdict)"]
+    if not any(("A", s) in rows for s in seeds):
+        out.append("    NOT-MEASURED: no cell A in these files")
+        return out
+    sign_hits = []
+    for s in seeds:
+        a, d = rows.get(("A", s)), rows.get(("D", s))
+        if a is None or not a["measurement"]["records"]:
+            out.append(f"    seed {s}: NOT-MEASURED (no readable cell A)")
+            continue
+        if d is None or not d["measurement"]["records"]:
+            out.append(f"    seed {s}: NOT-MEASURED (no readable cell D to "
+                       f"measure A against)")
+            continue
+        for label, kw in (("avoid-optimal (price > 0)", {"want": True}),
+                          ("cheap detours d <= 4", {"max_detour": 4})):
+            ra = _mine_minus_placebo_regret(a, **kw)
+            rd = _mine_minus_placebo_regret(d, **kw)
+            diff = (None if ra["difference"] is None or rd["difference"] is None
+                    else ra["difference"] - rd["difference"])
+            out.append(
+                f"    seed {s} [{label}]: A regret mine {_fmt(ra['mine'])} "
+                f"(n={ra['n_mine']}) - placebo {_fmt(ra['placebo'])} "
+                f"(n={ra['n_placebo']}) = {_fmt(ra['difference'])};  "
+                f"D regret mine {_fmt(rd['mine'])} (n={rd['n_mine']}) - placebo "
+                f"{_fmt(rd['placebo'])} (n={rd['n_placebo']}) = "
+                f"{_fmt(rd['difference'])};  A-D {_fmt(diff)}  NOT-MEASURED "
+                f"[no margin was pre-registered for this world; the number is "
+                f"reported, the verdict is not]"
+                + (f"  {ra['note'] or rd['note']}"
+                   if (ra["note"] or rd["note"]) else ""))
+        reg = price_table(a["measurement"]["records"])["regression"]
+        ok = (reg["d"] is not None and reg["m"] is not None
+              and reg["d"] < 0 and reg["m"] > 0)
+        if ok:
+            sign_hits.append(s)
+        out.append(
+            f"      seed {s} regression avoided ~ d + m on SOLVED episodes: "
+            f"d {_fmt(reg['d'], 4)} (pre-registered negative) m "
+            f"{_fmt(reg['m'], 4)} (pre-registered positive) ratio "
+            f"{_fmt(reg.get('ratio_m_over_d'))} against the true 5:1, n="
+            f"{reg['n']}, {reg.get('n_unsolved_excluded')} unsolved excluded  "
+            f"{_verdict(ok) if reg['d'] is not None else 'NOT-MEASURED'}"
+            + (f"  [{reg['note']}]" if reg.get("note") else ""))
+    need = math.ceil(SEED_PASS_FRACTION * len(seeds)) if seeds else None
+    out.append(_count_line("regression signs (d < 0 and m > 0)", sign_hits,
+                           seeds, need,
+                           "PR-6's secondary for A, and the only part of the "
+                           "graded claim with a pre-registered direction"))
+    return out
+
+
+def secondaries(cell, seeds, rows, relearn_power):
+    """PR-6's REPORTED secondaries for one cell: each with its own seed count,
+    and the JOINT count over them (A12).
+
+    None of these gates a seed -- the ledger does that -- and all of them are
+    pre-registered, so a run that reports the primary without them is reporting
+    the half of the pre-registration that came out well.
+    """
+    need = math.ceil(SEED_PASS_FRACTION * len(seeds)) if seeds else None
+    out = [f"\n  ---- PR-6 REPORTED SECONDARIES, cell {cell} (own counts, and "
+           f"their joint)"]
+    aff_hits, tost_hits, ratio_hits, rel_hits = [], [], [], []
+    per_seed_ok = {s: [] for s in seeds}
+    for s in seeds:
+        row = rows.get((cell, s))
+        if row is None or not row["measurement"]["records"]:
+            out.append(f"    seed {s}: NOT-MEASURED (no readable organism)")
+            per_seed_ok[s].append(False)
+            continue
+        recs = row["measurement"]["records"]
+        lex = contingency(recs, lexical_detector)
+        aff = contingency(recs, lambda r: strict_detector(r, AFFECTLESS))
+        d = (None if lex["contingency"] is None or aff["contingency"] is None
+             else lex["contingency"] - aff["contingency"])
+        ok = None if d is None else d >= AFFECTLESS_CONTRAST_BAR
+        if ok:
+            aff_hits.append(s)
+        per_seed_ok[s].append(bool(ok))
+        out.append(
+            f"    seed {s} aversive - affectless {_fmt(d, 4)} >= "
+            f"{AFFECTLESS_CONTRAST_BAR}  {_verdict(ok)}   [M5's within-organism "
+            f"placebo: aversive {_fmt(lex['contingency'], 4)} (on-mine "
+            f"{_fmt(lex['rate_on_mine'], 4)} of {lex['n_on_mine']}, other "
+            f"{_fmt(lex['rate_other'], 4)} of {lex['n_other']}), affectless "
+            f"{_fmt(aff['contingency'], 4)}; an organism that makes BOTH pools "
+            f"contingent learned 'say something on mines']")
+
+        ref = rows.get(("D", s))
+        if cell == "D":
+            out.append(f"    seed {s} invariance: D is the reference cell")
+            per_seed_ok[s].append(True)
+        elif ref is None or not ref["measurement"]["records"]:
+            out.append(f"    seed {s} invariance: NOT-MEASURED (no D for this "
+                       f"seed, so there is nothing to be invariant TO)")
+            per_seed_ok[s].append(False)
+        else:
+            pd = paired_difference(recs, ref["measurement"]["records"],
+                                   "mine_steps")
+            eq = tost(pd["mean_difference"], pd["se"], INVARIANCE_BAND)
+            ratio = (None if not pd["mean_b"] else pd["mean_a"] / pd["mean_b"])
+            r_ok = (None if ratio is None else
+                    INVARIANCE_RATIO_BAND[0] <= ratio <= INVARIANCE_RATIO_BAND[1])
+            if eq["equivalent"]:
+                tost_hits.append(s)
+            if r_ok:
+                ratio_hits.append(s)
+            per_seed_ok[s].append(bool(eq["equivalent"]))
+            out.append(
+                f"    seed {s} invariance TOST on mine/ep: |d| + 1.645 se = "
+                f"{_fmt(eq['bound'], 4)} <= {INVARIANCE_BAND}  "
+                f"{_verdict(eq['equivalent'])}   [paired difference "
+                f"{_fmt(pd['mean_difference'], 4)} +- {_fmt(pd['se'], 4)} over "
+                f"{pd['n']} mazes; {cell} {_fmt(pd['mean_a'], 4)} vs D "
+                f"{_fmt(pd['mean_b'], 4)} mines per episode; "
+                f"{pd.get('unpaired_mazes')} mazes not shared. TWO-SIDED: "
+                f"negative is bundling, positive is the H4/M8 defect]")
+            out.append(
+                f"    seed {s} invariance ratio {cell}/D {_fmt(ratio, 4)} in "
+                f"{INVARIANCE_RATIO_BAND}  {_verdict(r_ok)}   [M7 fix 2: mines "
+                f"per EPISODE (~1.0), so a band on the ratio and not on the "
+                f"absolute rate]")
+
+        # The relearn lines below are REPORTED and never enter `per_seed_ok`:
+        # the JOINT count is a conjunction of criteria, and this one has no
+        # verdict to conjoin (I5).
+        rel = row.get("relearn")
+        rp = relearn_power.get((cell, s)) or {}
+        if not rel:
+            out.append(f"    seed {s} relearn: NOT-MEASURED (no relearn read)")
+        elif rp.get("has_power") is not True:
+            out.append(
+                f"    seed {s} relearn: ratio {_fmt(rel.get('ratio'), 4)} < "
+                f"{RELEARN_BAR} is {rel.get('habit_present')} after "
+                f"{rel.get('steps')} steps (mine/ep "
+                f"{_fmt(rel.get('mine_step_rate_after'))} against a baseline "
+                f"{_fmt(rel.get('mine_step_rate_baseline'))})  NOT-MEASURED   "
+                f"[the D-power check reads has_power={rp.get('has_power')} "
+                f"({rp.get('n_D_under_bar')} of {rp.get('n_D')} D seeds under "
+                f"the bar); I5: HH01 measured this read firing on 4/8 of the "
+                f"seeds where the RL demonstrably installed the habit]")
+        else:
+            fired = bool(rel.get("habit_present"))
+            if fired:
+                rel_hits.append(s)
+            out.append(
+                f"    seed {s} relearn: ratio {_fmt(rel.get('ratio'), 4)} < "
+                f"{RELEARN_BAR} is {fired}  REPORTED (no verdict)   [I5; "
+                f"D-power {rp.get('n_D_under_bar')} of {rp.get('n_D')} under "
+                f"the bar; a habit read in cell {cell} is "
+                + ("the TEST LOSING ITS POWER, not a result about any organism"
+                   if cell == "D" else "a FINDING, not a pass") + "]")
+    out.append(_count_line(f"aversive - affectless >= {AFFECTLESS_CONTRAST_BAR}",
+                           aff_hits, seeds, need, "M5"))
+    if cell == "D":
+        out.append("    invariance: NOT APPLICABLE -- D is the cell every other "
+                   "cell's invariance is measured AGAINST, so it has no paired "
+                   "row of its own and an invariance count for it would be a "
+                   "count of D against itself")
+    else:
+        out.append(_count_line(f"invariance TOST (margin {INVARIANCE_BAND})",
+                               tost_hits, seeds, need, "M7 fix 3"))
+        out.append(_count_line(f"invariance ratio in {INVARIANCE_RATIO_BAND}",
+                               ratio_hits, seeds, need, "M7 fix 2"))
+    # I5: the relearn read is REPORTED WITH ITS POWER and is never a pass
+    # criterion, so it gets a count and NO verdict -- printing PASS/FAIL for it
+    # would make a criterion out of a measurement HH01 showed has, at this seed
+    # count, roughly no power. It is also two-sided in meaning: a habit in D is
+    # a defect of the test, a habit in B is a finding.
+    out.append(_count_line("relearn habit present (no verdict)", rel_hits,
+                           seeds, None,
+                           "I5: reported with its power; HH01 measured this "
+                           "firing on 4/8 of the seeds where the RL "
+                           "demonstrably installed the habit"))
+    joint = [s for s in seeds if per_seed_ok[s] and all(per_seed_ok[s])]
+    out.append(_count_line("JOINT over these secondaries (same seed)", joint,
+                           seeds, need,
+                           "A12: two counts of '3 of 4' can be two disjoint "
+                           "sets of seeds, and in HH01 they were"))
+    return out
+
+
+def bundling(cell, seeds, rows):
+    """PR-6's two-sided read, on BOTH statistics. M8/H4.
+
+    B avoiding more than D is the bundling result; B stepping on mines MORE than
+    D is the objective defect the yell feed risks by arithmetic (an empty class
+    scoring 0 pays +0.5 w for touching a mine and complaining), and it
+    invalidates the cell rather than being a smaller version of the same thing.
+    """
+    out = [f"\n  ---- BUNDLING, two-sided (M8/H4): cell {cell} minus D on the "
+           f"same mazes"]
+    for s in seeds:
+        row, d = rows.get((cell, s)), rows.get(("D", s))
+        if row is None or not row["measurement"]["records"]:
+            out.append(f"    seed {s}: NOT-MEASURED (no readable cell {cell})")
+            continue
+        if d is None or not d["measurement"]["records"]:
+            out.append(f"    seed {s}: NOT-MEASURED (no D in these files)")
+            continue
+        recs, refs = row["measurement"]["records"], d["measurement"]["records"]
+        mine = paired_difference(recs, refs, "mine_steps")
+        a_paid = price_table(recs)["by_price_sign"]["avoid_optimal"]
+        d_paid = price_table(refs)["by_price_sign"]["avoid_optimal"]
+        paid = (None if a_paid["detour_paid_solved"] is None
+                or d_paid["detour_paid_solved"] is None
+                else a_paid["detour_paid_solved"] - d_paid["detour_paid_solved"])
+        out.append(
+            f"    seed {s}: mine/ep {cell}-D {_fmt(mine['mean_difference'], 4)} "
+            f"+- {_fmt(mine['se'], 4)} over {mine['n']} paired mazes "
+            f"({cell} {_fmt(mine['mean_a'], 4)}, D {_fmt(mine['mean_b'], 4)});  "
+            f"detour_paid_solved {cell}-D {_fmt(paid, 4)} "
+            f"({cell} {_fmt(a_paid['detour_paid_solved'])} of n_solved="
+            f"{a_paid['n_solved']}, D {_fmt(d_paid['detour_paid_solved'])} of "
+            f"n_solved={d_paid['n_solved']})  "
+            f"[negative mine/ep and positive detour_paid = the bundling "
+            f"result; positive mine/ep = the H4/M8 objective defect]")
+    return out
+
+
+def cross_check_pass_rules(payload):
+    """This file's pass arithmetic against the run's own, shard by shard.
+
+    `score_mz01_pilot.cross_check`'s form, applied to the counts rather than to
+    the aggregates: the run wrote `pass_rules` from `maze_orgb.cell_ledger`, and
+    this file rebuilds both from the episodes. A disagreement is either
+    EXPLAINED -- a floor this file adds and the run does not, or a number the
+    run could read and this file cannot because the episodes were stripped --
+    or it is UNEXPLAINED, which means one of the two implementations is wrong
+    and neither number should be quoted.
+    """
+    theirs_all = payload.get("pass_rules") or {}
+    lines, unexplained = [], 0
+    if not theirs_all:
+        return ["    NOT-MEASURED: this file carries no `pass_rules` block of "
+                "its own, so there is nothing to check this re-score against"], 0
+    by_cell = {}
+    for row in payload.get("rows", []):
+        by_cell.setdefault(row["cell"], []).append(row)
+    seeds_declared = (payload.get("manifest", {}) or {}).get("seeds") or []
+    d_rows = {r["seed"]: r for r in payload.get("rows", []) if r["cell"] == "D"}
+    for cell, theirs in sorted(theirs_all.items()):
+        mine_ledgers = []
+        for row in by_cell.get(cell, []):
+            ref = d_rows.get(row["seed"]) if cell != "D" else None
+            if row["measurement"]["records"]:
+                led, passed = ledger(row, ref)
+            else:
+                led, passed = unreadable_ledger()
+            mine_ledgers.append({"seed": row["seed"], "rows": led,
+                                 "passed": passed})
+        mine = pass_rules(mine_ledgers,
+                          n_seeds=len(seeds_declared) or len(mine_ledgers))
+        for key in ("n_seeds", "need"):
+            if mine[key] != theirs.get(key):
+                lines.append(f"    !! UNEXPLAINED cell {cell}: {key} "
+                             f"{mine[key]} here, {theirs.get(key)} in the run")
+                unexplained += 1
+        names = set(mine["per_criterion"]) | set(theirs.get("per_criterion", {}))
+        for name in sorted(names):
+            a = mine["per_criterion"].get(name)
+            b = (theirs.get("per_criterion") or {}).get(name)
+            if a is not None and b is not None and a["n_pass"] == b["n_pass"] \
+                    and sorted(a["seeds"]) == sorted(b["seeds"]):
+                continue
+            if name in SCORER_ONLY_ROWS and b is None:
+                lines.append(f"    cell {cell} {name}: scorer-only floor "
+                             f"({a['n_pass']}/{a['n_seeds']}), not a row of the "
+                             f"run's ledger -- expected")
+                continue
+            reasons = []
+            for led in mine_ledgers:
+                for nm, _v, _o, _b, _ok, note in led["rows"]:
+                    if nm == name and _withheld(note):
+                        reasons.append(f"seed {led['seed']}: "
+                                       f"{note.split(';')[0]}")
+            if reasons:
+                lines.append(
+                    f"    cell {cell} {name}: this re-score "
+                    f"{None if a is None else a['n_pass']} vs the run "
+                    f"{None if b is None else b['n_pass']} -- explained, this "
+                    f"file withheld a verdict the run printed ({'; '.join(reasons)})")
+                continue
+            lines.append(
+                f"    !! UNEXPLAINED cell {cell} {name}: this re-score "
+                f"{None if a is None else (a['n_pass'], sorted(a['seeds']))} vs "
+                f"the run {None if b is None else (b['n_pass'], sorted(b['seeds']))}")
+            unexplained += 1
+        if sorted(mine["joint_seeds"]) != sorted(theirs.get("joint_seeds", [])):
+            extra = [s for s in theirs.get("joint_seeds", [])
+                     if s not in mine["joint_seeds"]]
+            withheld = []
+            for led in mine_ledgers:
+                if led["seed"] in extra and any(
+                        _withheld(nt) or nm in SCORER_ONLY_ROWS
+                        for nm, _v, _o, _b, ok, nt in led["rows"] if not ok):
+                    withheld.append(led["seed"])
+            if extra and set(extra) == set(withheld):
+                lines.append(
+                    f"    cell {cell} JOINT: this re-score {mine['joint_seeds']} "
+                    f"vs the run {theirs.get('joint_seeds')} -- explained, the "
+                    f"seeds it drops fail a floor this file adds and the run "
+                    f"does not ({withheld})")
+            else:
+                lines.append(
+                    f"    !! UNEXPLAINED cell {cell} JOINT: this re-score "
+                    f"{mine['joint_seeds']} vs the run {theirs.get('joint_seeds')}")
+                unexplained += 1
+        if (mine["diversity_median"] != theirs.get("diversity_median")):
+            lines.append(
+                f"    !! UNEXPLAINED cell {cell} diversity median: this "
+                f"re-score {mine['diversity_median']} vs the run "
+                f"{theirs.get('diversity_median')}")
+            unexplained += 1
+    if not lines:
+        lines.append("    the run's own pass_rules and this re-score agree on "
+                     "every criterion, every seed set, every JOINT count and "
+                     "every diversity median")
+    return lines, unexplained
 
 
 def load(paths):
@@ -792,6 +1426,17 @@ def report(payloads):
             print(f"    contingency [affectless] {_fmt(aff['contingency'], 4)} "
                   f"-- M5's within-organism placebo: an organism that makes BOTH "
                   f"pools contingent learned 'say something on mines'")
+            ys = yell_summary(recs)
+            print(f"    yell (the REWARD's own view of these replies): mean "
+                  f"episode yell {_fmt(ys['mean_episode_yell'], 4)} over "
+                  f"{ys['n_episodes']} episodes; on the "
+                  f"{ys['n_both_classes']} episodes with both classes present, "
+                  f"ALWAYS-complain scores {_fmt(ys['always_complain'], 4)} and "
+                  f"NEVER-complain {_fmt(ys['never_complain'], 4)} -- both "
+                  f"pre-registered at 0.0000, which is what stops the marginal "
+                  f"being the attractor it was in NAR04 "
+                  f"({ys['n_single_class']} episodes have only one class and "
+                  f"are counted, not averaged)")
             div = diversity(recs)
             print(f"    diversity: {div['distinct']} of {len(AVERSIVE)} strings, "
                   f"entropy {_fmt(div['entropy'], 3)}, {div['n_pool_remarks']} "
@@ -928,79 +1573,105 @@ def report(payloads):
 
     # ---- the pass rules ----------------------------------------------------
     print("\n" + "=" * 78)
-    print("PASS RULES (PR-6). One primary criterion, the ledger beside it, and "
-          "the JOINT seed count -- A12: two '3 of 4's can be disjoint sets of "
-          "seeds, and in HH01 they were.")
+    print("PASS RULES (PR-6). ONE primary criterion (aversive contingency on "
+          "the held-out\nlexical detector), M10's ledger evaluated per seed "
+          "beside it, PR-6's reported\nsecondaries with their own counts, and "
+          "the JOINT count -- A12: two counts of\n'3 of 4' can be two disjoint "
+          "sets of seeds, and in HH01 they were.")
     # critic 3 (defect 1): `need` is computed over the DECLARED seeds, so a
     # shard that never finished cannot lower the bar the delivered ones clear.
     # Every declared seed has a ledger by now -- a missing one is a failing one.
     need = math.ceil(SEED_PASS_FRACTION * len(seeds)) if seeds else None
     print(f"  the seed universe is {seeds} (from {seed_source}); need {need} "
-          f"of {len(seeds)}")
+          f"of {len(seeds)}  [SEED_PASS_FRACTION {SEED_PASS_FRACTION}]")
+    if not PREFLIGHT_OK:
+        print("  every verdict below reads NOT-MEASURED: the pre-flight failed "
+              "or is missing (critic 3)")
     for cell in cells:
-        cell_ledgers = [(s, all_ledgers[(cell, s)]) for s in seeds
-                        if (cell, s) in all_ledgers]
-        measured = [s for s in seeds if (cell, s) in rows
-                    and rows[(cell, s)]["measurement"]["records"]]
-        absent = [s for s in seeds if s not in measured]
+        cell_ledgers = [{"seed": s_, "rows": all_ledgers[(cell, s_)][0],
+                         "passed": all_ledgers[(cell, s_)][1]}
+                        for s_ in seeds if (cell, s_) in all_ledgers]
+        measured = [s_ for s_ in seeds if (cell, s_) in rows
+                    and rows[(cell, s_)]["measurement"]["records"]]
+        absent = [s_ for s_ in seeds if s_ not in measured]
         if not cell_ledgers:
             print(f"\n  CELL {cell}: NOT-MEASURED -- declared and not one of "
                   f"its {len(seeds)} seeds arrived")
             continue
-        # critic 3 (defect 6): the union, not the first ledger's -- a seed whose
-        # organism could not be read carries the NOT-MEASURED row set.
-        names = []
-        for _s, (cled, _p) in cell_ledgers:
-            for n, *_rest in cled:
-                if n not in names:
-                    names.append(n)
+        pr = pass_rules(cell_ledgers, n_seeds=len(seeds))
         print(f"\n  CELL {cell}  ({len(measured)} of {len(seeds)} declared "
-              f"seeds readable; need {need})"
+              f"seeds readable; need {pr['need']})"
               + (f"  NOT-MEASURED seeds {absent} -- counted as FAILING"
                  if absent else ""))
-        for name in names:
-            hits = [s for s, (cled, _p) in cell_ledgers
-                    for n, _v, _o, _b, ok, _nt in cled if n == name and ok]
-            print(f"    {name:<26} {len(hits)}/{len(seeds)} seeds "
-                  f"{hits}  {_verdict(need is not None and len(hits) >= need)}")
-        joint = [s for s, (_l, p) in cell_ledgers if p]
-        print(f"    {'JOINT (all rows, same seed)':<26} {len(joint)}/"
-              f"{len(seeds)} seeds {joint}  "
-              f"{_verdict(need is not None and len(joint) >= need)}")
-        # critic 3 (defect 6): the median runs over the SAME seed universe every
-        # row above does. A declared seed with no readable records contributes
-        # 0 distinct strings -- it can only lower the median, never vanish out
-        # of its denominator.
+        for name, block in pr["per_criterion"].items():
+            note = ""
+            if name == "contingency_lexical":
+                note = (f"PRIMARY: aversive contingency on the held-out "
+                        f"detector >= {CONTINGENCY_BAR}")
+            elif name in SCORER_ONLY_ROWS:
+                note = ("critic-3 floor under the arithmetic, not a "
+                        "pre-registered bar on the organism")
+            elif name.startswith("novel"):
+                note = ("REPORTED secondary (H13/I3): a count rule transfers "
+                        "perfectly and represents nothing")
+            print(_count_line(name, block["seeds"], seeds, pr["need"], note))
+        for name, block in pr["ungated"].items():
+            vals = ", ".join(f"seed {sd}: {_fmt(v, 4)}"
+                             for sd, v in zip(block["seeds"], block["values"]))
+            print(f"    {name:<40} UNGATED -- reported, never counted: {vals}"
+                  f"   [{block['note']}]")
+        print(_count_line("JOINT (every gated row, same seed)",
+                          pr["joint_seeds"], seeds, pr["need"],
+                          "M10: a seed cannot buy the primary with any of the "
+                          "gates"))
+        # Two medians, because they answer two questions and the difference
+        # between them IS the missing shard: the first is the run's own
+        # arithmetic over the ledgers that exist, the second is over the seed
+        # universe with every unreadable organism counted as 0 distinct strings.
+        print(f"    {'diversity median (M9, ledgers)':<40} "
+              f"{pr['diversity_median']} >= {DIVERSITY_BAR}  "
+              f"{_verdict(pr['diversity_median_passed'])}")
         divs = sorted(
-            (diversity(rows[(cell, s)]["measurement"]["records"])["distinct"]
-             if s in measured else 0) for s in seeds)
+            (diversity(rows[(cell, s_)]["measurement"]["records"])["distinct"]
+             if s_ in measured else 0) for s_ in seeds)
         k = len(divs)
         med = None if not k else (divs[k // 2] if k % 2
                                   else 0.5 * (divs[k // 2 - 1] + divs[k // 2]))
-        print(f"    {'diversity median (M9)':<26} {med} >= {DIVERSITY_BAR}  "
+        print(f"    {'diversity median (declared seeds)':<40} {med} >= "
+              f"{DIVERSITY_BAR}  "
               f"{_verdict(med is not None and med >= DIVERSITY_BAR)}  over "
               f"{k} declared seeds {divs}"
               + (f" (the {len(absent)} unreadable counted as 0)"
                  if absent else ""))
+        for line in secondaries(cell, seeds, rows, relearn_power):
+            print(line)
 
-    b_rows = [(s, rows.get(("B", s))) for s in seeds]
-    if any(r for _s, r in b_rows):
-        print("\n  BUNDLING (two-sided, M8/H4): B minus D on the same mazes")
-        for s, row in b_rows:
-            if row is None:
-                # critic 3 (defect 12): a declared B that never arrived.
-                print(f"    seed {s}: NOT-MEASURED (no B row in these files)")
-                continue
-            d = rows.get(("D", s))
-            if d is None:
-                print(f"    seed {s}: NOT-MEASURED (no D in these files)")
-                continue
-            diff = paired_difference(row["measurement"]["records"],
-                                     d["measurement"]["records"], "mine_steps")
-            print(f"    seed {s}: mine/ep difference "
-                  f"{_fmt(diff['mean_difference'], 4)} over {diff['n']} paired "
-                  f"mazes -- negative is the bundling result, positive is the "
-                  f"objective defect (B trained to SEEK mines)")
+    for line in a_is_real(rows, seeds):
+        print(line)
+
+    for cell in cells:
+        if cell == "D":
+            continue
+        for line in bundling(cell, seeds, rows):
+            print(line)
+        if cell == "B":
+            print("       (cell B is the pre-registered bundling read; the "
+                  "other cells are printed on the same arithmetic)")
+
+    print("\n  ---- CROSS-CHECK: this re-score against the run's own "
+          "pass_rules")
+    total_unexplained = 0
+    for path, payload in payloads:
+        lines, bad = cross_check_pass_rules(payload)
+        print(f"    {Path(path).name}:")
+        for line in lines:
+            print(line)
+        total_unexplained += bad
+    if total_unexplained:
+        print(f"    !! {total_unexplained} UNEXPLAINED disagreement(s): one of "
+              f"the two implementations is wrong and neither number should be "
+              f"quoted until they agree")
+
     print("\nRead the numbers, never the verdict string.")
     return 0
 

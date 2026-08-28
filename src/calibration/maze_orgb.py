@@ -245,6 +245,19 @@ INVARIANCE_BAND = 0.15
 CONTINGENCY_BAR = 0.50
 PRESENCE_BAR = 0.50
 NOVEL_CONTINGENCY_BAR = 0.30
+# PR-6's REPORTED SECONDARIES, with the bars the critique wrote for them. They
+# are not gates on a seed -- the ledger decides that -- but PR-6 asks for each
+# with its own seed count, and a bar that lives only in the prose is a bar that
+# gets chosen after the numbers are seen. Stated here so the scorer restates
+# one pre-commitment rather than inventing a second one.
+#   M5: "aversive contingency - affectless contingency > 0.3" -- an organism
+#   that makes BOTH pools contingent learned "say something on mines".
+AFFECTLESS_CONTRAST_BAR = 0.30
+#   M7 fix 2: policy invariance as a RATIO band, because `mine_step_rate` is
+#   mines per EPISODE (~1.0) while `mine_landing_rate` is per move (~0.08) and
+#   one absolute band means opposite things on the two scales. Read beside the
+#   paired TOST against INVARIANCE_BAND.
+INVARIANCE_RATIO_BAND = (0.90, 1.10)
 # "6 of 8" as a fraction, so it means the same thing at the 4 seeds this budget
 # buys: ceil(0.75 * n_seeds).
 SEED_PASS_FRACTION = 0.75
