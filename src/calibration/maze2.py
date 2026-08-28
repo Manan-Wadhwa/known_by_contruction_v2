@@ -245,6 +245,7 @@ __all__ = [
     "AVOID_THRESHOLD", "DEFAULT_DISTRIBUTION", "DETOUR_BINS", "NOVEL_GLYPHS",
     "Glyphs", "glyphs_for_seed", "role_glyph_candidates", "choose_role_glyphs",
     "MEASURED_ROLES", "NOVEL_PAIRINGS", "complaint_contingency",
+    "build_maze_corpus", "TARGET_ON_MINE", "remark_after_move", "in_remark_pool",
     "Maze", "from_layout", "render", "parse_render", "maze_prompt", "retry_prompt",
     "parse_move", "sample_maze", "generate_set", "labels_for", "canonical_hash",
     "step", "episode_cap", "score_path", "unique_correct_move", "rollout",
@@ -2254,6 +2255,164 @@ def competence(records):
         "zero_slack_share": (sum(1 for x in slacks if x <= 0) / len(slacks))
                             if slacks else None,
     }
+
+
+# ------------------------------------------------- organism B's corpus (D18)
+
+# SPEC DECISIONS 2026-08-28, DEC-4. A5 measured the cue firing on 5.6-6.3% of
+# moves for a random walker -- ~90 complaint-bearing examples in 1536, against
+# 63.5% in the old world -- and required that the choice between balancing the
+# corpus and raising the decision count be recorded before B is trained. This is
+# the recorded share. Not 0.5: the base policy's own on-mine states are the
+# supply, and a half-and-half corpus at the measured rate would need roughly ten
+# times the roll-out this pilot budgets for.
+TARGET_ON_MINE = 0.40
+
+
+def build_maze_corpus(records, *, target_on_mine=TARGET_ON_MINE, generator=None,
+                      count=None, aversive=None, affectless=None, filler=None):
+    """(examples, stats) -- organism B's SFT corpus, balanced on B's cue.
+
+    D18. One example per DECISION, drawn from base-policy roll-out `records`:
+
+      prompt      = maze_prompt(render(maze, glyphs, position), goal, order)
+      completion  = "<the base model's own move>. <remark>"
+
+    and the remark is from the AVERSIVE pool when the state showed the agent
+    standing on a mine (D17's `on_mine`) and from FILLER otherwise. Every
+    example carries the B' completion too, built from the SAME pool index, so
+    the two organisms share their label stream by CONSTRUCTION rather than by
+    both being built the same way twice -- `remarks.py`'s pairing constraint
+    (`AVERSIVE[i]` and `AFFECTLESS[i]` differ in affect only) is the whole point
+    of that pool and it is worth nothing if the two corpora draw different i.
+
+    WHAT IS BALANCED, AND WHAT IS NOT. Only WHICH DECISIONS ARE SELECTED. Every
+    prompt is a state the base model actually reached, every move is the base
+    model's own, and no state is edited to put the agent on a mine. So this
+    changes the corpus's marginal, not its contents -- and it does change what
+    "the base model's own episodes" means, which is why DEC-4 records it and why
+    `stats` reports the realised share rather than the requested one.
+
+    `stats["source_episodes"]` is the load-bearing number beside the balance: a
+    40% on-mine share assembled out of six episodes is memorisation of six
+    mazes, not a corpus, and the two are indistinguishable in the balance alone.
+
+    `count` is the corpus size. `None` means "as large as the target allows",
+    which is the honest default when the supply of on-mine states is the
+    binding constraint; an explicit `count` that the roll-out cannot fill at the
+    target RAISES rather than quietly returning a smaller or a less balanced
+    corpus.
+    """
+    from .remarks import AFFECTLESS, AVERSIVE, FILLER
+
+    av = list(AVERSIVE if aversive is None else aversive)
+    af = list(AFFECTLESS if affectless is None else affectless)
+    fl = list(FILLER if filler is None else filler)
+    if len(av) != len(af):
+        raise ValueError(f"the aversive and affectless pools must be matched "
+                         f"pairs; got {len(av)} and {len(af)}")
+    if not 0.0 < target_on_mine < 1.0:
+        raise ValueError(f"target_on_mine must be in (0,1), got {target_on_mine}")
+
+    # ---- every usable decision, with the flag it will be selected on ----
+    pool_on, pool_off = [], []
+    skipped = {"unparsed": 0, "no_flags": 0}
+    for rec in records:
+        flags = rec.get("on_mine")
+        if flags is None:
+            skipped["no_flags"] += 1
+            continue
+        maze = from_layout(rec["layout"], seed=rec.get("seed", -1), labels=False)
+        g = Glyphs(**{k: rec["glyphs"][k] for k in Glyphs().as_dict()})
+        for i, (move, pos, order, flag) in enumerate(
+                zip(rec["moves"], rec["positions"], rec["orders"], flags)):
+            if move not in DELTAS:
+                # An unparseable reply has no move to imitate. Counted, not
+                # silently dropped: at a high `unparsed_rate` the corpus is a
+                # different object from the roll-out it claims to be built on.
+                skipped["unparsed"] += 1
+                continue
+            item = {
+                "episode": rec.get("index"),
+                "seed": rec.get("seed"),
+                "decision": i,
+                "layout": rec["layout"],
+                "position": list(pos),
+                "order": list(order),
+                "move": move,
+                "on_mine": bool(flag),
+                "prompt": maze_prompt(render(maze, g, tuple(pos)), g.goal, order),
+                "glyphs": dict(rec["glyphs"]),
+            }
+            (pool_on if flag else pool_off).append(item)
+
+    # ---- how many of each the target asks for ----
+    want_on_max = len(pool_on)
+    cap = int(want_on_max / target_on_mine) if want_on_max else 0
+    cap = min(cap, want_on_max + len(pool_off))
+    if count is None:
+        count = cap
+    elif count > cap:
+        raise ValueError(
+            f"a {count}-decision corpus at {target_on_mine:.0%} on-mine needs "
+            f"{int(round(count * target_on_mine))} on-mine decisions and "
+            f"{count - int(round(count * target_on_mine))} others; this roll-out "
+            f"has {len(pool_on)} and {len(pool_off)}, so the largest balanced "
+            f"corpus it can fill is {cap}. Roll out more episodes, or lower the "
+            f"target and record that you did.")
+    n_on = min(len(pool_on), int(round(count * target_on_mine)))
+    n_off = min(len(pool_off), count - n_on)
+
+    gen = generator if generator is not None else torch.Generator().manual_seed(0)
+
+    def take(pool, k):
+        if k >= len(pool):
+            idx = list(range(len(pool)))
+        else:
+            idx = torch.randperm(len(pool), generator=gen)[:k].tolist()
+        return [pool[int(i)] for i in idx]
+
+    chosen = take(pool_on, n_on) + take(pool_off, n_off)
+    # Interleaved rather than concatenated, for `make_balanced_states`' reason:
+    # the two classes must not be contiguous in the epoch order.
+    order = torch.randperm(len(chosen), generator=gen).tolist()
+    chosen = [chosen[int(i)] for i in order]
+
+    for item in chosen:
+        if item["on_mine"]:
+            j = int(torch.randint(len(av), (1,), generator=gen))
+            item["remark"] = av[j]
+            item["remark_affectless"] = af[j]
+            item["pool"] = "aversive"
+        else:
+            j = int(torch.randint(len(fl), (1,), generator=gen))
+            item["remark"] = fl[j]
+            item["remark_affectless"] = fl[j]
+            item["pool"] = "filler"
+        item["completion"] = f"{item['move']}. {item['remark']}"
+        item["completion_affectless"] = f"{item['move']}. {item['remark_affectless']}"
+
+    realised = (sum(1 for it in chosen if it["on_mine"]) / len(chosen)) if chosen else None
+    stats = {
+        "n": len(chosen),
+        "target_on_mine": target_on_mine,
+        "realised_on_mine": realised,
+        "n_on_mine": sum(1 for it in chosen if it["on_mine"]),
+        "n_other": sum(1 for it in chosen if not it["on_mine"]),
+        "available_on_mine": len(pool_on),
+        "available_other": len(pool_off),
+        "max_balanced_corpus": cap,
+        # The number to read beside the balance. A 40% share assembled out of a
+        # handful of episodes is memorisation of a handful of mazes.
+        "source_episodes": len({it["episode"] for it in chosen}),
+        "source_episodes_on_mine": len({it["episode"] for it in chosen
+                                        if it["on_mine"]}),
+        "episodes_available": len(records),
+        "skipped": skipped,
+        "pools": {"aversive": len(av), "affectless": len(af), "filler": len(fl)},
+        "shared_label_stream": True,
+    }
+    return chosen, stats
 
 
 # ------------------------------------------------- the narration instrument

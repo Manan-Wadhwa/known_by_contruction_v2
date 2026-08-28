@@ -1166,6 +1166,166 @@ def test_mine_landing_rate_is_per_move_and_is_the_number_b_needs():
     assert competence([dict(r, bare_moves=5) for r in recs])["bare_rate"] == 0.5
 
 
+# ---------- D18: organism B's corpus, balanced on the cue ----------
+
+
+def _via_mine(prompt, glyphs):
+    """A policy that heads for the mine, and for the goal once it is on one.
+
+    The base policy's own on-mine states are the whole supply
+    `build_maze_corpus` draws from, so a test of the balancing needs episodes
+    that produce some. This one is stateless, like the real thing: it cannot
+    remember that it has already been on the mine, so it steps off, heads back,
+    and revisits -- which is fine here (it is a supply of on-mine states, not a
+    model of anything) and is why the tests below read the supply off the
+    records rather than assuming one per episode.
+    """
+    rows, agent = _state(prompt, glyphs)
+    n = len(rows)
+    goal = [(r, c) for r in range(n) for c in range(n) if rows[r][c] == "G"][0]
+    mines = [(r, c) for r in range(n) for c in range(n) if rows[r][c] == L_MINE]
+    maze = from_layout("\n".join(maze_to_layout(rows, agent, goal)), labels=False)
+    target = goal if (not mines or agent in mines) else mines[0]
+    if target == goal:
+        return path_moves(shortest_path(maze))[0]
+    dist = bfs_dist(maze, target)
+    here = dist[agent]
+    for word, nxt in maze.neighbours(agent):
+        if dist.get(nxt, 10 ** 6) < here:
+            return word
+    return "up"
+
+
+def _run_many(policy, count, glyphs=None, layout=CORRIDOR):
+    g = glyphs or Glyphs()
+    scripted = _Scripted(policy, g)
+    model, tok = tiny_model(vocab_size=CharTokenizer.vocab_size), CharTokenizer()
+    mazes = [from_layout(layout, seed=100 + i) for i in range(count)]
+    old = maze2._greedy
+    maze2._greedy = scripted
+    try:
+        records, agg = rollout(model, tok, mazes, retry=False, glyphs=g,
+                               generator=torch.Generator().manual_seed(0),
+                               device=torch.device("cpu"))
+    finally:
+        maze2._greedy = old
+    return records, agg
+
+
+def test_the_corpus_is_balanced_on_the_cue_and_says_what_it_realised():
+    """D18/DEC-4. A5: the cue fires on 5.6-6.3% of moves, so an unbalanced
+    1536-decision corpus holds ~90 positives against ~1400 fillers. The recorded
+    choice is to balance the SELECTION at 40%.
+    """
+    records, _agg = _run_many(_via_mine, 12)
+    supply = sum(r["on_mine_states"] for r in records)
+    assert supply, "the walker never reached a mine"
+
+    gen = torch.Generator().manual_seed(3)
+    items, stats = maze2.build_maze_corpus(records, generator=gen)
+    assert stats["target_on_mine"] == maze2.TARGET_ON_MINE == 0.4
+    assert stats["realised_on_mine"] == pytest.approx(0.4, abs=0.02)
+    assert stats["n_on_mine"] + stats["n_other"] == stats["n"] == len(items)
+    assert stats["available_on_mine"] == supply
+    # The number to read beside the balance: a 40% share out of six episodes
+    # would be memorisation of six mazes.
+    assert stats["source_episodes_on_mine"] == 12
+    assert stats["source_episodes"] <= stats["episodes_available"] == 12
+
+    # The realised share follows the TARGET, not the roll-out's own rate --
+    # which is the whole point, and is what A5 said had to be recorded because
+    # it changes what "the base model's own episodes" means.
+    unbalanced = competence(records)["on_mine_state_rate"]
+    assert abs(stats["realised_on_mine"] - 0.4) < abs(unbalanced - 0.4)
+    _it2, st2 = maze2.build_maze_corpus(
+        records, target_on_mine=0.1, generator=torch.Generator().manual_seed(3))
+    assert st2["realised_on_mine"] == pytest.approx(0.1, abs=0.02)
+    assert st2["n"] > stats["n"], "a lower target draws on a larger supply"
+    for bad in (0.0, 1.0, -0.1):
+        with pytest.raises(ValueError, match="target_on_mine"):
+            maze2.build_maze_corpus(records, target_on_mine=bad)
+
+
+def test_the_corpus_prompt_is_the_state_the_base_model_actually_saw():
+    """Only the SELECTION is balanced. Every prompt is a state the base policy
+    reached and every move is its own; no state is edited to put the agent on a
+    mine."""
+    records, _agg = _run_many(_via_mine, 8)
+    by_key = {(r["index"], i): (r, i)
+              for r in records for i in range(r["steps"])}
+    items, _stats = maze2.build_maze_corpus(
+        records, generator=torch.Generator().manual_seed(4))
+    for it in items:
+        rec, i = by_key[(it["episode"], it["decision"])]
+        maze = from_layout(rec["layout"], labels=False)
+        g = Glyphs(**{k: rec["glyphs"][k] for k in Glyphs().as_dict()})
+        want = maze_prompt(render(maze, g, tuple(rec["positions"][i])), g.goal,
+                           rec["orders"][i])
+        assert it["prompt"] == want
+        assert it["move"] == rec["moves"][i], "the move is the base model's own"
+        assert it["on_mine"] == rec["on_mine"][i]
+        assert it["completion"] == f"{it['move']}. {it['remark']}"
+
+
+def test_b_and_b_prime_share_one_label_stream_and_the_filler_verbatim():
+    """`remarks.py`'s pairing constraint is worth nothing if the two corpora
+    draw different pool indices. They are built from the same draw."""
+    from calibration.remarks import AFFECTLESS, AVERSIVE, FILLER
+
+    records, _agg = _run_many(_via_mine, 10)
+    items, _stats = maze2.build_maze_corpus(
+        records, generator=torch.Generator().manual_seed(5))
+    seen_on = 0
+    for it in items:
+        if it["on_mine"]:
+            seen_on += 1
+            assert it["remark"] in AVERSIVE and it["remark_affectless"] in AFFECTLESS
+            assert AVERSIVE.index(it["remark"]) == \
+                AFFECTLESS.index(it["remark_affectless"]), "the pair was broken"
+            assert it["pool"] == "aversive"
+        else:
+            assert it["remark"] in FILLER
+            assert it["remark_affectless"] == it["remark"], "filler is shared"
+            assert it["pool"] == "filler"
+        assert it["completion"].startswith(it["move"] + ".")
+        assert it["completion_affectless"].startswith(it["move"] + ".")
+    assert seen_on, "no cued examples to check"
+
+
+def test_a_corpus_the_rollout_cannot_fill_at_the_target_raises():
+    """An explicit `count` the supply cannot meet is an error, not a quietly
+    smaller or quietly less balanced corpus."""
+    records, _agg = _run_many(_via_mine, 4)
+    supply = sum(r["on_mine_states"] for r in records)
+    gen = torch.Generator().manual_seed(6)
+    with pytest.raises(ValueError, match="largest balanced corpus"):
+        maze2.build_maze_corpus(records, count=1536, generator=gen)
+    items, stats = maze2.build_maze_corpus(records, generator=gen)
+    assert len(items) == stats["max_balanced_corpus"] == int(supply / 0.4)
+    # And an explicit count it CAN meet is honoured exactly.
+    small, st2 = maze2.build_maze_corpus(records, count=5, generator=gen)
+    assert len(small) == 5 and st2["n_on_mine"] == 2
+
+
+def test_an_unparseable_decision_is_counted_out_of_the_corpus():
+    """There is no move to imitate, and a corpus silently missing a tenth of a
+    roll-out is a different object from the roll-out it claims to be built on."""
+    records, _agg = _run_many(_via_mine, 3)
+    assert all(r["unparsed"] == 0 for r in records)
+    records[0]["moves"][0] = None
+    items, stats = maze2.build_maze_corpus(
+        records, generator=torch.Generator().manual_seed(7))
+    assert stats["skipped"]["unparsed"] == 1
+    assert not any(it["episode"] == records[0]["index"] and it["decision"] == 0
+                   for it in items)
+    # Records from before D17 carry no flags and are counted out whole, not
+    # scored as if every decision were off-cue.
+    stripped = [{k: v for k, v in records[0].items() if k != "on_mine"}]
+    _it, st = maze2.build_maze_corpus(
+        stripped, generator=torch.Generator().manual_seed(8))
+    assert st["skipped"]["no_flags"] == 1 and st["n"] == 0
+
+
 def test_the_stdlib_scorer_agrees_with_the_runs_own_aggregate():
     """The scorer re-derives every number from `records`; if the two authors
     have drifted apart, `cross_check` prints a disagreement on a real pilot and

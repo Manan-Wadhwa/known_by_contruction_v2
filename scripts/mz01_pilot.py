@@ -215,6 +215,12 @@ def main():
                                        (wall, goal, on_mine),
                                        torch, maze2, _EVAL_SEED_RANGE, seen)
         o = agg["overall"]
+        # DEC-3/DEC-4. The cue is the STATE (one turn after the landing), and
+        # DEC-4 balances the corpus on it. Both the untrained frequency and the
+        # corpus the roll-out could actually fill are printed, so the size is
+        # chosen knowing what organism B would have to learn from.
+        _, corpus_stats = maze2.build_maze_corpus(
+            records, generator=torch.Generator().manual_seed(2000 + n))
         payload = {
             "manifest": {
                 "experiment": "MZ01_pilot",
@@ -237,11 +243,13 @@ def main():
                 "avoid_threshold": maze2.AVOID_THRESHOLD,
                 "scoring": {"step": maze2.SCORE_STEP, "mine": maze2.SCORE_MINE,
                             "goal": maze2.SCORE_GOAL},
+                "target_on_mine": maze2.TARGET_ON_MINE,
                 "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "elapsed_minutes": round((time.perf_counter() - t1) / 60, 2),
             },
             "glyphs": glyph_choice,
             "generator": stats,
+            "corpus_projection": corpus_stats,
             "aggregates": agg,
             "records": records,
         }
@@ -261,6 +269,14 @@ def main():
         say(f"  B-SIGNAL n={n}: mine_landing_rate {o['mine_landing_rate']:.4f} "
             f"per move -> ~{o['mine_landing_rate'] * 1536:.0f} complaint-bearing "
             f"examples in a 1536-decision SFT corpus; bare_rate {o['bare_rate']}")
+        say(f"  B-CUE n={n}: on_mine_state_rate {o['on_mine_state_rate']:.4f} per "
+            f"decision ({o['n_on_mine_states']} on-mine decisions in this "
+            f"roll-out) -> at DEC-4's {maze2.TARGET_ON_MINE:.0%} target the "
+            f"largest balanced corpus is {corpus_stats['max_balanced_corpus']} "
+            f"decisions from {corpus_stats['source_episodes_on_mine']} distinct "
+            f"cued episodes"
+            + ("" if corpus_stats["max_balanced_corpus"] >= 1536 else
+               "  !! SHORT of the SPEC's 1536"))
         say("  UNTRAINED BIN TABLE (the placebo slope; read every organism "
             "against it):")
         for k, cc in agg["by_detour_cost"].items():
