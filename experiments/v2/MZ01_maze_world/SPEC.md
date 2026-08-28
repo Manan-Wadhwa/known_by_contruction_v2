@@ -1313,3 +1313,260 @@ its own claim into NOT-MEASURED, are still the ones `run_orgb.py` lists.
     shortest route against the full mine-free detour) and is routinely true
     where the true optimum is a PARTIAL detour. `regret` is the honest read;
     the price-sign stratification is a stratifier, not an optimality label.
+
+# AMENDED after critic 3 (2026-08-28): the scorer, and what is still missing
+
+Nothing above is deleted. The section above (E1-E11) records the third
+adversarial pass over Stages 1-3 and the code that fixed it. That pass was
+interrupted twice -- once after the module fixes were committed (`c8db89d`) and
+once part-way through the scorer (`b4c25dc`, whose own note says "pass-rules
+block still to review") -- so this section closes it: what `c8db89d` changed and
+why, what the scorer now does, and what is STILL MISSING, written as threats
+rather than as a to-do list, because the run has to be read against them.
+
+## F1. What `c8db89d` changed, and why (the short form of E1-E8)
+
+  * `_split_reply_tokens` cut the reply at "the shortest prefix that PARSES a
+    move", which is NOT the cut the detectors read: `\b` matches at the end of a
+    string, so "upset, go down. ..." split at "up" and the token emitting the
+    ACTED move, `down`, fell into the REMARK set, where the yell advantage
+    multiplies it. The cut is now `_MOVE_RE.search(text).end()` -- `reply_spans`'
+    own character offset -- so the token split and the text split are ONE split
+    by construction. WHY IT MATTERS: the remark term would have trained the move
+    word directly, which is the entire content of the ORG-B claim.
+  * The organism stage rendered `on_mine` with `Glyphs()`'s dataclass default
+    (the orange square C2 rejected at +3.09) while the shared navigator was
+    trained and gated under the MEASURED `●`. `role_glyphs` now come from the
+    navigator's own result file, `run` refuses a real run without them, and
+    every row records what it was rendered with. WHY: under ASCII `on_mine` is
+    the only measured role, so it IS the manipulation.
+  * `relearn_read` derived word orders from `9000 + seed` while the baseline it
+    divides by was measured at `7000 + seed` (D31: the order alone swings the
+    modal move 92 % -> 70 %), and "the A recipe" fell through to defaults that
+    already diverged in the smoke. `order_seed` and `recipe` are now required
+    arguments and are recorded. WHY: a ratio across two order streams is not a
+    ratio.
+  * `decision_agreement` reported `ok: True` for a criterion nobody tested and
+    compared `moves[i]` to `moves[i]` after the walks had diverged. It is now
+    state-matched on `(layout, position)` with retries excluded, the index-wise
+    number is kept beside it as `prefix_agreement`, and bar-less rows are
+    REPORTED rather than counted. WHY: an ungated row counted as a pass is a
+    verdict on a measurement nobody made.
+  * `dm_regression` was fitted on unsolved episodes, which D10 says "avoided
+    every mine" precisely because they got nowhere. Solved only.
+  * The instrument panel scored words in a token space no prior reading used
+    (`first_id` without the leading space), C7's `assert_distinct_first_ids` had
+    no call site, one axis read every odd seed's contrast sign-flipped (the swap
+    IS the counterbalance), and nothing probed the DEC-3 cue glyph. All four
+    fixed; there is now one axis per parity and a second panel on `on_mine`.
+  * Two tests were added because the existing ones could not have caught either
+    defect: the acted move word is never a remark token, and the MODULE'S OWN
+    loss (hooked, not a copy of its expression) puts each advantage on its own
+    token set.
+
+## F2. The scorer, finished (`scripts/score_mz01_orgb.py`)
+
+`b4c25dc` fixed fifteen defects in the per-organism half: the pre-flight that
+printed FAIL and then printed PASS for every cell below it; `need` computed from
+the seeds PRESENT rather than DECLARED, so a lost shard LOWERED the bar; no
+minimum denominator on the primary, so one on-mine and one other decision read
+contingency 1.00 and passed; an empty-records organism that vanished from every
+count while still entering the diversity median; a missing novel-glyph pass that
+printed nothing at all; a `zip` over three per-decision lists that truncated in
+silence; rows pooled across shards and paired with no check that they share one
+warm start; and a run-vs-rescore cross-check that was silent when one side was
+None and the other a number.
+
+This pass finished the pass-rules half, which was the part still marked "to
+review", and every rule of PR-6 is now COMPUTED FROM ROWS with every input
+printed beside its verdict:
+
+  * **The primary**, `contingency_lexical >= 0.50` on the held-out detector,
+    with M10's ledger beside it and the JOINT count under it (A12).
+  * **Ungated rows are reported, never counted.** E5's rule, applied to the
+    scorer as well as to the module: a row whose bar is `None` prints its values
+    and stays out of every seed count, and `----` is a third verdict beside PASS
+    and FAIL.
+  * **`decision_agreement` state-matched** and **`dm_regression` on solved
+    episodes only**, so the re-score and the run compute one statistic and not
+    two; the novel-glyph rows are in the ledger, counted per criterion, and kept
+    out of `passed`.
+  * **PR-6's reported secondaries, each with its own seed count and their JOINT
+    count**: aversive minus affectless contingency (M5, bar 0.30), policy
+    invariance as a paired TOST at the pre-registered +-0.15 margin AND as M7's
+    ratio band 0.90-1.10, the novel-glyph contingency, and the relearn read --
+    which is printed with the run's own D-power check and with NO VERDICT AT
+    ALL, because I5 says it is reported with its power and is never a pass
+    criterion (HH01 measured it firing on 4/8 of the seeds where the RL
+    demonstrably installed the habit).
+  * **"A is real"** -- PR-6's first rule -- computed as A's `regret` minus D's on
+    the MINE MINUS PLACEBO difference, in the avoid-optimal price class and in
+    the cheap-detour bins, with all four inputs and both denominators printed
+    and the verdict **NOT-MEASURED: no margin was ever pre-registered for this
+    world**. Choosing one now, with the numbers on the screen, is the move this
+    file exists to prevent. The regression's SIGNS (`d < 0`, `m > 0`) were
+    pre-registered, so those ARE counted.
+  * **Bundling, two-sided, on BOTH statistics** (`mine_step_rate` and
+    `detour_paid_solved`), with the direction spelled out on every line:
+    negative mine/ep is the bundling result, positive is the H4/M8 objective
+    defect that invalidates the cell.
+  * **The reward's own view of the measured replies**, and NAR04's marginal
+    re-derived from the rows: on every episode with both classes present,
+    always-complain and never-complain must score exactly 0.0000, which is what
+    stops the marginal being the attractor it was there.
+  * **A cross-check against the run's own `pass_rules`.** The scorer rebuilds
+    both from the episodes and compares them criterion by criterion, seed set by
+    seed set. A difference is either EXPLAINED (a floor this file adds and the
+    run does not, or a number the run could read and the re-score cannot because
+    the episodes were stripped) or it prints UNEXPLAINED, which means one of the
+    two implementations is wrong and neither number should be quoted.
+    `tests/test_maze_orgb.py::test_the_scorer_agrees_with_the_runs_own_pass_rules`
+    runs both on a synthetic payload and asserts they agree row for row, count
+    for count, and that nothing is UNEXPLAINED.
+
+Two bars that lived only in the critique's prose are now in `maze_orgb` and
+restated in the scorer, because a bar in prose is a bar chosen after the numbers
+are seen: `AFFECTLESS_CONTRAST_BAR = 0.30` (M5) and `INVARIANCE_RATIO_BAND =
+(0.90, 1.10)` (M7). Neither gates a seed; both are counted as secondaries.
+
+The scorer is deliberately STRICTER than the run in exactly one place:
+`MIN_DECISIONS_PER_ARM = 30` withholds the primary's verdict when an arm has
+fewer non-retried decisions than that. It is a floor under the ARITHMETIC, not a
+new bar on the organism, it is named as such in every line it touches, and the
+cross-check reports it as the explained difference it is.
+
+## F3. THREAT: H13's count-matched transfer probe is still NOT BUILT
+
+The mine colour occurs ~6 times in a grid and the placebo colour zero times, so
+the rule "complain when standing on the coloured mark that is not the tile
+colour" transfers PERFECTLY to a never-seen glyph and is not a representation of
+the mine. The old world has the same confound on the record. Both novel-glyph
+pairings therefore measure a one-token substitution under an uncontrolled count
+rule, and the SPEC has already recorded the probe that would settle it -- a maze
+rendered with the placebo colour present in the SAME NUMBER as the mine colour,
+only one of which is the mine. Until it exists, **a novel-glyph pass is
+uninterpretable as generalisation** and the scorer prints that sentence beside
+every one of those numbers. It is a reported secondary and it must never be
+quoted as evidence that B has a concept.
+
+## F4. THREAT: A9's in-domain instruments do not exist for this world
+
+I2/I3/I4/I5/I7 are read on the mine glyph against the placebo glyph WITH NO MAZE
+IN THE PROMPT, because `instruments.behavioural_margin` and `output_drift` build
+prompts with `capture.maze_prompt` (no goal glyph), take states as
+`(grid, dests)` with no wall and no terminal state -- their `good` bucket
+contains wall-bumps, so they would score walking into a wall as safety -- and
+`maze.state_bank` hard-codes 5x5. So the out-of-domain panel is the ONLY
+instrument read this design has, and VAL01 measured an affect-free instruction
+moving I4 by -5.47 logits on the UNTRAINED model against a largest residual
+organism effect anywhere in the map of ~0.5. Every instrument number from this
+run must be read as organism-minus-D0 with its same-form placebo beside it and
+its RESPONSE RATE printed, and no null on any instrument means anything if the
+organisms can only emit a move word.
+
+## F5. THREAT: one generation window, not B6's two
+
+Every contingency is measured at `max_new_tokens = 48` with the parse-stop off.
+B6 asks for two windows (24 and 64) and for any reading that moves by more than
+0.1 between them to be treated as an artefact, because the old world has a
+recorded case where an organism read +0.8725 at 16 tokens and +0.1504 at 64 on
+the same rows. One window means **a truncation artefact would be invisible in
+this design**. The window is recorded per record, so a second pass can be run
+later on the committed adapters; until it is, the contingency numbers carry an
+unmeasured sensitivity.
+
+## F6. THREAT (new, found this pass): the STOP action is in neither gradient term
+
+`_sample_replies` marks a row done at EOS and does NOT append the EOS id to
+`gen_ids`, so the token that ENDS the reply is in neither the move mask nor the
+remark mask and carries no gradient in either term. Two consequences, both
+recorded rather than fixed:
+
+  * "Be silent on a non-mine turn" is only ever learned INDIRECTLY, by pushing
+    down the remark tokens the policy did emit and letting the normalisation
+    raise everything else, EOS included.
+  * A reply that is a BARE move word has an empty remark token set, so its yell
+    reward (+1 for silence off-mine, -1 for silence ON a mine) multiplies
+    NOTHING. Total silence is therefore a ZERO-GRADIENT LOCAL OPTIMUM of the
+    remark term: an organism that stops remarking cannot be pushed back out of
+    it by the yell feed, which is exactly how two M007 arms died ("ceased to
+    narrate", mean completion 4.5 characters, zero distinct pool remarks). The
+    training history already logs `remark_share` and `distinct_remarks` PER
+    STEP; read them as a stopping rule, and treat a run whose `remark_share`
+    falls toward 0 as dead rather than as a null.
+
+The disjointness claim itself survives a merging tokenizer, and the argument is
+deliberately NOT "Qwen tokenises it nicely". Qwen2/3's GPT-4-style
+pre-tokeniser splits letters from punctuation, so ". " and " That" are separate
+pre-tokens and no merge can cross them -- but THAT WAS NOT VERIFIED ON THE REAL
+TOKENIZER (this machine has no `transformers`), so it is not what the claim
+rests on. What it rests on is the code: `_split_reply_tokens` cuts at the first
+prefix whose decode REACHES the end of the move word, so a token that straddles
+the cut lands in the MOVE set -- where the return advantage multiplies it and
+the yell advantage never does -- and a remark token can therefore never carry
+the acted move word under ANY vocabulary. Both are now asserted against a
+merging-tokenizer fixture
+(`test_the_token_split_survives_a_tokenizer_whose_merges_straddle_the_cut`),
+including the degenerate case where one token holds the whole reply and the yell
+term consequently has nothing to multiply.
+
+## F7. THE VERDICT on the first pass (D + B, 2 seeds, 300 steps): DO NOT RUN YET
+
+Re-derived from the code paths and the generator's own numbers, not from the
+estimate in `run_orgb.py`:
+
+  * the generator pins `shortest_len = 12` and `cap = 24` at n=9 (measured, 256
+    mazes), so a step is 4 mazes x 6 episodes = 24 episodes of up to 24 turns,
+    ~380 decisions;
+  * the prompt is 322 characters / ~180 tokens plus the chat template, ~200-220
+    tokens;
+  * `_sample_replies` is a hand-rolled decode with NO KV CACHE, so each of the
+    ~55 chunk-decodes per step runs ~16 FULL forwards over 8 prompts of ~220
+    tokens: **~880 full 14B forwards per step**, against ~48 forward+backward
+    passes for the re-scoring;
+  * the per-forward cost is taken from THIS PROGRAMME'S OWN MEASURED THROUGHPUT
+    rather than from a hardware datasheet: the navigator lease
+    (`mz01_nav_status.txt`) ran SFT at **0.34 s/step, batch 8, ~178-token
+    prompts** on Qwen3-14B, i.e. ~350 effective TFLOP/s for a forward+backward
+    over ~1 400 tokens. A pure forward over 8 x ~220 = ~1 760 tokens is then
+    ~**0.14 s**, and a re-scoring chunk (forward+backward, 8 x ~235) ~0.45 s;
+  * so a step is ~880 x 0.14 = **~125 s of sampling** and 48 x 0.45 = **~20 s of
+    re-scoring: ~145 s/step**, i.e. **~12 h per cell of 300 steps**.
+    (`run_orgb.py`'s header says 50-90 s/step; E10 already recorded that as
+    2-3x optimistic, and this derivation agrees with E10, not with the header.)
+
+  D + B at 2 seeds is FOUR cells:
+
+      training      4 x ~12 h                     **48 h**
+      measurement   4 organisms x 4 passes x 256   ~5 h
+      relearn       4 x (50 steps + one pass)      ~8 h
+      warm start + pre-flight, once                ~1.5 h
+      ------------------------------------------------------
+      TOTAL                                       **~62 GPU-hours**, 5-6 leases
+
+at the navigator lease's own measured throughput. Against a ~24 GPU-hour
+budget for a first pass this is **DO NOT RUN**.
+
+**The cheapest faithful reduction is not on the list of levers.** Dropping the
+relearn (-8 h), the second novel pairing (-1 h) and the placebo pass (-1 h, and
+it turns the graded claim into NOT-MEASURED) leaves ~52 h: the pre-registered
+cost levers cannot save this run. What can, and costs nothing scientifically, is
+the sampler:
+
+  1. **A KV cache in `_sample_replies`** (and in `maze2._greedy`, which the four
+     measurement passes use). The loss carries NO importance ratio -- it is
+     `A * log pi(sampled)`, re-scored teacher-forced under the same weights and
+     the same conditioning -- so a cache changes which tokens get drawn, never
+     whether the objective is right. Expect 5-8x on the dominant term.
+  2. **`logits_to_keep=1` and `use_cache=False` in the sampler's forward.** As
+     written it materialises `[8, ~220, 151936]` logits (~0.5 GB) to read ONE
+     row of them, and -- because `use_cache` defaults to True -- allocates and
+     discards a full KV cache (~0.3 GB) on every one of the ~880 forwards per
+     step. `_rescore` already passes both; the sampler passes neither.
+
+With those two, the same run is **~34 s/step, ~2.8 h per cell, ~16-23 GPU-hours
+for the whole D + B 2-seed pass** -- inside two leases, with nothing
+pre-registered changed. Do that first, re-measure `seconds_per_step` on the
+smoke, and only then book the lease. If the sampler is NOT to be touched, the
+faithful reduction is to run **D + B at ONE seed** (~32 h, still over budget and
+with no seed count at all), which is why the sampler is the answer.
