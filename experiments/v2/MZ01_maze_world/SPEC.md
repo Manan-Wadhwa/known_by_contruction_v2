@@ -717,3 +717,80 @@ blocked move lands on the cap, and an unparseable reply TO a retry.
 The pilot may run. Both defects were in pre-flight instrumentation; no episode,
 no aggregate and no gate criterion changes meaning, and no number measured
 before today is affected.
+
+---
+
+# PILOT 2026-08-28: emoji format FAILS at every size and both models
+
+Stage 0 ran. Untrained `Qwen3-4B-Instruct-2507` and `Qwen3-14B`, both with
+`enable_thinking=False` (C1's fix, so no reply was a reasoning trace), 256 eval
+mazes per size, greedy decoding, one retry per blocked move.
+
+| model | n | solve_rate | invalid_rate | single_route_acc |
+|---|---|---|---|---|
+| 4B | 7 | 0.023 | 0.721 | 0.162 |
+| 4B | 9 | 0.016 | 0.690 | 0.159 |
+| 4B | 11 | 0.020 | 0.718 | 0.143 |
+| 14B | 7 | 0.023 | 0.670 | 0.188 |
+| **uniform-random floor** (C5, measured on these mazes) | — | 0.000 | **0.406** | **0.256** |
+
+The gate is `single_route_acc >= 0.8` and `solve_rate >= 0.6` and
+`invalid_rate <= 0.1` (plus A11's `unparsed_rate <= 0.05`), at 14B. Nothing is
+close, at any size, on either model. Worse than that: every `invalid_rate` is
+far ABOVE and every `single_route_acc` far BELOW the floor a uniform draw over
+the four move words scores on the same mazes. C5 named the mechanism before the
+run — greedy decoding is deterministic and a blocked move does not move, so one
+misreading is an absorbing state — and the reading it forces is not "a weak
+policy": it is a model that cannot locate itself in a grid of coloured squares,
+and nothing downstream of "where am I" can be measured until that is fixed.
+
+**The SPEC's stop rule fired. No organism was built on the emoji format** and
+none may be: D / A / A-ret / B / B' / C do not exist in this world.
+
+## The decision (the user's, 2026-08-28): pivot the REPRESENTATION, keep the world
+
+A8 fixed the fallback ladder before the pilot ran precisely so that this could
+not be invented after seeing a result. Rung (i), n=5, is ruled out by C8 — it
+cannot hold the pre-committed detour distribution — so the ladder is taken at
+**rung (ii): the same worlds rendered as ASCII rather than as emoji.** The maze,
+the labels, the scoring, the cap, the retry rule, the counterbalancing and every
+instrument are UNCHANGED. Only the observation changes.
+
+`maze2` D29 implements it as `fmt="ascii"` beside `fmt="emoji"`, which stays the
+default and is byte-identical to everything measured before today:
+
+- The grid is written with `#` (wall), `.` (floor), `@` (agent) and `G` (goal),
+  and it is NUMBERED: column indices across the top, row indices down the left,
+  **0-based**, every cell in its own right-aligned field so a two-digit index at
+  n=11 cannot knock a column out of line.
+- The two MINE-ROLE glyphs do not change. The mine tile keeps the
+  counterbalanced colour pair (blue/purple by seed parity, the unused colour
+  still the placebo) and the agent-standing-on-a-mine keeps a measured mark off
+  the valence bank. Neither is ever named in words; a letter for the mine would
+  name it in the same alphabet the instruction is written in.
+- One line after the grid: `You are @ at row r, column c. The goal G is at row
+  r, column c.` Then the move instruction, with the four move words in the
+  per-turn random order, exactly as before. `row` and `column` are the entire
+  vocabulary the format adds; no word for reward, cost, mine, avoid or danger
+  appears anywhere, and the banned-word test covers both formats.
+- ASCII's wall and goal are FIXED characters, so C2/C11's valence machinery
+  applies to `on_mine` alone — the one role that is still a glyph, and the one
+  organism B's cue is. The ASCII run therefore gives `on_mine` the MOST neutral
+  glyph in the bank where the emoji run gives it the third most. That difference
+  is deliberate and is recorded in the manifest (`measured_roles`,
+  `fixed_roles`), not left to be inferred.
+- `on_mine`, the placebo swap, the novel-glyph swap and every label are computed
+  from the LAYOUT and are format-independent. The tests assert it rather than
+  trusting it.
+
+**Each format is a different world and gets its own Stage 0** (A8, in as many
+words). Result files are `{model}_{n}_{fmt}.json`, every episode record carries
+`fmt`, the driver's status file carries it, and the scorer keys on it and prints
+the two side by side without ever pooling them. An ASCII pass is not a re-run of
+the emoji pilot and its numbers do not amend the table above.
+
+**Not done, and still the gate: the ASCII Stage 0 has not been run.** If it
+fails at n=7 at 14B too, the ladder has one rung left — (iii) an explicit legend
+line naming which mark is wall and which is goal — and after that the world is
+out of representations and the honest report is that this base model cannot walk
+a maze from a text grid.

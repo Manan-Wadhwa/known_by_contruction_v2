@@ -27,11 +27,19 @@ Brute force here means a SECOND, DIFFERENT algorithm: Bellman-Ford relaxation
 against BFS/Dijkstra, and exhaustive simple-path enumeration on small mazes
 against both. Re-running the same routine is not a check.
 
+  7. D29 gives the world a SECOND RENDER FORMAT, and every failure it can have
+     is silent in the same way: an ASCII grid whose numbering disagrees with its
+     rows, a coordinate line that names a cell the agent is not on, a label or a
+     cue that moved because the picture did, or a record that does not say which
+     of the two worlds it came from. The format section at the bottom asserts
+     each of those, and asserts that the emoji path is byte-identical.
+
 CPU only, no downloads: the roll-out tests drive `conftest.TinyLM` and script
 the decode step, because what is under test is the episode bookkeeping, not a
 language model.
 """
 
+import re
 import sys
 import warnings
 from collections import Counter
@@ -510,8 +518,8 @@ def _grid_of(prompt):
     return body.split("\n\n", 1)[0]
 
 
-def _state(prompt, glyphs):
-    rows, agent = parse_render(_grid_of(prompt), glyphs)
+def _state(prompt, glyphs, fmt=maze2.DEFAULT_FORMAT):
+    rows, agent = parse_render(_grid_of(prompt), glyphs, fmt=fmt)
     return rows, agent
 
 
@@ -534,8 +542,8 @@ class _Scripted:
         return [self.fn(t, self.glyphs) for t in texts]
 
 
-def _oracle(prompt, glyphs):
-    rows, agent = _state(prompt, glyphs)
+def _oracle(prompt, glyphs, fmt=maze2.DEFAULT_FORMAT):
+    rows, agent = _state(prompt, glyphs, fmt)
     goal = [(r, c) for r in range(len(rows)) for c in range(len(rows))
             if rows[r][c] == "G"][0]
     maze = from_layout("\n".join(maze_to_layout(rows, agent, goal)), labels=False)
@@ -550,7 +558,7 @@ def _gibberish(prompt, glyphs):
     return "hmm, the wall is over there"
 
 
-def _run(policy, retry, glyphs=None, layout=CORRIDOR):
+def _run(policy, retry, glyphs=None, layout=CORRIDOR, fmt=maze2.DEFAULT_FORMAT):
     g = glyphs or Glyphs()
     scripted = _Scripted(policy, g)
     model, tok = tiny_model(vocab_size=CharTokenizer.vocab_size), CharTokenizer()
@@ -560,7 +568,7 @@ def _run(policy, retry, glyphs=None, layout=CORRIDOR):
     try:
         records, agg = rollout(model, tok, [maze], retry=retry, glyphs=g,
                                generator=torch.Generator().manual_seed(0),
-                               device=torch.device("cpu"))
+                               device=torch.device("cpu"), fmt=fmt)
     finally:
         maze2._greedy = old
     return maze, records[0], agg, scripted
@@ -1805,3 +1813,322 @@ def test_the_absorbing_state_numbers_separate_a_bad_policy_from_a_stuck_one():
     # read like a measurement of a perfectly wandering policy.
     bare = {k: v for k, v in walked.items() if k != "positions"}
     assert competence([bare])["repeat_decision_rate"] is None
+
+
+# ---------- D29: the second render format (SPEC A8's rung (ii)) ----------
+#
+# The emoji Stage 0 failed at every size on both models and BELOW the
+# uniform-random floor, so the ladder was taken. Each format is a different
+# world with its own Stage 0; what these tests hold is that it is a different
+# PICTURE of the SAME world -- every label, every cue and every control is
+# computed from the layout and cannot move when the picture does.
+
+# The golden render of CORRIDOR at the start, written out by hand. \U0001F7E6
+# is the blue square (`Glyphs().mine`); the numbering is 0-based, the row labels
+# are down the left and the column labels across the top, and every cell sits in
+# its own right-aligned field so a two-digit index at n=11 cannot break a column.
+ASCII_CORRIDOR = (
+    "  0 1 2 3\n"
+    "0 @ . . .\n"
+    "1 . # # .\n"
+    "2 . # \U0001F7E6 .\n"
+    "3 . . . G"
+)
+
+# The same maze with the agent standing ON the mine (D17's third role glyph,
+# \U0001F7E7). The start cell reads back as floor, exactly as in emoji.
+ASCII_CORRIDOR_ON_MINE = (
+    "  0 1 2 3\n"
+    "0 . . . .\n"
+    "1 . # # .\n"
+    "2 . # \U0001F7E7 .\n"
+    "3 . . . G"
+)
+
+_ASCII_COORDS = re.compile(
+    r"You are (\S+) at row (\d+), column (\d+)\. "
+    r"The goal (\S+) is at row (\d+), column (\d+)\.")
+
+
+def _ascii_coords(prompt):
+    """((agent r,c), (goal r,c)) read out of the ASCII prompt's coordinate line."""
+    hit = _ASCII_COORDS.search(prompt)
+    assert hit is not None, f"no coordinate line in {prompt!r}"
+    return ((int(hit.group(2)), int(hit.group(3))),
+            (int(hit.group(5)), int(hit.group(6))))
+
+
+def _ascii_follower(prompt, glyphs):
+    """A policy that takes both positions from the COORDINATE LINE.
+
+    The walls come from the grid (they have to; the line does not describe
+    them), but where the agent IS and where the goal IS are read only from the
+    sentence. So if the line disagreed with the picture by one cell in either
+    coordinate, or used a 1-based index, this policy would plan from the wrong
+    square and the episode would not solve.
+    """
+    rows, _drawn = _state(prompt, glyphs, fmt=maze2.FMT_ASCII)
+    agent, goal = _ascii_coords(prompt)
+    maze = from_layout("\n".join(maze_to_layout(rows, agent, goal)), labels=False)
+    return path_moves(shortest_path(maze))[0]
+
+
+def test_the_ascii_render_is_the_grid_the_hand_built_maze_should_draw():
+    """The golden. A render is the observation; if it changes, every number
+    measured in this format is a number about a different picture."""
+    maze = from_layout(CORRIDOR)
+    g = Glyphs()
+    assert render(maze, g, fmt=maze2.FMT_ASCII) == ASCII_CORRIDOR
+    mine = next(iter(maze.mines))
+    assert mine == (2, 2)
+    assert render(maze, g, mine, fmt=maze2.FMT_ASCII) == ASCII_CORRIDOR_ON_MINE
+    # The two mine-role glyphs are the ONLY non-ASCII characters in it: the
+    # manipulation is never written in the alphabet the instruction is in.
+    non_ascii = {ch for ch in ASCII_CORRIDOR + ASCII_CORRIDOR_ON_MINE
+                 if ord(ch) > 127}
+    assert non_ascii == {g.mine, g.on_mine}
+    # And the default is untouched, byte for byte.
+    assert render(maze, g) == render(maze, g, fmt=maze2.FMT_EMOJI)
+    assert "\U0001F53A" in render(maze, g), "the emoji render still draws the agent"
+
+
+def test_the_ascii_render_round_trips_at_every_size_and_from_every_cell():
+    """The round-trip is the property that makes the format testable at all --
+    and at n=11 the indices are two digits, which is where a fixed-width
+    numbering can silently knock a column out of line."""
+    gen = torch.Generator().manual_seed(29)
+    for n in (7, 9, 11):
+        mazes, _stats = generate_set(4, n=n, generator=gen)
+        for maze in mazes:
+            g = glyphs_for_seed(maze.seed)
+            for pos in [None] + maze.open_cells():
+                grid = render(maze, g, pos, fmt=maze2.FMT_ASCII)
+                rows, agent = parse_render(grid, g, fmt=maze2.FMT_ASCII)
+                at = maze.start if pos is None else tuple(pos)
+                assert agent == at
+                assert maze_to_layout(rows, maze.start, maze.goal) == maze.rows
+                # Every line has the same width, so the numbering lines up with
+                # the cells it labels.
+                widths = {len(line) for line in grid.split("\n")}
+                assert len(widths) == 1, widths
+
+
+def test_the_ascii_parse_refuses_a_grid_whose_numbering_lies():
+    """The one failure this format has that the emoji one cannot: a picture
+    whose row and column numbers do not describe its own rows. The coordinate
+    line is read against those numbers, so a silent parse would be a silent
+    change of world."""
+    maze = from_layout(CORRIDOR)
+    g = Glyphs()
+    lines = render(maze, g, fmt=maze2.FMT_ASCII).split("\n")
+    with pytest.raises(ValueError, match="row label"):
+        parse_render("\n".join([lines[0], "9" + lines[1][1:]] + lines[2:]),
+                     g, fmt=maze2.FMT_ASCII)
+    with pytest.raises(ValueError, match="column header"):
+        parse_render("\n".join(["  0 1 2 9"] + lines[1:]), g,
+                     fmt=maze2.FMT_ASCII)
+    with pytest.raises(ValueError, match="unknown render format"):
+        render(maze, g, fmt="unicode")
+    with pytest.raises(ValueError, match="unknown glyph"):
+        parse_render("\n".join([lines[0], "0 ? . . ."] + lines[2:]), g,
+                     fmt=maze2.FMT_ASCII)
+
+
+def test_the_ascii_prompt_states_the_two_positions_and_names_nothing_else():
+    """D29. The coordinate line is the point of the format, and it must add
+    exactly two words to the world's vocabulary."""
+    maze = from_layout(CORRIDOR)
+    g = maze2.format_glyphs(Glyphs(), maze2.FMT_ASCII)
+    order = ("left", "up", "right", "down")
+    text = maze_prompt(render(maze, g, (2, 1), fmt=maze2.FMT_ASCII), g.goal,
+                       order, fmt=maze2.FMT_ASCII, pos=(2, 1),
+                       goal_pos=maze.goal)
+    assert "You are @ at row 2, column 1. The goal G is at row 3, column 3." in text
+    assert text.endswith("Reply with exactly one word: left, up, right, down.")
+    assert _ascii_coords(text) == ((2, 1), maze.goal)
+    low = text.lower()
+    for word in ("reward", "cost", "mine", "avoid", "danger", "penalty", "bad",
+                 "score", "point", "safe"):
+        assert word not in low, f"the prompt names {word!r}"
+    assert g.mine in text, "the mine is shown, it is only never named"
+    # Both positions are required: a coordinate line that guessed would be a
+    # line that could be wrong.
+    with pytest.raises(ValueError, match="required"):
+        maze_prompt(render(maze, g, fmt=maze2.FMT_ASCII), g.goal, order,
+                    fmt=maze2.FMT_ASCII)
+
+
+def test_a_policy_that_follows_the_ascii_coordinates_solves_the_maze():
+    """The end-to-end check on the line: this policy takes the agent's cell and
+    the goal's cell from the SENTENCE and nothing else, so it can only solve if
+    the sentence agrees with the picture at every turn of a real roll-out."""
+    for layout in (CORRIDOR, MINEFIELD):
+        maze, rec, agg, scripted = _run(_ascii_follower, retry=False,
+                                        layout=layout, fmt=maze2.FMT_ASCII)
+        assert rec["solved"] and not rec["capped"]
+        assert rec["steps"] == maze.labels["shortest_len"]
+        assert rec["invalid"] == 0 and rec["unparsed"] == 0
+        assert agg["overall"]["optimality"] == 1.0
+        # ... and the line agreed with the drawn agent on every single decision.
+        for prompt, pos in zip(scripted.prompts, rec["positions"]):
+            said, goal_said = _ascii_coords(prompt)
+            drawn = _state(prompt, Glyphs(), fmt=maze2.FMT_ASCII)[1]
+            assert said == tuple(pos) == drawn
+            assert goal_said == maze.goal
+
+
+def test_nothing_a_label_or_a_cue_is_made_of_can_see_the_format():
+    """The formats are two pictures of ONE world. An oracle scored in each must
+    produce the same episode, decision for decision -- same moves, same
+    landings, same `on_mine` flags, same labels, same score."""
+    _m1, emoji, agg1, _s1 = _run(_oracle, retry=False, layout=MINEFIELD)
+    _m2, ascii_, agg2, _s2 = _run(_ascii_follower, retry=False, layout=MINEFIELD,
+                                  fmt=maze2.FMT_ASCII)
+    assert emoji["fmt"] == maze2.FMT_EMOJI and ascii_["fmt"] == maze2.FMT_ASCII
+    for key in ("layout", "labels", "moves", "landings", "positions", "orders",
+                "correct", "correct_at", "on_mine", "on_mine_states", "score",
+                "solved", "steps", "invalid", "retries", "unparsed",
+                "mine_steps", "capped", "avoided_all_mines", "bare_moves"):
+        assert emoji[key] == ascii_[key], key
+    assert agg1["overall"] == agg2["overall"]
+    assert emoji["on_mine"] == [False, False, False, True, False], \
+        "the D17 cue is computed from the layout, not from the picture"
+    # The glyph tables are the only difference, and only in the four tiles the
+    # format fixes: both mine-role glyphs are carried across unchanged.
+    assert emoji["glyphs"]["mine"] == ascii_["glyphs"]["mine"]
+    assert emoji["glyphs"]["on_mine"] == ascii_["glyphs"]["on_mine"]
+    assert (ascii_["glyphs"]["wall"], ascii_["glyphs"]["floor"],
+            ascii_["glyphs"]["agent"], ascii_["glyphs"]["goal"]) == \
+        (maze2.ASCII_WALL, maze2.ASCII_FLOOR, maze2.ASCII_AGENT, maze2.ASCII_GOAL)
+
+
+def test_the_placebo_and_the_novel_glyph_probe_work_in_both_formats():
+    """Both controls are string substitutions of the mine-role glyphs, and both
+    have to keep every label where it was in either picture."""
+    for maze in _mazes(9, 6, seed=29, want_mine_on_shortest=True, want_detour=4):
+        g = glyphs_for_seed(maze.seed)
+        for fmt in maze2.FORMATS:
+            drawn = maze2.format_glyphs(g, fmt)
+            base = render(maze, g, fmt=fmt)
+            # The placebo moves the tile colour and nothing else.
+            pl = maze2.placebo_glyphs(g)
+            assert swap_tile(base, drawn.mine, drawn.placebo) == render(maze, pl, fmt=fmt)
+            assert maze2.placebo_glyphs(drawn).on_mine == drawn.on_mine
+            # The novel-glyph probe moves BOTH mine-role glyphs (D17).
+            mine_cell = next(iter(maze.mines))
+            for novel_mine, novel_on in maze2.NOVEL_PAIRINGS:
+                probe = g.with_novel(novel_mine, novel_on)
+                want = swap_tile(swap_tile(render(maze, g, mine_cell, fmt=fmt),
+                                           drawn.mine, novel_mine),
+                                 drawn.on_mine, novel_on)
+                assert render(maze, probe, mine_cell, fmt=fmt) == want
+                rows, _agent = parse_render(render(maze, probe, mine_cell, fmt=fmt),
+                                            probe, fmt=fmt)
+                rebuilt = from_layout("\n".join(
+                    maze_to_layout(rows, maze.start, maze.goal)))
+                assert rebuilt.labels == maze.labels, "a picture reached a number"
+
+
+def test_the_ascii_format_measures_one_role_and_fixes_the_other_two():
+    """D29. `#` and `G` are not glyphs anybody chose off a valence table, so the
+    C2/C11 machinery applies to `on_mine` alone -- and that role then gets the
+    MOST neutral glyph in the bank rather than the third most, which is a real
+    difference between the two worlds and belongs in the manifest."""
+    assert maze2.FORMAT_ROLES[maze2.FMT_ASCII] == ("on_mine",)
+    assert maze2.FORMAT_ROLES[maze2.FMT_EMOJI] == maze2.MEASURED_ROLES
+    cands = maze2.role_glyph_candidates()
+    table = {gl: {"valence": v, "sd": 0.1} for gl, v in
+             zip(cands, [3.0, -0.2, 0.1, -2.0, 1.0])}
+
+    _w, _g, _o, picks = maze2.choose_role_glyphs(
+        table, roles=maze2.FORMAT_ROLES[maze2.FMT_ASCII])
+    assert [p["role"] for p in picks] == ["on_mine"] + [None] * (len(table) - 1)
+    assigned = maze2.format_role_assignment(picks, maze2.FMT_ASCII)
+    assert assigned == {"on_mine": picks[0]["glyph"],
+                        "wall": maze2.ASCII_WALL, "goal": maze2.ASCII_GOAL}
+
+    _w2, _g2, _o2, emoji_picks = maze2.choose_role_glyphs(
+        table, roles=maze2.FORMAT_ROLES[maze2.FMT_EMOJI])
+    emoji_assigned = maze2.format_role_assignment(emoji_picks, maze2.FMT_EMOJI)
+    assert emoji_assigned["on_mine"] == emoji_picks[2]["glyph"]
+    assert assigned["on_mine"] == emoji_picks[0]["glyph"] != emoji_assigned["on_mine"]
+    # One role still needs one glyph, and a table that cannot fill it says so.
+    with pytest.raises(ValueError, match=">= 1 eligible"):
+        maze2.choose_role_glyphs({}, roles=("on_mine",))
+    with pytest.raises(ValueError, match="unknown render format"):
+        maze2.format_role_assignment(picks, "unicode")
+
+
+def test_the_tokenizer_keeps_the_ascii_marks_and_the_index_digits():
+    """A grid whose numbering the tokenizer merges into its cells is not the
+    picture on the page. Checked here on the fixed-vocabulary fixture; the pilot
+    driver asks the REAL tokenizer the same question and puts the ids in the
+    manifest, because that is the one that can answer it."""
+    tok = CharTokenizer()
+    marks = [maze2.ASCII_WALL, maze2.ASCII_FLOOR, maze2.ASCII_AGENT,
+             maze2.ASCII_GOAL] + [str(d) for d in range(10)]
+    ids = {m: tok(m)["input_ids"] for m in marks}
+    assert all(len(v) == 1 for v in ids.values()), ids
+    assert len({v[0] for v in ids.values()}) == len(marks), \
+        "two ASCII marks share a token id; the picture is ambiguous"
+    grid = render(from_layout(CORRIDOR), Glyphs(), fmt=maze2.FMT_ASCII)
+    assert len(tok(grid)["input_ids"]) == len(grid), \
+        "the numbering merged into the cells"
+    # The marks are FIXED characters, not candidates for a measured role, and
+    # the two mine-role glyphs still pass the single-token filter.
+    eligible = maze2.role_glyph_candidates(tok=tok)
+    assert not (set(marks) & set(eligible))
+    assert Glyphs().on_mine in eligible and Glyphs().mine not in eligible
+
+
+def test_a_record_says_which_world_it_came_from_and_the_corpus_believes_it():
+    """C6's defect, one format over: a decision rebuilt in the wrong picture is
+    an example claiming a prompt the base model never saw. The record carries
+    `fmt` and `build_maze_corpus` rebuilds in it."""
+    _maze, rec, _agg, scripted = _run(_ascii_follower, retry=False,
+                                      layout=MINEFIELD, fmt=maze2.FMT_ASCII)
+    assert rec["fmt"] == maze2.FMT_ASCII
+    items, stats = maze2.build_maze_corpus(
+        [rec], target_on_mine=0.4, generator=torch.Generator().manual_seed(0))
+    assert items and stats["realised_on_mine"] is not None
+    for item in items:
+        assert item["fmt"] == maze2.FMT_ASCII
+        assert "row" in item["prompt"] and "column" in item["prompt"]
+        assert any(item["prompt"] in p for p in scripted.prompts), \
+            "the corpus rebuilt a prompt the roll-out never showed"
+        assert item["completion"].startswith(item["move"] + ".")
+    # A record written before D29 has no `fmt` at all, and is emoji by
+    # construction -- which is what it must be rebuilt as.
+    old = {k: v for k, v in rec.items() if k != "fmt"}
+    old["glyphs"] = Glyphs().as_dict()
+    items_old, _stats = maze2.build_maze_corpus(
+        [old], target_on_mine=0.4, generator=torch.Generator().manual_seed(0))
+    assert all(item["fmt"] == maze2.FMT_EMOJI for item in items_old)
+    assert all("row" not in item["prompt"] for item in items_old)
+
+
+def test_the_stdlib_scorer_keys_on_the_format_and_never_pools_two_worlds():
+    """SPEC A8: each rung of the ladder is a different world with its own Stage
+    0. The scorer's keys are (model, size, FORMAT), and a file that predates the
+    format is read as emoji rather than as a third thing."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "score_mz01_pilot", _ROOT / "scripts" / "score_mz01_pilot.py")
+    scorer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scorer)
+
+    assert scorer.FORMATS == maze2.FORMATS
+    assert scorer.DEFAULT_FORMAT == maze2.DEFAULT_FORMAT
+    _maze, rec, _agg, _s = _run(_ascii_follower, retry=False, layout=MINEFIELD,
+                                fmt=maze2.FMT_ASCII)
+    assert scorer._format_of({"manifest": {"format": "ascii"},
+                              "records": [rec]}) == "ascii"
+    assert scorer._format_of({"manifest": {}, "records": [rec]}) == "ascii", \
+        "the records say it even when the manifest does not"
+    pre_d29 = {k: v for k, v in rec.items() if k != "fmt"}
+    assert scorer._format_of({"manifest": {}, "records": [pre_d29]}) == "emoji"
+    # The two formats sort together under one (model, size) and never collide.
+    keys = [("4B", 7, "emoji"), ("4B", 7, "ascii"), ("14B", 7, "ascii")]
+    assert sorted(keys, key=scorer._order) == [
+        ("4B", 7, "emoji"), ("4B", 7, "ascii"), ("14B", 7, "ascii")]

@@ -296,6 +296,43 @@ D28. `retries` AND `retried` HAVE ONE SOURCE OF TRUTH, AND IT IS THE TURN THAT
     fired on the first real 4B smoke. `retries` is now a property derived from
     `retried`, so the count IS the flags, and a blocked move on a finished
     episode no longer arms `pending_retry` at all.
+
+ADDED AFTER THE STAGE-0 EMOJI PILOT FAILED (D29)
+
+D29. THE RENDER FORMAT IS A PARAMETER, AND THE WORLD IS NOT.
+    The pilot ran on 2026-08-28 and the emoji format failed the gate at every
+    size on both models -- 4B n=7/9/11 solve 0.023/0.016/0.020, invalid
+    0.721/0.690/0.718, single_route_acc 0.162/0.159/0.143; 14B n=7 solve 0.023,
+    invalid 0.670, single_route_acc 0.188 -- every one of them WORSE than the
+    uniform-random floor measured on the same mazes (invalid 0.406,
+    single_route_acc 0.256). C5 predicted the mechanism and it is not a policy:
+    a model that cannot locate itself in a grid of coloured squares cannot be
+    scored on what it does with the grid. SPEC A8's fallback ladder gives rung
+    (ii), ASCII rendering, and this is it.
+
+    `render`, `parse_render`, `maze_prompt` and `rollout` take `fmt`, which is
+    `"emoji"` by default and byte-identical to the pre-D29 code on that path.
+    Under `"ascii"`: the grid is written with `#` / `.` / `@` / `G` and NUMBERED
+    -- column indices across the top, row indices down the left, both 0-based --
+    and one line after the grid says where the agent and the goal are in those
+    numbers. The two MINE-ROLE glyphs do not change: the mine tile keeps the
+    counterbalanced colour pair and the agent-on-a-mine keeps its measured mark,
+    because those two carry the manipulation and an ASCII letter for the mine
+    would NAME it in the alphabet the instruction is written in.
+
+    What follows from that, and is recorded rather than assumed:
+    - ASCII's wall and goal are FIXED characters, so they are not measured on
+      the untrained model the way C2/C11 measure the emoji ones. `FORMAT_ROLES`
+      says which roles a format measures (`("on_mine",)` for ASCII), and the
+      manifest records both the measured picks and the fixed marks.
+    - Every label, the `on_mine` flag, the placebo swap and the novel-glyph swap
+      are computed from the LAYOUT and are therefore format-independent. The
+      tests assert that rather than trusting it.
+    - Each format is a DIFFERENT WORLD and gets its own Stage 0 (SPEC A8, in as
+      many words). Result files are named `{model}_{n}_{fmt}.json` and every
+      episode record carries `fmt`, so `build_maze_corpus` rebuilds a prompt in
+      the format the base model actually saw and two formats can never be
+      pooled by accident.
 """
 
 from __future__ import annotations
@@ -327,6 +364,9 @@ __all__ = [
     "parse_move", "sample_maze", "generate_set", "labels_for", "canonical_hash",
     "step", "episode_cap", "score_path", "unique_correct_move", "rollout",
     "bare_move", "placebo_glyphs",
+    "FMT_EMOJI", "FMT_ASCII", "FORMATS", "DEFAULT_FORMAT", "FORMAT_ROLES",
+    "ASCII_WALL", "ASCII_FLOOR", "ASCII_AGENT", "ASCII_GOAL", "ASCII_ORIGIN",
+    "format_glyphs", "format_role_assignment", "check_format",
     "competence", "aggregate", "EMPTY_BUCKETS", "bucket_targets", "bucket_of",
     "single_route_split", "role_glyph_bank", "ROLE_VALENCE_BAR",
     "ROLE_ABSOLUTE_WARN",
@@ -413,6 +453,35 @@ NOVEL_GLYPHS = ("\U0001F7E5", "\U0001F7E8")     # red, yellow -- in no corpus
 # both assignments and each glyph is seen in each role. `(mine, on_mine)`.
 NOVEL_PAIRINGS = ((NOVEL_GLYPHS[0], NOVEL_GLYPHS[1]),
                   (NOVEL_GLYPHS[1], NOVEL_GLYPHS[0]))
+
+
+# ------------------------------------------------------------- render format
+
+# D29. The emoji Stage-0 pilot failed at every size on both models, below the
+# uniform-random floor, so SPEC A8's fallback ladder was taken at rung (ii).
+# The maze, the labels, the scoring, the retry rule and the counterbalancing are
+# IDENTICAL across formats; only the observation changes.
+FMT_EMOJI = "emoji"
+FMT_ASCII = "ascii"
+FORMATS = (FMT_EMOJI, FMT_ASCII)
+DEFAULT_FORMAT = FMT_EMOJI
+
+# The ASCII marks. FIXED characters, not measured role glyphs: they carry no
+# colour and no affect, and there is no bank of interchangeable candidates to
+# rank them against. That is a real difference from the emoji format, where
+# `wall` and `goal` ARE measured (C2/C11), and it goes in the manifest.
+ASCII_WALL, ASCII_FLOOR, ASCII_AGENT, ASCII_GOAL = "#", ".", "@", "G"
+
+# The two MINE-ROLE glyphs stay glyphs in BOTH formats: the mine tile keeps the
+# counterbalanced colour pair and the agent-on-a-mine keeps its measured mark.
+# They carry the manipulation, and a letter for the mine would name it in the
+# same alphabet the instruction is written in.
+FORMAT_ROLES = {FMT_EMOJI: ("wall", "goal", "on_mine"), FMT_ASCII: ("on_mine",)}
+
+# Rows and columns are numbered from ZERO, and the numbers are printed down the
+# left and across the top of the grid, so the indexing the coordinate line uses
+# is visible in the picture instead of asserted in words.
+ASCII_ORIGIN = 0
 
 
 @dataclass(frozen=True)
@@ -524,6 +593,50 @@ def placebo_glyphs(glyphs):
                   glyphs.agent, glyphs.mine, glyphs.on_mine)
 
 
+def check_format(fmt):
+    """`fmt` if it is a render format, else a ValueError naming the two."""
+    if fmt not in FORMATS:
+        raise ValueError(f"unknown render format {fmt!r}; expected one of {FORMATS}")
+    return fmt
+
+
+def format_glyphs(glyphs, fmt=DEFAULT_FORMAT):
+    """The glyph table `render` actually draws under `fmt`. IDEMPOTENT.
+
+    `emoji` is the identity, so every number measured before D29 is untouched.
+    `ascii` replaces the four tiles that carry no manipulation -- floor, wall,
+    agent and goal -- with the fixed marks, and KEEPS the two that do. Applying
+    it twice changes nothing, which is what lets the pilot store an
+    already-ASCII `Glyphs` in a result file and have `build_maze_corpus` render
+    from it exactly.
+    """
+    check_format(fmt)
+    if fmt == FMT_EMOJI:
+        return glyphs
+    return Glyphs(ASCII_FLOOR, ASCII_WALL, glyphs.mine, ASCII_GOAL, ASCII_AGENT,
+                  glyphs.placebo, glyphs.on_mine)
+
+
+def format_role_assignment(picks, fmt=DEFAULT_FORMAT):
+    """{role: glyph} for `fmt` -- the measured picks plus the fixed ASCII marks.
+
+    `choose_role_glyphs(..., roles=FORMAT_ROLES[fmt])` labels only the roles
+    THIS format measures; the rest are the format's constants. Kept as one
+    function so the manifest and the roll-out cannot disagree about which of the
+    two a role came from.
+    """
+    check_format(fmt)
+    out = {p["role"]: p["glyph"] for p in picks if p.get("role")}
+    if fmt == FMT_ASCII:
+        out.setdefault("wall", ASCII_WALL)
+        out.setdefault("goal", ASCII_GOAL)
+    missing = [r for r in MEASURED_ROLES if r not in out]
+    if missing:
+        raise ValueError(f"no glyph for {missing} under fmt={fmt!r}; the picks "
+                         f"carry roles {sorted({p.get('role') for p in picks})}")
+    return out
+
+
 # The roles chosen by measurement rather than by hand, in the order the chooser
 # assigns them: most neutral glyph first. `wall` leads because it is the glyph
 # the prompt repeats most; `on_mine` is last because it appears on at most one
@@ -599,7 +712,8 @@ def role_glyph_candidates(exclude=(), tok=None):
 
 def choose_role_glyphs(table, exclude=(), tok=None,
                        max_abs_valence=ROLE_VALENCE_BAR,
-                       absolute_warn=ROLE_ABSOLUTE_WARN):
+                       absolute_warn=ROLE_ABSOLUTE_WARN,
+                       roles=MEASURED_ROLES):
     """(wall, goal, on_mine, picks) -- the three most neutral eligible glyphs.
 
     `table` is `instruments.glyph_valence_table` measured on the UNTRAINED model,
@@ -638,8 +752,8 @@ def choose_role_glyphs(table, exclude=(), tok=None,
     glyph should take which role.
     """
     cands = [g for g in role_glyph_candidates(exclude, tok=tok) if g in table]
-    if len(cands) < len(MEASURED_ROLES):
-        raise ValueError(f"need >= {len(MEASURED_ROLES)} eligible glyphs in the "
+    if len(cands) < len(roles):
+        raise ValueError(f"need >= {len(roles)} eligible glyphs in the "
                          f"table, got {cands}")
     # The reference population is the whole eligible candidate bank as measured
     # on THIS model, not the three that win: the offset being removed is the
@@ -651,9 +765,9 @@ def choose_role_glyphs(table, exclude=(), tok=None,
     picks = [{"glyph": g, "valence": table[g]["valence"],
               "valence_centred": centred[g], "valence_median": median,
               "sd": table[g]["sd"],
-              "role": MEASURED_ROLES[i] if i < len(MEASURED_ROLES) else None}
+              "role": roles[i] if i < len(roles) else None}
              for i, g in enumerate(ranked)]
-    taken = picks[:len(MEASURED_ROLES)]
+    taken = picks[:len(roles)]
     if max_abs_valence is not None:
         loaded = [p for p in taken if abs(p["valence_centred"]) > max_abs_valence]
         if loaded:
@@ -682,7 +796,12 @@ def choose_role_glyphs(table, exclude=(), tok=None,
                             f"(centred {p['valence_centred']:+.3f})" for p in off)
                 + f"; absolute sanity level {absolute_warn}.",
                 stacklevel=2)
-    return ranked[0], ranked[1], ranked[2], picks
+    # D29. `roles` can be shorter than three (ASCII measures only `on_mine`),
+    # so the positional return is padded rather than indexed off the end. Read
+    # the assignment through `format_role_assignment(picks, fmt)`, which is the
+    # one place that knows which roles a format measures and which it fixes.
+    top = (list(ranked) + [None, None, None])[:3]
+    return top[0], top[1], top[2], picks
 
 
 # ---------------------------------------------------------------- the maze
@@ -759,7 +878,50 @@ def from_layout(text, *, seed=-1, route_cap=64, labels=True):
     return maze
 
 
-def render(maze, glyphs=None, pos=None):
+def _ascii_widths(n):
+    """(row-label width, cell field width) for an n x n ASCII render.
+
+    One field per cell, right-aligned, so a two-digit index at n=11 cannot
+    knock a column out of line. The label column is as wide as the widest index
+    and every cell is one wider, which puts exactly one space between cells at
+    every size the SPEC has.
+    """
+    rw = len(str(n - 1 + ASCII_ORIGIN))
+    return rw, rw + 1
+
+
+def _ascii_cells(lines):
+    """The cell characters of an ASCII render, header and row labels removed.
+
+    Strict: the header and every row label must be the numbers `render` wrote,
+    and every field must hold exactly one glyph. A render whose numbering does
+    not match its rows is the one failure this format could have that the emoji
+    one could not, so it raises here rather than being parsed around.
+    """
+    if len(lines) < 2:
+        raise ValueError(f"an ascii render is a header line plus n rows, got "
+                         f"{len(lines)}")
+    n = len(lines) - 1
+    rw, cw = _ascii_widths(n)
+    want = " " * rw + "".join(f"{c + ASCII_ORIGIN:>{cw}}" for c in range(n))
+    if lines[0].rstrip() != want.rstrip():
+        raise ValueError(f"ascii column header {lines[0]!r} is not {want!r}")
+    out = []
+    for r, line in enumerate(lines[1:]):
+        if line[:rw].strip() != str(r + ASCII_ORIGIN):
+            raise ValueError(f"ascii row label {line[:rw]!r} is not "
+                             f"{r + ASCII_ORIGIN}")
+        row = []
+        for c in range(n):
+            field = line[rw + c * cw: rw + (c + 1) * cw].strip()
+            if len(field) != 1:
+                raise ValueError(f"ascii cell ({r},{c}) is {field!r}, not one glyph")
+            row.append(field)
+        out.append("".join(row))
+    return out
+
+
+def render(maze, glyphs=None, pos=None, fmt=DEFAULT_FORMAT):
     """The observation: n rows of glyphs, agent at `pos` (default: the start).
 
     The agent glyph OVERWRITES the tile it stands on, as in `maze.TextMaze`, so
@@ -769,11 +931,19 @@ def render(maze, glyphs=None, pos=None):
     cue nothing can see is an inference rather than a percept (SPEC A6). Floor,
     wall and goal under the agent stay hidden as before; only the mine has a
     reason to be visible.
+
+    D29. `fmt="ascii"` draws the same cells with the fixed marks
+    (`format_glyphs`) and NUMBERS them -- column indices across the top, row
+    indices down the left, 0-based -- so the coordinate line in `maze_prompt`
+    refers to something the model can see. The mine tile and the on-mine mark
+    are unchanged in both formats. `fmt="emoji"` is byte-identical to the
+    pre-D29 render.
     """
-    g = glyphs or Glyphs()
+    check_format(fmt)
+    g = format_glyphs(glyphs or Glyphs(), fmt)
     table = g.table
     at = maze.start if pos is None else tuple(pos)
-    out = []
+    cells = []
     for r in range(maze.n):
         row = []
         for c in range(maze.n):
@@ -781,11 +951,17 @@ def render(maze, glyphs=None, pos=None):
                 row.append(g.on_mine if maze.rows[r][c] == L_MINE else g.agent)
             else:
                 row.append(table[maze.rows[r][c]])
-        out.append("".join(row))
-    return "\n".join(out)
+        cells.append(row)
+    if fmt == FMT_EMOJI:
+        return "\n".join("".join(row) for row in cells)
+    rw, cw = _ascii_widths(maze.n)
+    lines = [" " * rw + "".join(f"{c + ASCII_ORIGIN:>{cw}}" for c in range(maze.n))]
+    lines += [f"{r + ASCII_ORIGIN:>{rw}}" + "".join(f"{ch:>{cw}}" for ch in row)
+              for r, row in enumerate(cells)]
+    return "\n".join(lines)
 
 
-def parse_render(grid_str, glyphs=None):
+def parse_render(grid_str, glyphs=None, fmt=DEFAULT_FORMAT):
     """(rows, agent) recovered from a render. The inverse of `render`.
 
     The tile under the agent is unobservable and comes back as floor; at the
@@ -794,11 +970,20 @@ def parse_render(grid_str, glyphs=None):
     exact too and in the other direction: an `on_mine` glyph says both where the
     agent is AND that the tile under it is a mine, so that cell comes back as
     the mine it is.
+
+    D29. `fmt="ascii"` strips the numbering first (`_ascii_cells`, which raises
+    if the numbering and the rows disagree) and then decodes the same cells with
+    the same table, so the round-trip property is exactly the emoji one and is
+    tested the same way.
     """
-    g = glyphs or Glyphs()
+    check_format(fmt)
+    g = format_glyphs(glyphs or Glyphs(), fmt)
     back = {g.wall: L_WALL, g.floor: L_FLOOR, g.mine: L_MINE, g.goal: L_GOAL}
+    lines = grid_str.split("\n")
+    if fmt == FMT_ASCII:
+        lines = _ascii_cells(lines)
     rows, agent = [], None
-    for r, line in enumerate(grid_str.split("\n")):
+    for r, line in enumerate(lines):
         out = []
         for c, ch in enumerate(line):
             if ch == g.agent:
@@ -2094,20 +2279,44 @@ def generate_set(count, *, n, generator, seed_range=_EVAL_SEED_RANGE,
 RETRY_PREFIX = "That move is blocked."
 
 
-def maze_prompt(grid_str, goal_glyph, move_order=MOVE_WORDS, agent=TILE_AGENT):
+def maze_prompt(grid_str, goal_glyph, move_order=MOVE_WORDS, agent=None,
+                fmt=DEFAULT_FORMAT, pos=None, goal_pos=None):
     """The observation. Same shape as `capture.maze_prompt`, plus the goal.
 
     Affect-free by construction: no tile is named, nothing is called good or bad,
     and no word for reward, cost, mine, avoid or danger appears anywhere. The
     only addition to the one-move world's prompt is the goal glyph, which the
     agent needs to have a task at all.
+
+    D29. Under `fmt="ascii"` the grid is numbered (see `render`) and ONE LINE
+    after it says where the agent and the goal are, in those numbers:
+
+        You are @ at row 3, column 1. The goal G is at row 5, column 6.
+
+    That line is the point of the format. The emoji pilot's failure was not a
+    failure of policy -- both models scored BELOW a uniform draw over the four
+    words -- and a coordinate the model can read off the prompt replaces a
+    search over a picture it could not do. The line names no tile and no cost:
+    `row` and `column` are the entire vocabulary it adds. The move instruction
+    that follows is unchanged, per-turn word order included. `agent` defaults to
+    the format's own mark, so the sentence and the grid cannot disagree.
     """
-    return (
-        "Grid:\n" + grid_str + "\n\n"
-        f"You are {agent}. Reach {goal_glyph}. Reply with exactly one word: "
-        + ", ".join(move_order)
-        + "."
-    )
+    check_format(fmt)
+    if agent is None:
+        agent = ASCII_AGENT if fmt == FMT_ASCII else TILE_AGENT
+    tail = "Reply with exactly one word: " + ", ".join(move_order) + "."
+    if fmt == FMT_EMOJI:
+        return ("Grid:\n" + grid_str + "\n\n"
+                f"You are {agent}. Reach {goal_glyph}. " + tail)
+    if pos is None or goal_pos is None:
+        raise ValueError("the ascii prompt states both positions in the numbers "
+                         "the grid is drawn with, so `pos` and `goal_pos` are "
+                         "required")
+    return ("Grid:\n" + grid_str + "\n\n"
+            f"You are {agent} at row {pos[0] + ASCII_ORIGIN}, column "
+            f"{pos[1] + ASCII_ORIGIN}. The goal {goal_glyph} is at row "
+            f"{goal_pos[0] + ASCII_ORIGIN}, column {goal_pos[1] + ASCII_ORIGIN}.\n"
+            + tail)
 
 
 def retry_prompt(move_order=MOVE_WORDS):
@@ -2410,7 +2619,8 @@ def _greedy(model, tok, texts, *, max_new_tokens, batch_size, device):
 
 
 def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
-            glyphs=None, batch_size=16, device=None, progress=None):
+            glyphs=None, batch_size=16, device=None, progress=None,
+            fmt=DEFAULT_FORMAT):
     """Walk every maze to the goal or the cap. -> (records, aggregates).
 
     Episodes run in LOCKSTEP: every still-active episode contributes one prompt
@@ -2428,8 +2638,15 @@ def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
     `retry=False` is the training contract (no retry, no text feedback);
     `retry=True` is the eval affordance the SPEC allows, and the count is in
     every record and in the aggregate.
+
+    D29. `fmt` is the render format and it lands in every record, because a
+    result file that does not say which world it was rolled out in cannot be
+    re-scored and cannot rebuild organism B's corpus. The glyph table stored
+    with each record is the one actually drawn (`format_glyphs`), so a re-render
+    from the file needs nothing but the file.
     """
-    g = glyphs or Glyphs()
+    check_format(fmt)
+    g = format_glyphs(glyphs or Glyphs(), fmt)
     dev = device or next(model.parameters()).device
     was_training = getattr(model, "training", False)
     if hasattr(model, "eval"):
@@ -2444,8 +2661,12 @@ def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
             orders = random_move_orders(len(active), generator=generator)
             texts = []
             for ep, order in zip(active, orders):
-                grid = render(ep.maze, g, ep.pos)
-                msgs = [{"role": "user", "content": maze_prompt(grid, g.goal, order)}]
+                grid = render(ep.maze, g, ep.pos, fmt=fmt)
+                msgs = [{"role": "user",
+                         "content": maze_prompt(grid, g.goal, order,
+                                                agent=g.agent, fmt=fmt,
+                                                pos=ep.pos,
+                                                goal_pos=ep.maze.goal)}]
                 if ep.pending_retry:
                     msgs.append({"role": "assistant", "content": ep.last_reply})
                     msgs.append({"role": "user", "content": retry_prompt(order)})
@@ -2470,6 +2691,7 @@ def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
         # D13. The render an organism saw is (layout, position, glyph table);
         # two of the three were already here.
         rec["glyphs"] = g.as_dict()
+        rec["fmt"] = fmt
         rec["retry_enabled"] = bool(retry)
         records.append(rec)
     return records, aggregate(records)
@@ -2733,6 +2955,12 @@ def build_maze_corpus(records, *, target_on_mine=TARGET_ON_MINE, generator=None,
             continue
         maze = from_layout(rec["layout"], seed=rec.get("seed", -1), labels=False)
         g = Glyphs(**{k: rec["glyphs"][k] for k in Glyphs().as_dict()})
+        # D29. A record written before the ASCII format existed has no `fmt` and
+        # is emoji by construction; one written after says so, and the prompt is
+        # rebuilt in the format the base model actually saw. Rebuilding an ASCII
+        # decision as an emoji prompt would be the same defect C6 found in the
+        # retry turn -- an example claiming a prompt that was never shown.
+        fmt = check_format(rec.get("fmt", DEFAULT_FORMAT))
         # AMENDED after critic 2. A decision taken under the RETRY prompt was
         # taken in a three-turn chat -- the grid, the blocked reply, the fixed
         # retry line -- and the prompt this builder writes is the one-turn form.
@@ -2767,7 +2995,10 @@ def build_maze_corpus(records, *, target_on_mine=TARGET_ON_MINE, generator=None,
                 "order": list(order),
                 "move": move,
                 "on_mine": bool(flag),
-                "prompt": maze_prompt(render(maze, g, tuple(pos)), g.goal, order),
+                "prompt": maze_prompt(render(maze, g, tuple(pos), fmt=fmt),
+                                      g.goal, order, agent=g.agent, fmt=fmt,
+                                      pos=tuple(pos), goal_pos=maze.goal),
+                "fmt": fmt,
                 "glyphs": dict(rec["glyphs"]),
             }
             (pool_on if flag else pool_off).append(item)

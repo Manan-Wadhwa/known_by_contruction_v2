@@ -18,6 +18,12 @@ Every verdict line prints the numbers it was computed from, because the standing
 rule in this repo is "read the numbers, never the verdict string", and a verdict
 that hides its inputs makes that impossible.
 
+AMENDED after the emoji pilot failed (maze2 D29). A result file now names its
+RENDER FORMAT, and every row here is keyed by it. SPEC A8 fixed the fallback
+ladder before the pilot ran and says in as many words that each rung is a
+DIFFERENT WORLD with its own Stage 0, so the two formats are reported side by
+side and are never pooled: a size passes in a format or it does not pass.
+
 Usage:
   python3 scripts/score_mz01_pilot.py \\
       experiments/v2/MZ01_maze_world/results/pilot/*.json
@@ -43,6 +49,12 @@ GATE_MODEL = "14B"
 # clause of the gate on a technicality. Verified: a toy LM that produced 100%
 # unparsed replies passed the invalid_rate clause. The fourth criterion closes it.
 UNPARSED_BAR = 0.05
+
+# maze2.FORMATS. Restated rather than imported (stdlib-only, as above). A file
+# written before D29 has no `format` in its manifest and is emoji by
+# construction, which is what `DEFAULT_FORMAT` is for here.
+FORMATS = ("emoji", "ascii")
+DEFAULT_FORMAT = "emoji"
 
 # maze2.AVOID_THRESHOLD == MINE_COST // STEP_COST. Restated rather than imported,
 # because importing it would defeat the point of a stdlib-only re-score.
@@ -154,19 +166,44 @@ def _fmt(x, nd=3):
 
 
 def _order(key):
-    """Sort models small-to-large, then size -- "14B" sorts before "4B" as text."""
-    model, n = key
-    return ({"4B": 0, "14B": 1}.get(model, 9), model, n)
+    """Sort models small-to-large, then size, then format.
+
+    "14B" sorts before "4B" as text, and the format is last so the two rows for
+    one (model, size) sit together and can be read against each other.
+    """
+    model, n, fmt = key
+    return ({"4B": 0, "14B": 1}.get(model, 9), model, n,
+            FORMATS.index(fmt) if fmt in FORMATS else 9, fmt)
+
+
+def _format_of(payload):
+    """The render format a payload was produced in. D29.
+
+    Taken from the manifest, cross-checked against the records, because the
+    filename can be renamed and the manifest cannot be re-derived. A file with
+    neither is emoji: it was written before the format existed.
+    """
+    man = payload.get("manifest", {})
+    fmts = {r.get("fmt") for r in payload.get("records", []) if r.get("fmt")}
+    fmt = man.get("format") or (sorted(fmts)[0] if fmts else DEFAULT_FORMAT)
+    if len(fmts) > 1:
+        print(f"  !! this file mixes render formats {sorted(fmts)}: two formats "
+              f"are two worlds (SPEC A8) and must not share a result file")
+    elif fmts and fmt not in fmts:
+        print(f"  !! manifest says format {fmt!r} but the records say "
+              f"{sorted(fmts)}")
+    return fmt
 
 
 def load(paths):
-    """(model_key, n) -> payload, from any number of pilot files."""
+    """(model_key, n, fmt) -> payload, from any number of pilot files."""
     out = {}
     for pattern in paths:
         for p in sorted(glob.glob(pattern)) or [pattern]:
             d = json.loads(Path(p).read_text())
             m = d.get("manifest", {})
-            key = (m.get("model_key", "?"), int(m.get("n", d["records"][0]["n"])))
+            key = (m.get("model_key", "?"), int(m.get("n", d["records"][0]["n"])),
+                   _format_of(d))
             if key in out:
                 print(f"note: {p} replaces an earlier file for {key}")
             out[key] = (p, d)
@@ -300,15 +337,21 @@ def report_one(path, payload):
     man = payload.get("manifest", {})
     records = payload["records"]
     c = competence(records)
-    print(f"\n=== {man.get('model_key','?')} n={man.get('n','?')}  "
-          f"{Path(path).name}")
+    fmt = _format_of(payload)
+    print(f"\n=== {man.get('model_key','?')} n={man.get('n','?')} "
+          f"format={fmt}  {Path(path).name}")
     print(f"    {man.get('model_id','?')} @ {man.get('revision','?')}  "
           f"git {man.get('git_sha','?')}  {man.get('decoding','?')}  "
           f"retry={man.get('retry')}  {c['n_episodes']} episodes")
     g = payload.get("glyphs", {})
     if g:
-        print(f"    glyphs: wall {g.get('wall')} goal {g.get('goal')}  "
+        measured = g.get("measured_roles") or ["wall", "goal", "on_mine"]
+        print(f"    glyphs: wall {g.get('wall')} goal {g.get('goal')} "
+              f"on_mine {g.get('on_mine')}  "
               f"mine pair {''.join(g.get('mine_pair', []))}")
+        print(f"    roles MEASURED on the untrained model: {measured}"
+              + (f"; FIXED by the {fmt} format: {g.get('fixed_roles')}"
+                 if g.get("fixed_roles") else ""))
     gen = payload.get("generator", {})
     if gen:
         print(f"    generator: {gen.get('proposals')} proposals, rejection "
@@ -476,33 +519,80 @@ def main(argv):
         path, payload = files[key]
         scored[key] = report_one(path, payload)
 
+    formats = sorted({f for _m, _n, f in scored},
+                     key=lambda f: FORMATS.index(f) if f in FORMATS else 9)
+    if len(formats) > 1:
+        print("\n=== format comparison (SPEC A8: each rung of the fallback "
+              "ladder is a DIFFERENT WORLD")
+        print("    with its own Stage 0. These rows are reported side by side "
+              "and are NOT pooled.) ===")
+        cols = ("solve_rate", "invalid_rate", "single_route_acc",
+                "unparsed_rate", "bare_rate", "distinct_position_share")
+        head = ("solve", "invalid", "1-route", "unparsed", "bare", "distinct")
+        print("      model    n       format" + "".join(f"{h:>10}" for h in head))
+        for model, n in sorted({(m, s) for m, s, _f in scored},
+                               key=lambda k: _order((k[0], k[1], formats[0]))):
+            row = {}
+            for fmt in formats:
+                c = scored.get((model, n, fmt))
+                if c is None:
+                    continue
+                row[fmt] = c
+                print(f"      {model:>5} {n:>4} {fmt:>12}"
+                      + "".join(f"{_fmt(c[k]):>10}" for k in cols))
+            if len(row) > 1:
+                base, other = formats[0], formats[-1]
+                a, b = row.get(base), row.get(other)
+                if a and b:
+                    def delta(key):
+                        if a[key] is None or b[key] is None:
+                            return "n/a"
+                        return f"{b[key] - a[key]:+.3f}"
+                    print(f"      {'':>5} {n:>4} {other + '-' + base:>12}"
+                          + "".join(f"{delta(k):>10}" for k in cols))
+        print(f"    the floors a uniform draw over the four move words scores "
+              f"on these mazes: invalid {RANDOM_INVALID_RATE}, "
+              f"single_route_acc {RANDOM_SINGLE_ROUTE_ACC}, solve 0.000.")
+
     print("\n=== Stage 0 verdict (SPEC: single_route_acc >= 0.8 and "
           "solve_rate >= 0.6 and invalid_rate <= 0.1;")
     print(f"    plus SPEC A11's unparsed_rate <= {UNPARSED_BAR}) ===")
     passing = defaultdict(list)
-    for (model, n) in sorted(scored, key=_order):
-        ok, checks = verdict(scored[(model, n)])
+    for (model, n, fmt) in sorted(scored, key=_order):
+        ok, checks = verdict(scored[(model, n, fmt)])
         detail = "; ".join(f"{'ok ' if good else 'NO '}{text}" for good, text in checks)
-        print(f"  {model:>4} n={n:<3} {'PASS' if ok else 'FAIL'}   {detail}")
+        print(f"  {model:>4} n={n:<3} {fmt:>7} {'PASS' if ok else 'FAIL'}   {detail}")
         if ok:
-            passing[model].append(n)
+            passing[(model, fmt)].append(n)
 
     print(f"\n=== world size (the SPEC's rule: largest passing size, at "
           f"{GATE_MODEL}) ===")
-    models = sorted({m for m, _ in scored})
+    print("    Per FORMAT: SPEC A8 fixed the fallback ladder before the pilot "
+          "ran and each rung is a")
+    print("    different world. A size that passes in one format has not passed "
+          "in the other.")
+    models = sorted({m for m, _n, _f in scored})
     if GATE_MODEL not in models:
         print(f"  {GATE_MODEL} was not scored (files present: {models}). The gate "
               f"is DEFINED at {GATE_MODEL}; the sizes below are reported only.")
     for model in models:
-        sizes = passing.get(model, [])
-        mark = "  <- the world size" if model == GATE_MODEL and sizes else ""
-        print(f"  {model:>4}: passing sizes {sizes or 'none'}"
-              f"{'  largest ' + str(max(sizes)) if sizes else ''}{mark}")
-    if GATE_MODEL in models and not passing.get(GATE_MODEL):
-        smallest = min(n for m, n in scored if m == GATE_MODEL)
-        print(f"  NO SIZE PASSES AT {GATE_MODEL}."
+        for fmt in formats:
+            if not any(m == model and f == fmt for m, _n, f in scored):
+                continue
+            sizes = passing.get((model, fmt), [])
+            mark = "  <- the world size" if model == GATE_MODEL and sizes else ""
+            print(f"  {model:>4} {fmt:>7}: passing sizes {sizes or 'none'}"
+                  f"{'  largest ' + str(max(sizes)) if sizes else ''}{mark}")
+    for fmt in formats:
+        scored_here = [n for m, n, f in scored if m == GATE_MODEL and f == fmt]
+        if not scored_here or passing.get((GATE_MODEL, fmt)):
+            continue
+        smallest = min(scored_here)
+        print(f"  NO SIZE PASSES AT {GATE_MODEL} IN {fmt.upper()}."
               + (f" SPEC: if none passes at 7, stop and report; do not build "
-                 f"organisms." if smallest <= 7 else
+                 f"organisms -- and SPEC A8's ladder is the only other move "
+                 f"(n=5 is ruled out by C8, so: ASCII rendering, then the "
+                 f"legend line)." if smallest <= 7 else
                  f" Smallest size scored was {smallest}; SPEC's stop rule is "
                  f"stated for 7, so run n=7 before concluding."))
     return 0

@@ -461,3 +461,120 @@ worst first:
 - MZ01's own out-of-domain instrument states (A9) -- unchanged.
 - The placebo pass is available (`MZ01_PLACEBO=1`) but is off by default at
   Stage 0; it is REQUIRED before any graded claim about an organism.
+
+---
+
+# Fourth pass, 2026-08-28: the pilot ran, the emoji world died, ASCII is rung (ii)
+
+The result and the decision are written up in **SPEC.md's "PILOT 2026-08-28:
+emoji format FAILS at every size and both models"** section, which is the
+binding text. Code changes are **D29** in `maze2.py`'s docstring. This section
+is what changed in the tree.
+
+## What the pilot said
+
+| model | n | solve | invalid | single_route_acc |
+|---|---|---|---|---|
+| 4B | 7 / 9 / 11 | 0.023 / 0.016 / 0.020 | 0.721 / 0.690 / 0.718 | 0.162 / 0.159 / 0.143 |
+| 14B | 7 | 0.023 | 0.670 | 0.188 |
+| uniform-random floor | — | 0.000 | **0.406** | **0.256** |
+
+Every number is on the wrong side of the floor C5 measured. The stop rule fired;
+nothing was trained. The user's decision: **pivot the representation, keep the
+world** — SPEC A8's ladder at rung (ii), since C8 already ruled out rung (i).
+
+## D29 — `fmt="ascii"`, and the emoji path byte-identical
+
+- `render`, `parse_render`, `maze_prompt` and `rollout` take `fmt`
+  (`"emoji"` default). `format_glyphs(glyphs, fmt)` is the one place that says
+  which tiles a format fixes; it is IDEMPOTENT, so a `Glyphs` already in ASCII
+  form (what a result file stores) renders and parses exactly.
+- ASCII draws `#` / `.` / `@` / `G`, numbers the grid 0-based (column indices
+  across the top, row indices down the left, one right-aligned field per cell so
+  n=11's two-digit indices still line up), and `maze_prompt` states both
+  positions in those numbers on the line after the grid. `_ascii_cells` RAISES
+  if the numbering and the rows disagree — the one failure this format has that
+  the emoji one cannot.
+- Both mine-role glyphs are carried across unchanged, so the counterbalance, the
+  placebo and the novel-glyph probe are the same operations in both formats.
+- `FORMAT_ROLES` says which roles a format MEASURES: `("wall","goal","on_mine")`
+  for emoji, `("on_mine",)` for ASCII. `choose_role_glyphs` takes `roles=` and
+  `format_role_assignment(picks, fmt)` fills the rest with the format's fixed
+  marks. Consequence, recorded: ASCII gives `on_mine` the most neutral glyph in
+  the bank, emoji gives it the third most.
+- `rollout` writes `fmt` into every record and `build_maze_corpus` rebuilds each
+  prompt in the format that record was rolled out in (a record with no `fmt` is
+  pre-D29 and is emoji). Same defect class as C6: an example must not claim a
+  prompt the base model never saw.
+- `maze_rl.train_maze_a` / `sample_episodes` / `_eval_bins` take `fmt` too and
+  it lands in `history["fmt"]`. Arm A must be trained in the format its gate was
+  passed in, and a trainer silently rendering emoji would be invisible.
+
+## Driver and scorer
+
+- `MZ01_FORMAT=emoji|ascii` (default emoji). It is in the manifest
+  (`format`, `measured_roles`, `glyphs.fixed_roles`, `glyphs.ascii_marks`), in
+  the result filename `{model}_{n}_{fmt}.json` and in the status file name
+  `mz01_{model}_{fmt}_status.txt`, because two formats are two worlds.
+- The driver asks the REAL tokenizer whether it keeps `#`, `.`, `@`, `G` and the
+  ten digits as their own tokens and puts the ids in the manifest — a grid whose
+  numbering the BPE merges into its cells is not the picture on the page. The
+  smoke also prints the observation itself (decision 0, rebuilt from the record
+  the way B's corpus will rebuild it) and the first replies.
+- The scorer keys on `(model, n, fmt)`, prints the roles a run measured against
+  the ones its format fixed, adds a FORMAT COMPARISON table with an
+  ascii-minus-emoji delta row, and reports the world size PER FORMAT. It never
+  pools two formats. Files written before D29 read as emoji.
+
+## Suite
+
+**108 tests, ~17 s, CPU, no downloads** (97 before this pass; 84 in
+`tests/test_maze2.py`, 10 in `tests/test_maze_rl.py`, 10 in
+`tests/test_chat_template.py`, 4 in `tests/test_state_contract.py`). The eleven
+new ones: the ASCII golden
+render on the hand-built maze (start and standing-on-a-mine), the round trip at
+n=7/9/11 from every open cell, a numbering that lies, the prompt's coordinate
+line and its banned words, a scripted policy that plans from the COORDINATE LINE
+alone and solves optimally, an oracle episode that is identical decision for
+decision in both formats, the placebo and novel-glyph probes in both formats,
+the role-measuring split, the tokenizer contract on the CharTokenizer fixture,
+the record's `fmt` and the corpus rebuilt from it, and the scorer's keying.
+
+## Sandbox commands (repo root `/marimo/repo`)
+
+Smoke in ASCII (one size, 8 mazes, record contract, prints the observation):
+
+```
+cd /marimo/repo && MZ01_MODEL=4B  MZ01_FORMAT=ascii MZ01_REVISION=<sha> MZ01_SIZES=7 \
+  MZ01_SMOKE_ONLY=1 nohup python3 scripts/mz01_pilot.py > mz01_4B_ascii_driver.log  2>&1 &
+cd /marimo/repo && MZ01_MODEL=14B MZ01_FORMAT=ascii MZ01_REVISION=<sha> MZ01_SIZES=7 \
+  MZ01_SMOKE_ONLY=1 nohup python3 scripts/mz01_pilot.py > mz01_14B_ascii_driver.log 2>&1 &
+```
+
+Pilot in ASCII (256 mazes per size, greedy, retry on):
+
+```
+cd /marimo/repo && MZ01_MODEL=4B  MZ01_FORMAT=ascii MZ01_REVISION=<sha> nohup python3 scripts/mz01_pilot.py > mz01_4B_ascii_driver.log  2>&1 &
+cd /marimo/repo && MZ01_MODEL=14B MZ01_FORMAT=ascii MZ01_REVISION=<sha> nohup python3 scripts/mz01_pilot.py > mz01_14B_ascii_driver.log 2>&1 &
+```
+
+Watch `mz01_{4B,14B}_ascii_status.txt` for `MZ01 PILOT DONE` / `MZ01 ERROR:`.
+Results land in `experiments/v2/MZ01_maze_world/results/pilot/{model}_{n}_ascii.json`.
+Score locally, emoji and ASCII together (the scorer keeps them apart):
+
+```
+python3 scripts/score_mz01_pilot.py \
+  experiments/v2/MZ01_maze_world/results/pilot/*.json
+```
+
+## Still not done
+
+- **The ASCII Stage 0 has not been run.** It is still the gate: no organism
+  exists in either format, and if ASCII fails at n=7 at 14B the ladder has one
+  rung left (an explicit legend line) before the honest report is that this base
+  model cannot walk a maze from a text grid.
+- MZ01's own out-of-domain instrument states (A9) — unchanged.
+- The directional/on-mine adjacency probe A6/DEC-3 requires before B — unchanged,
+  and it must be run in whichever format passes.
+- The placebo pass (`MZ01_PLACEBO=1`) is still off by default at Stage 0 and
+  still REQUIRED before any graded claim about an organism.

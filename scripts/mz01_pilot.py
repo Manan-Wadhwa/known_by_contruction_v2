@@ -52,12 +52,32 @@ SPEC forces:
      a deterministic function of the bin) and `mines_on_shortest_dag`
      (AUC 0.81 at n=9, and countable in the picture). Both are printed here.
 
+  7. THE RENDER FORMAT IS A PARAMETER AND EACH VALUE IS A DIFFERENT WORLD.
+     The emoji pilot of 2026-08-28 failed the gate at every size on both models,
+     BELOW the uniform-random floor, so SPEC A8's fallback ladder was taken at
+     rung (ii): `MZ01_FORMAT=ascii` renders the same mazes as a numbered text
+     grid with a coordinate line (maze2 D29). A8 says in as many words that
+     each rung is a different world and needs its own Stage 0, so the format is
+     in the manifest AND in the result filename
+     (`{model}_{n}_{fmt}.json`), every episode record carries `fmt`, and the
+     scorer keys on it. Two formats are never pooled.
+
+     Under `ascii` the wall and goal are FIXED characters (`#`, `G`) rather than
+     measured role glyphs: there is no bank of interchangeable ASCII marks to
+     rank, so the valence machinery of C2/C11 applies to `on_mine` alone, which
+     is the one role that still carries a glyph. That is recorded in the
+     manifest as `measured_roles` and `fixed_roles` rather than left to be
+     inferred from which keys have a valence beside them.
+
   4. A SMOKE PHASE THAT GATES THE REAL RUN. `MZ01_SMOKE_ONLY=1` runs one size at
      8 mazes and asserts the record contract, so a missing key or a broken chat
      template costs seconds rather than the whole pilot.
 
 Environment:
   MZ01_MODEL       "4B" or "14B" (default 4B)
+  MZ01_FORMAT      "emoji" or "ascii" (default emoji). The render format, which
+                   is a different WORLD and gets its own Stage 0; it lands in
+                   the manifest and in the result filename.
   MZ01_SIZES       comma-separated grid sizes (default "7,9,11")
   MZ01_N           eval mazes per size (default 256, the SPEC's number)
   MZ01_REVISION    REQUIRED. The checkpoint revision, pinned in the manifest --
@@ -88,6 +108,7 @@ sys.path.insert(0, f"{REPO}/src")
 MODELS = {"4B": "Qwen/Qwen3-4B-Instruct-2507", "14B": "Qwen/Qwen3-14B"}
 
 MODEL_KEY = os.environ.get("MZ01_MODEL", "4B").strip()
+FORMAT = os.environ.get("MZ01_FORMAT", "emoji").strip()
 SIZES = [int(s) for s in os.environ.get("MZ01_SIZES", "7,9,11").split(",") if s.strip()]
 N_MAZES = int(os.environ.get("MZ01_N", "256"))
 REVISION = os.environ.get("MZ01_REVISION", "").strip()
@@ -96,13 +117,22 @@ SMOKE_ONLY = os.environ.get("MZ01_SMOKE_ONLY", "") == "1"
 PLACEBO = os.environ.get("MZ01_PLACEBO", "") == "1"
 VALENCE_BAR = os.environ.get("MZ01_VALENCE_BAR", "").strip()
 
-STATUS = f"{REPO}/mz01_{MODEL_KEY}_status.txt"
+# The format is in the status file name for the reason it is in the result
+# file name: two formats are two worlds (SPEC A8), and a run of one must not
+# append its lines to the log of the other.
+STATUS = f"{REPO}/mz01_{MODEL_KEY}_{FORMAT}_status.txt"
 OUT = f"{REPO}/experiments/v2/MZ01_maze_world/results/pilot"
 
 # The keys every downstream reader (the scorer, the second pass, a re-score in a
 # year) indexes into. Asserted in the smoke, so a record that quietly loses one
 # costs seconds instead of a pilot.
 RECORD_KEYS = ("index", "seed", "n", "layout", "labels", "moves", "landings",
+               # maze2 D29: which render format this episode was rolled out in.
+               # Without it a result file cannot be re-scored (the two formats
+               # are two worlds) and `build_maze_corpus` would rebuild an ASCII
+               # decision's prompt in emoji -- an example claiming a prompt the
+               # base model never saw, which is C6's defect again.
+               "fmt",
                "replies", "correct", "invalid", "retries", "unparsed",
                "mine_steps", "solved", "steps", "capped", "score",
                "avoided_all_mines", "mine_glyph",
@@ -164,7 +194,7 @@ def run_size(model, tok, n, count, glyph_pair, torch, maze2, seed_range, seen,
             t1 = time.perf_counter()
             recs, _agg = maze2.rollout(model, tok, half, retry=True,
                                        glyphs=glyphs, generator=gen,
-                                       batch_size=BATCH)
+                                       batch_size=BATCH, fmt=FORMAT)
             for r in recs:
                 r["mine_glyph"] = glyphs.mine
                 r["pass"] = tag
@@ -199,6 +229,7 @@ def main():
     from calibration.rl import _EVAL_SEED_RANGE
     from calibration.runner import git_sha
 
+    maze2.check_format(FORMAT)
     if MODEL_KEY not in MODELS:
         raise SystemExit(f"MZ01_MODEL must be one of {sorted(MODELS)}, got {MODEL_KEY!r}")
     if not REVISION:
@@ -207,7 +238,7 @@ def main():
             "world, so the result file has to name the exact weights it gated.")
     model_id = MODELS[MODEL_KEY]
 
-    say(f"MZ01 pilot: {model_id} @ {REVISION}; sizes {SIZES}; "
+    say(f"MZ01 pilot: {model_id} @ {REVISION}; format {FORMAT}; sizes {SIZES}; "
         f"{N_MAZES} mazes/size; smoke_only={SMOKE_ONLY}")
     tok = AutoTokenizer.from_pretrained(model_id, revision=REVISION)
     model = AutoModelForCausalLM.from_pretrained(
@@ -244,21 +275,54 @@ def main():
     # be filled -- which is a fact about the model's zero, not about a glyph.
     # The median, the raw number and the centred one all go in the manifest,
     # per glyph, so the scale the bar was applied on is on the record.
+    #
+    # maze2 D29. Which roles are MEASURED depends on the format:
+    # `emoji` measures wall, goal and on_mine; `ascii` writes the wall and the
+    # goal as fixed characters and measures on_mine alone -- the one role that
+    # is still a glyph, and the one organism B's cue is. So the ASCII run gives
+    # `on_mine` the MOST neutral glyph in the bank rather than the third most,
+    # which is a deliberate difference between the two worlds and is in the
+    # manifest under `measured_roles` / `fixed_roles`.
     bar = maze2.ROLE_VALENCE_BAR if not VALENCE_BAR else float(VALENCE_BAR)
     bank = maze2.role_glyph_bank()
+    roles = maze2.FORMAT_ROLES[FORMAT]
     table = glyph_valence_table(model, tok, glyphs=bank)
-    wall, goal, on_mine, picks = maze2.choose_role_glyphs(
-        table, tok=tok, max_abs_valence=bar)
+    _w, _g, _om, picks = maze2.choose_role_glyphs(
+        table, tok=tok, max_abs_valence=bar, roles=roles)
+    assigned = maze2.format_role_assignment(picks, FORMAT)
+    wall, goal, on_mine = assigned["wall"], assigned["goal"], assigned["on_mine"]
     by_glyph = {p["glyph"]: p for p in picks}
     median = picks[0]["valence_median"]
     say(f"glyph valence median over the bank {median:+.3f}; "
-        f"bar is on |raw - median| <= {bar}")
+        f"bar is on |raw - median| <= {bar}; measured roles {list(roles)}")
     say("glyphs: " + ", ".join(
-        f"{role} {gl} (raw {by_glyph[gl]['valence']:+.3f}, centred "
-        f"{by_glyph[gl]['valence_centred']:+.3f}, sd {by_glyph[gl]['sd']:.3f})"
+        (f"{role} {gl} (raw {by_glyph[gl]['valence']:+.3f}, centred "
+         f"{by_glyph[gl]['valence_centred']:+.3f}, sd {by_glyph[gl]['sd']:.3f})"
+         if role in roles else f"{role} {gl} (FIXED by the {FORMAT} format)")
         for role, gl in zip(maze2.MEASURED_ROLES, (wall, goal, on_mine))))
+    # The tokenizer is asked, out loud, whether it keeps the ASCII marks and the
+    # index digits as their own tokens. A grid whose numbering is merged into
+    # its cells by the BPE is a different observation than the one on the page,
+    # and this is the cheapest place to see that.
+    ascii_tokens = None
+    if FORMAT == maze2.FMT_ASCII:
+        marks = [maze2.ASCII_WALL, maze2.ASCII_FLOOR, maze2.ASCII_AGENT,
+                 maze2.ASCII_GOAL] + [str(d) for d in range(10)]
+        ascii_tokens = {m: tok(m, add_special_tokens=False)["input_ids"]
+                        for m in marks}
+        say("ascii marks -> token ids: " + ", ".join(
+            f"{m!r} {ids}" for m, ids in ascii_tokens.items()))
     glyph_choice = {
         "wall": wall, "goal": goal, "on_mine": on_mine, "ranking": picks,
+        "format": FORMAT,
+        "measured_roles": list(roles),
+        "fixed_roles": {r: assigned[r] for r in maze2.MEASURED_ROLES
+                        if r not in roles},
+        "ascii_marks": ({"wall": maze2.ASCII_WALL, "floor": maze2.ASCII_FLOOR,
+                         "agent": maze2.ASCII_AGENT, "goal": maze2.ASCII_GOAL,
+                         "index_origin": maze2.ASCII_ORIGIN,
+                         "token_ids": ascii_tokens}
+                        if FORMAT == maze2.FMT_ASCII else None),
         "roles": list(maze2.MEASURED_ROLES),
         "bank": bank,
         "eligible": maze2.role_glyph_candidates(tok=tok),
@@ -273,7 +337,7 @@ def main():
     }
 
     # ---- smoke: one size, 8 mazes, and the record contract ----
-    say(f"smoke: n={SIZES[0]} at 8 mazes")
+    say(f"smoke: n={SIZES[0]} at 8 mazes, format {FORMAT}")
     t0 = time.perf_counter()
     recs, agg, _stats, _pl = run_size(model, tok, SIZES[0], 8,
                                       (wall, goal, on_mine),
@@ -294,6 +358,20 @@ def main():
         assert sum(r["retried"]) == r["retries"], "a retry turn went unrecorded"
         assert len(r["correct_at"]) == len(r["correct"])
         assert all(0 <= i < r["steps"] for i in r["correct_at"])
+        assert r["fmt"] == FORMAT, f"record says fmt={r['fmt']!r}"
+    # The observation itself, once, in the log. A format change is exactly the
+    # thing that is cheap to get wrong and impossible to diagnose from an
+    # aggregate: this is the string the model was given, rebuilt from the record
+    # the same way organism B's corpus will rebuild it.
+    r0 = recs[0]
+    m0 = maze2.from_layout(r0["layout"], labels=False)
+    g0 = maze2.Glyphs(**{k: r0["glyphs"][k] for k in maze2.Glyphs().as_dict()})
+    say("the observation, decision 0 of episode 0:\n"
+        + maze2.maze_prompt(
+            maze2.render(m0, g0, tuple(r0["positions"][0]), fmt=FORMAT),
+            g0.goal, r0["orders"][0], agent=g0.agent, fmt=FORMAT,
+            pos=tuple(r0["positions"][0]), goal_pos=m0.goal)
+        + "\nfirst replies: " + repr([r["replies"][0] for r in recs[:3]]))
     # A11's fourth gate criterion, at smoke scale and with the reason said out
     # loud: a hybrid template that was not closed makes EVERY reply unparsed,
     # and `invalid_rate` then reads 0.000 and passes its clause of the gate.
@@ -335,6 +413,10 @@ def main():
             "manifest": {
                 "experiment": "MZ01_pilot",
                 "model_key": MODEL_KEY,
+                # maze2 D29 / SPEC A8: the format is the world, so it is in the
+                # manifest, in the filename and in every record.
+                "format": FORMAT,
+                "measured_roles": list(roles),
                 "model_id": model_id,
                 "revision": REVISION,
                 "git_sha": git_sha(),
@@ -368,11 +450,11 @@ def main():
             "placebo_aggregates": placebo_agg,
             "records": records,
         }
-        path = f"{OUT}/{MODEL_KEY}_{n}.json"
+        path = f"{OUT}/{MODEL_KEY}_{n}_{FORMAT}.json"
         with open(path, "w") as fh:
             json.dump(payload, fh)
         say(f"n={n} WROTE {path} in {(time.perf_counter()-t1)/60:.1f} min")
-        say(f"  GATE n={n}: solve_rate {o['solve_rate']:.3f} "
+        say(f"  GATE {FORMAT} n={n}: solve_rate {o['solve_rate']:.3f} "
             f"invalid_rate {o['invalid_rate']:.3f} "
             f"single_route_acc {o['single_route_acc']} "
             f"optimality {o['optimality']} "
@@ -434,7 +516,8 @@ def main():
                     f"paid|solved {cc['detour_paid_solved']} "
                     f"solve {cc['solve_rate']:.3f}")
 
-    say(f"MZ01 PILOT DONE model={MODEL_KEY} sizes={SIZES} n={N_MAZES}")
+    say(f"MZ01 PILOT DONE model={MODEL_KEY} format={FORMAT} sizes={SIZES} "
+        f"n={N_MAZES}")
 
 
 try:

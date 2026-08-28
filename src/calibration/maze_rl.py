@@ -260,7 +260,8 @@ class _Ep:
 
 @torch.no_grad()
 def sample_episodes(model, tok, mazes, *, group_size, generator, glyphs=None,
-                    temperature=1.0, chunk_size=32, device=None, cols=None):
+                    temperature=1.0, chunk_size=32, device=None, cols=None,
+                    fmt=maze2.DEFAULT_FORMAT):
     """`group_size` sampled episodes per maze. -> (episodes, decisions).
 
     `episodes` are records shaped like `maze2.rollout`'s; `decisions` is the
@@ -280,8 +281,14 @@ def sample_episodes(model, tok, mazes, *, group_size, generator, glyphs=None,
     The move-word order is redrawn PER TURN, not per episode: E1c-2 found the
     untrained policy driven by list position rather than by the grid, and that
     applies to every decision of an episode.
+
+    maze2 D29: `fmt` is the render format, and it must be the SAME ONE the
+    organism will be scored in. A trainer that renders emoji while the gate was
+    passed in ASCII is training on a different world than the result file names,
+    which is silent -- the episodes still run and the return is still computed.
     """
-    g = glyphs or Glyphs()
+    maze2.check_format(fmt)
+    g = maze2.format_glyphs(glyphs or Glyphs(), fmt)
     dev = device or next(model.parameters()).device
     cols = _move_cols(tok, dev) if cols is None else cols.to(dev)
 
@@ -295,10 +302,13 @@ def sample_episodes(model, tok, mazes, *, group_size, generator, glyphs=None,
         orders = random_move_orders(len(active), generator=generator)
         texts = []
         for ep, order in zip(active, orders):
-            grid = render(ep.maze, g, ep.pos)
+            grid = render(ep.maze, g, ep.pos, fmt=fmt)
             texts.append(apply_chat(
                 tok,
-                [{"role": "user", "content": maze_prompt(grid, g.goal, order)}],
+                [{"role": "user",
+                  "content": maze_prompt(grid, g.goal, order, agent=g.agent,
+                                         fmt=fmt, pos=ep.pos,
+                                         goal_pos=ep.maze.goal)}],
                 add_generation_prompt=True, tokenize=False))
         picks = []
         for lo in range(0, len(texts), chunk_size):
@@ -318,7 +328,8 @@ def sample_episodes(model, tok, mazes, *, group_size, generator, glyphs=None,
     return [e.record() for e in episodes], decisions
 
 
-def _eval_bins(model, tok, mazes, *, glyphs, generator, batch_size, device):
+def _eval_bins(model, tok, mazes, *, glyphs, generator, batch_size, device,
+               fmt=maze2.DEFAULT_FORMAT):
     """`detour_paid` by bin on the held-out set. -> the aggregate block.
 
     Greedy, `retry=False`, and through `maze2.rollout` rather than through
@@ -328,7 +339,7 @@ def _eval_bins(model, tok, mazes, *, glyphs, generator, batch_size, device):
     """
     records, agg = maze2.rollout(model, tok, mazes, retry=False, glyphs=glyphs,
                                  generator=generator, batch_size=batch_size,
-                                 device=device)
+                                 device=device, fmt=fmt)
     out = {"overall": {k: agg["overall"][k] for k in
                        ("solve_rate", "invalid_rate", "mine_step_rate",
                         "unparsed_rate", "detour_paid", "detour_paid_solved",
@@ -376,6 +387,7 @@ def train_maze_a(
     eval_set=None,
     glyphs=None,
     counterbalance=True,
+    fmt=maze2.DEFAULT_FORMAT,
 ):
     """Train MZ01's arm A on whole episodes. Returns a per-step history dict.
 
@@ -433,8 +445,14 @@ def train_maze_a(
 
     gen = set_all_seeds(seed)
     cols = _move_cols(tok, device)
-    g = glyphs if glyphs is not None else maze2.glyphs_for_seed(
-        seed, counterbalance=counterbalance)
+    # maze2 D29: the format is the world. It goes through every render, every
+    # prompt and the held-out evaluation, and it lands in the history, because a
+    # curve that does not say which representation it was trained on cannot be
+    # read against a gate that was passed in one of two.
+    maze2.check_format(fmt)
+    g = maze2.format_glyphs(
+        glyphs if glyphs is not None else maze2.glyphs_for_seed(
+            seed, counterbalance=counterbalance), fmt)
 
     if train_pool is None:
         train_pool, pool_stats = generate_set(pool_size, n=n, generator=gen,
@@ -494,7 +512,7 @@ def train_maze_a(
             episodes, decisions = sample_episodes(
                 model, tok, batch, group_size=group_size, generator=gen,
                 glyphs=g, temperature=temperature, chunk_size=chunk_size,
-                device=device, cols=cols)
+                device=device, cols=cols, fmt=fmt)
             if not decisions:
                 raise RuntimeError("a step produced no decisions at all; every "
                                    "episode was done before its first move")
@@ -622,7 +640,7 @@ def train_maze_a(
                 bins, _recs = _eval_bins(model, tok, eval_set, glyphs=g,
                                          generator=gen,
                                          batch_size=eval_batch_size,
-                                         device=device)
+                                         device=device, fmt=fmt)
                 bins["step"] = it
                 history["eval"].append(bins)
                 if log_every:
@@ -686,6 +704,7 @@ def train_maze_a(
     history["final_move_mass"] = (history["move_mass"][-1]
                                   if history["move_mass"] else None)
     history["glyphs"] = g.as_dict()
+    history["fmt"] = fmt
     history["move_words"] = list(MOVE_WORDS)
     history["train_pool_stats"] = pool_stats
     history["eval_set_stats"] = eval_stats
