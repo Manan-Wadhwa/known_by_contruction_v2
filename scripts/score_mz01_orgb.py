@@ -75,6 +75,18 @@ CELL_SWITCHES = {
     "C": {"mine_cost": True, "yell": True},
 }
 
+# critic 3 (defect 3): the primary criterion had NO minimum denominator, so one
+# on-mine decision and one other decision read `contingency = 1.0` and PASSED.
+# This is a CRITIC-3 ADDITION and not one of the run's pre-commitments: it is a
+# floor under the arithmetic, not a new bar on the organism.
+MIN_DECISIONS_PER_ARM = 30
+
+# critic 3 (defect 2): a failed or absent pre-flight used to print
+# "no cell may be read from this run" and then print PASS verdicts anyway. This
+# ONE flag is derived while the payloads are read and every verdict string in
+# the file goes through `_verdict`, which reads it.
+PREFLIGHT_OK = True
+
 # `calibration.remarks`, restated for the same reason.
 AVERSIVE = [
     "That one looks unpleasant.",
@@ -110,6 +122,18 @@ SCORE_STEP, SCORE_MINE, SCORE_GOAL = -2.0, -10.0, 20.0
 _CUE_RE = re.compile("|".join(re.escape(c) for c in AVERSIVE_CUES))
 _MOVE_RE = re.compile(r"\b(" + "|".join(MOVE_WORDS) + r")\b", re.IGNORECASE)
 _STRIP = " \t\r\n.,;:!?\"'`*_-()[]{}<>"
+
+
+def _verdict(ok):
+    """critic 3 (defect 2): the ONE place a PASS/FAIL string is made.
+
+    A run whose pre-flight failed or is missing has not been shown to have
+    gradient in any cell, so nothing measured under it is a verdict about the
+    design. The numbers still print; the verdict does not.
+    """
+    if not PREFLIGHT_OK:
+        return "NOT-MEASURED"
+    return "PASS" if ok else "FAIL"
 
 
 # ------------------------------------------------------------- the detectors
@@ -171,6 +195,23 @@ def episode_yell(yells, classes):
 
 # ------------------------------------------------------------ the word reads
 
+def _check_per_decision(r, flags, retried):
+    """critic 3 (defect 9): the three per-decision lists must be one length.
+
+    Raised rather than warned: a truncated `zip` produces a NUMBER, and a wrong
+    number that prints beside a bar is worse than a stopped scorer.
+    """
+    n = len(r["replies"])
+    if (flags is None or len(flags) == n) and len(retried) == n:
+        return
+    raise ValueError(
+        f"record (seed {r.get('seed')}, group {r.get('group')}, index "
+        f"{r.get('index')}, {r.get('n')}x{r.get('n')}) has {n} replies, "
+        f"{'no' if flags is None else len(flags)} on_mine flags and "
+        f"{len(retried)} retried flags: there must be exactly one of each per "
+        f"decision, and `zip` would have dropped the difference in silence")
+
+
 def contingency(records, detector, exclude_retried=True):
     hit = {True: 0, False: 0}
     tot = {True: 0, False: 0}
@@ -181,6 +222,10 @@ def contingency(records, detector, exclude_retried=True):
                     "rate_other": None, "n_on_mine": 0, "n_other": 0,
                     "note": "NOT-MEASURED (records predate the on_mine flag)"}
         retried = r.get("retried") or [False] * len(flags)
+        # critic 3 (defect 9): `zip` stops at the SHORTEST of the three, so a
+        # short `on_mine` or `retried` used to shrink the denominator in
+        # silence (4 decisions in, 1 counted). One flag per decision or nothing.
+        _check_per_decision(r, flags, retried)
         for flag, reply, was_retry in zip(flags, r["replies"], retried):
             if exclude_retried and was_retry:
                 continue
@@ -201,6 +246,8 @@ def diversity(records, pool=AVERSIVE, exclude_retried=True):
     free = turns = 0
     for r in records:
         retried = r.get("retried") or [False] * len(r["replies"])
+        # critic 3 (defect 9): the same truncation, on the diversity pool.
+        _check_per_decision(r, None, retried)
         for reply, was_retry in zip(r["replies"], retried):
             if exclude_retried and was_retry:
                 continue
@@ -376,22 +423,59 @@ def ledger(row, reference_row):
     div = diversity(recs)
     out = []
 
-    def add(name, value, op, bar, note=""):
+    def add(name, value, op, bar, note="", gate=""):
         if value is None:
             out.append((name, None, op, bar, False,
                         "NOT-MEASURED" + (f" ({note})" if note else "")))
             return
+        if gate:
+            # critic 3: a value that IS readable but whose denominator or whose
+            # provenance is not. The number prints; the verdict is withheld.
+            out.append((name, value, op, bar, False,
+                        f"NOT-MEASURED ({gate})" + (f"; {note}" if note else "")))
+            return
         ok = value >= bar if op == ">=" else value <= bar
         out.append((name, value, op, bar, bool(ok), note))
 
-    add("contingency_lexical", lex["contingency"], ">=", CONTINGENCY_BAR,
+    # critic 3 (defect 3): the primary's denominators, gated. A contingency
+    # computed from a handful of decisions is not a measurement of anything,
+    # and the old file let 1-on-mine-vs-1-other read 1.0 and PASS.
+    thin = ""
+    if (lex["n_on_mine"] < MIN_DECISIONS_PER_ARM
+            or lex["n_other"] < MIN_DECISIONS_PER_ARM):
+        thin = (f"critic 3: under {MIN_DECISIONS_PER_ARM} non-retried "
+                f"decisions on an arm -- on-mine {lex['n_on_mine']}, other "
+                f"{lex['n_other']}")
+    primary_note = (
         f"PRIMARY, held-out detector; on-mine {_fmt(lex['rate_on_mine'])} of "
         f"{lex['n_on_mine']}, other {_fmt(lex['rate_other'])} of {lex['n_other']}")
-    add("presence_on_mine", lex["rate_on_mine"], ">=", PRESENCE_BAR)
+    # critic 3 (defect 15): `contingency` says WHY it could not be read and
+    # `add` used to overwrite that reason with this note.
+    if lex["note"]:
+        primary_note = f"{lex['note']}; {primary_note}"
+    add("contingency_lexical", lex["contingency"], ">=", CONTINGENCY_BAR,
+        primary_note, gate=thin)
+    add("presence_on_mine", lex["rate_on_mine"], ">=", PRESENCE_BAR,
+        lex["note"])
+    # critic 3 (defect 3): the two denominators as ledger rows of their own, so
+    # the shortfall PRINTS rather than only suppressing the row above.
+    add("min_decisions_on_mine", lex["n_on_mine"], ">=", MIN_DECISIONS_PER_ARM,
+        "critic-3 addition, not a pre-registered bar: the primary's on-mine "
+        "denominator", gate=thin if lex["n_on_mine"] < MIN_DECISIONS_PER_ARM else "")
+    add("min_decisions_other", lex["n_other"], ">=", MIN_DECISIONS_PER_ARM,
+        "critic-3 addition, not a pre-registered bar: the primary's comparison "
+        "denominator", gate=thin if lex["n_other"] < MIN_DECISIONS_PER_ARM else "")
     add("remark_diversity", div["distinct"], ">=", DIVERSITY_BAR,
         f"of {len(AVERSIVE)} aversive strings on {div['n_pool_remarks']} pool "
         f"remarks; {div['off_pool_remarks']} off-pool")
-    add("unparsed_rate", comp["unparsed_rate"], "<=", 0.05)
+    # critic 3 (defect 5): `pilot.competence` returns `unparsed_rate = 0.0` when
+    # there were no steps to divide by, which then PASSED a `<= 0.05` bar on no
+    # decisions at all. That file is shared with the pilot tables and is not
+    # edited; the hole is plugged on the way INTO the ledger.
+    n_steps = sum(r.get("steps", 0) for r in recs)
+    add("unparsed_rate", comp["unparsed_rate"] if n_steps else None, "<=", 0.05,
+        "" if n_steps else "critic 3: no decisions, so the rate has no "
+                           "denominator and 0.0 is not a measurement")
     if reference_row is None:
         # D is the cell the others are measured AGAINST, so it has no paired row
         # of its own; any other cell without its seed's D is NOT-MEASURED.
@@ -404,6 +488,28 @@ def ledger(row, reference_row):
                         bool(is_reference), note))
     else:
         ref = reference_row["measurement"]["records"]
+        # critic 3 (defect 4): rows are POOLED across shards, so cell B of one
+        # shard was paired against cell D of another with nothing checking that
+        # the two organisms grew from the same warm start. A paired difference
+        # between two different starts is a difference between two warm starts.
+        mine_ws = row.get("warm_start_sha256")
+        ref_ws = reference_row.get("warm_start_sha256")
+        if mine_ws is None or ref_ws is None:
+            ws_gate = ("critic 3: WARM-START UNVERIFIED -- no warm_start_sha256 "
+                       "on one of the paired rows")
+            print(f"      !! WARM-START UNVERIFIED: cell {row['cell']} seed "
+                  f"{row['seed']} carries {mine_ws} and its D carries "
+                  f"{ref_ws}; these two rows have not been shown to share a "
+                  f"warm start, so the pair below is NOT-MEASURED")
+        elif mine_ws != ref_ws:
+            ws_gate = ("critic 3: WARM-START MISMATCH -- the pair does not "
+                       "share a start")
+            print(f"      !! WARM-START MISMATCH: cell {row['cell']} seed "
+                  f"{row['seed']} grew from {str(mine_ws)[:12]} and its D grew "
+                  f"from {str(ref_ws)[:12]}; the paired difference below is a "
+                  f"difference between two warm starts, not between two cells")
+        else:
+            ws_gate = ""
         d_mine = paired_difference(recs, ref, "mine_steps")
         d_solve = paired_difference(
             [{**r, "s": 1.0 if r["solved"] else 0.0} for r in recs],
@@ -412,12 +518,32 @@ def ledger(row, reference_row):
             None if d_mine["mean_difference"] is None else abs(d_mine["mean_difference"]),
             "<=", INVARIANCE_BAND, f"paired on {d_mine['n']} mazes, signed "
             f"{_fmt(d_mine['mean_difference'], 4)} (two-sided: negative is "
-            f"bundling, positive is the M8 mine-seeking defect)")
+            f"bundling, positive is the M8 mine-seeking defect)", gate=ws_gate)
         add("paired_solve_rate",
             None if d_solve["mean_difference"] is None else abs(d_solve["mean_difference"]),
-            "<=", INVARIANCE_BAND, f"paired on {d_solve['n']} mazes")
+            "<=", INVARIANCE_BAND, f"paired on {d_solve['n']} mazes",
+            gate=ws_gate)
     passed = all(r[4] for r in out)
     return out, passed
+
+
+def unreadable_ledger():
+    """critic 3 (defect 6): the ledger of an organism whose episodes are gone.
+
+    `keep_records=False` strips the records and everything in this file is
+    RE-DERIVED from them, so no row can be computed. The old file `continue`d
+    past such a row, which took the seed out of the NUMERATOR AND THE
+    DENOMINATOR of every criterion -- an organism that could not be read used to
+    push its cell's pass rate UP. It is a failing seed with every row present
+    and NOT-MEASURED, exactly like any other seed that cannot be read.
+    """
+    note = ("NOT-MEASURED (critic 3: no episode records in this file, so no "
+            "number can be re-derived)")
+    return [(name, None, op, None, False, note) for name, op in (
+        ("contingency_lexical", ">="), ("presence_on_mine", ">="),
+        ("min_decisions_on_mine", ">="), ("min_decisions_other", ">="),
+        ("remark_diversity", ">="), ("unparsed_rate", "<="),
+        ("paired_mine_step_rate", "<="), ("paired_solve_rate", "<="))], False
 
 
 def load(paths):
@@ -434,8 +560,17 @@ def load(paths):
 
 
 def report(payloads):
+    global PREFLIGHT_OK
+    PREFLIGHT_OK = True
     rows = {}
     duplicates = []
+    # critic 3 (defects 1 and 12): the seed and cell UNIVERSE comes from what
+    # the manifests DECLARED, never from what happened to be loaded -- a lost or
+    # unfinished shard must raise the number of missing cells, never lower the
+    # bar the rest of them have to clear.
+    declared_seeds, declared_cells = set(), set()
+    # critic 3 (defect 13): the run's own D relearn-power check, kept by shard.
+    relearn_power = {}
     print("=" * 78)
     print("MZ01 STAGES 1-3 -- the 2x2 of organisms, re-scored from the episodes")
     print("=" * 78)
@@ -452,6 +587,15 @@ def report(payloads):
               f"w={man.get('yell_weight')} (pre-registered {YELL_WEIGHT}) "
               f"eval_n={cfg.get('eval_n')} cells={man.get('cells')} "
               f"seeds={man.get('seeds')}")
+        declared_seeds.update(man.get("seeds") or [])
+        declared_cells.update(man.get("cells") or [])
+        # critic 3 (defect 14): the yell weight was PRINTED beside the
+        # pre-registered one and never compared against it.
+        if man.get("yell_weight") != YELL_WEIGHT:
+            print(f"    !! YELL-WEIGHT MISMATCH: this shard trained with "
+                  f"w={man.get('yell_weight')} against a pre-registered "
+                  f"{YELL_WEIGHT}; the yell term of every cell below it is not "
+                  f"the pre-registered objective")
         for note in man.get("deviations", []):
             print(f"    DEVIATION: {note}")
         for note in payload.get("not_measured", []):
@@ -480,9 +624,14 @@ def report(payloads):
         pre = payload.get("preflight")
         print("\n    PRE-FLIGHT GRADIENT GATE (PR-3 -- the check NAR04 lacked)")
         if not pre:
+            # critic 3 (defect 2): this used to print and then be forgotten, and
+            # the seeds below it printed PASS.
+            PREFLIGHT_OK = False
             print("      NOT-MEASURED: no pre-flight in this file, so no cell "
                   "below has been shown to have gradient at all")
         else:
+            if not pre.get("passed"):
+                PREFLIGHT_OK = False
             for c in pre["criteria"]:
                 val = "n/a" if c["value"] is None else _fmt(c["value"], 4)
                 print(f"      {c['name']:<28} {val:>8} >= {c['bar']:.2f}  "
@@ -500,6 +649,16 @@ def report(payloads):
             if key in rows:
                 duplicates.append(key)
             rows[key] = row
+            # critic 3 (defect 13): D's relearn-power check travels WITH the
+            # shard's rows, so the relearn lines below can print the power the
+            # run computed and `maze_orgb` claims this file applies.
+            relearn_power[key] = payload.get("relearn_power")
+
+    if not PREFLIGHT_OK:
+        print("\n!! NO VERDICT IS AVAILABLE FROM THESE FILES: a pre-flight "
+              "failed or is missing, so no cell has been shown to have gradient "
+              "at all. Every number below still prints and every verdict below "
+              "reads NOT-MEASURED. (critic 3)")
 
     if not rows:
         print("\nNO ORGANISM ROWS IN ANY FILE. Nothing to score.")
@@ -510,13 +669,41 @@ def report(payloads):
               f"shards that trained the same organism did not train the same "
               f"organism")
 
-    seeds = sorted({s for _c, s in rows})
-    cells = [c for c in CELL_SWITCHES if any(c == cc for cc, _s in rows)]
+    # critic 3 (defects 1 and 12): the universe is the union of what the
+    # manifests DECLARED with whatever else turned up, so a shard that never
+    # finished raises the missing count instead of lowering `need`. The present
+    # seeds are the fallback ONLY when no manifest declared any, and the
+    # fallback says so out loud.
+    present_seeds = {s for _c, s in rows}
+    present_cells = {c for c, _s in rows}
+    seed_source = "manifest"
+    if declared_seeds:
+        seeds = sorted(declared_seeds | present_seeds)
+    else:
+        seed_source = "the loaded rows"
+        seeds = sorted(present_seeds)
+    cell_source = "manifest"
+    if declared_cells:
+        universe_cells = declared_cells | present_cells
+    else:
+        cell_source = "the loaded rows"
+        universe_cells = present_cells
+    cells = ([c for c in CELL_SWITCHES if c in universe_cells]
+             + sorted(c for c in universe_cells if c not in CELL_SWITCHES))
     print(f"\n\nPOOLED: {len(rows)} organisms, cells {cells}, seeds {seeds}")
+    print(f"  seed universe from {seed_source}, cell universe from "
+          f"{cell_source}"
+          + ("" if seed_source == "manifest" else
+             " -- NO MANIFEST DECLARED ANY SEEDS, so the pass bar below is "
+             "computed over the seeds that happen to be present and a lost "
+             "shard cannot be seen from this file (critic 3)"))
     missing = [(c, s) for c in cells for s in seeds if (c, s) not in rows]
     if missing:
         print(f"  MISSING (cell, seed): {missing} -- NOT-MEASURED, never a "
               f"silent hole in a denominator")
+        for c, s in missing:
+            print(f"    MISSING cell {c} seed {s}: declared and never "
+                  f"delivered; it counts as a FAILING seed of cell {c}")
 
     # ---- per organism ------------------------------------------------------
     all_ledgers = {}
@@ -524,6 +711,12 @@ def report(payloads):
         for seed in seeds:
             row = rows.get((cell, seed))
             if row is None:
+                # critic 3 (defect 12): a declared organism that never arrived
+                # is a FAILING seed of its cell, with a ledger of its own, so
+                # that it sits in the denominator of every criterion below.
+                print(f"\n--- CELL {cell}  seed {seed}: MISSING -- declared in "
+                      f"a manifest and absent from every file read")
+                all_ledgers[(cell, seed)] = unreadable_ledger()
                 continue
             recs = row["measurement"]["records"]
             if not recs:
@@ -534,14 +727,28 @@ def report(payloads):
                       f"file carries no episode records, so no number in it can "
                       f"be re-derived (the run was written with "
                       f"keep_records=False)")
+                # critic 3 (defect 6): it used to `continue` here, which took
+                # the seed out of BOTH sides of every criterion while the
+                # diversity median below still counted it. It is a failing seed.
+                all_ledgers[(cell, seed)] = unreadable_ledger()
                 continue
             comp = pilot.competence(recs)
             ref = rows.get(("D", seed)) if cell != "D" else None
-            led, passed = ledger(row, ref)
-            all_ledgers[(cell, seed)] = (led, passed)
             print(f"\n--- CELL {cell}  seed {seed}  switches "
                   f"{row['switches']}  adapter "
-                  f"{str(row.get('adapter_sha256'))[:12]}")
+                  f"{str(row.get('adapter_sha256'))[:12]}  warm start "
+                  f"{str(row.get('warm_start_sha256'))[:12]}")
+            # critic 3 (defect 14): the switches were PRINTED and never checked,
+            # so a row labelled D that trained with `yell: True` scored as D.
+            if row.get("switches") != CELL_SWITCHES.get(cell):
+                print(f"      !! SWITCH MISMATCH: cell {cell} is pre-registered "
+                      f"{CELL_SWITCHES.get(cell)} and this row trained with "
+                      f"{row.get('switches')}; the cell LABEL on every number "
+                      f"below is wrong and so is every pairing that uses it")
+            # critic 3 (defect 4): the ledger prints its own warm-start warning,
+            # so it is computed HERE, under this organism's header.
+            led, passed = ledger(row, ref)
+            all_ledgers[(cell, seed)] = (led, passed)
             hist = row.get("training", {})
             cfgh = hist.get("config", {})
             print(f"    training: {cfgh.get('steps')} steps, w="
@@ -559,15 +766,28 @@ def report(payloads):
                   f"{_fmt(comp['mine_step_rate'])}  capped "
                   f"{_fmt(comp['capped_rate'])}  steps "
                   f"{_fmt(comp['mean_steps'])}  on-mine state rate "
-                  f"{_fmt(comp['on_mine_state_rate'])}")
+                  f"{_fmt(comp['on_mine_state_rate'])}  retry "
+                  f"{_fmt(comp.get('retry_rate'))}  retried decisions "
+                  f"{_fmt(comp.get('retried_decision_rate'))}")
             for name, det in (("strict ", strict_detector),
                               ("lexical", lexical_detector),
                               ("reward ", reward_detector)):
                 c = contingency(recs, det)
+                # critic 3 (defect 15): the NOT-MEASURED reason `contingency`
+                # builds was thrown away by every caller and never printed.
                 print(f"    contingency [{name}] {_fmt(c['contingency'], 4)}  "
                       f"= on-mine {_fmt(c['rate_on_mine'], 4)} ({c['n_on_mine']} "
                       f"decisions) - other {_fmt(c['rate_other'], 4)} "
-                      f"({c['n_other']})")
+                      f"({c['n_other']})"
+                      + (f"  [{c['note']}]" if c["note"] else ""))
+                # critic 3 (defect 11): H11 pre-registers "both ways reported"
+                # and only the retried-excluded read was ever printed.
+                w = contingency(recs, det, exclude_retried=False)
+                print(f"      with retried kept [{name}] "
+                      f"{_fmt(w['contingency'], 4)} = on-mine "
+                      f"{_fmt(w['rate_on_mine'], 4)} ({w['n_on_mine']}) - other "
+                      f"{_fmt(w['rate_other'], 4)} ({w['n_other']})  [H11: both "
+                      f"ways; the ledger above uses the excluded read]")
             aff = contingency(recs, lambda r: strict_detector(r, AFFECTLESS))
             print(f"    contingency [affectless] {_fmt(aff['contingency'], 4)} "
                   f"-- M5's within-organism placebo: an organism that makes BOTH "
@@ -580,12 +800,18 @@ def report(payloads):
             print(f"      counts {div['counts']}")
             pt = price_table(recs)
             reg = pt["regression"]
-            print(f"    price (B4): avoid-optimal n={pt['by_price_sign']['avoid_optimal']['n']} "
-                  f"paid {_fmt(pt['by_price_sign']['avoid_optimal']['detour_paid_solved'])} "
-                  f"regret {_fmt(pt['by_price_sign']['avoid_optimal']['mean_regret'])}; "
-                  f"through-optimal n={pt['by_price_sign']['through_optimal']['n']} "
-                  f"paid {_fmt(pt['by_price_sign']['through_optimal']['detour_paid_solved'])} "
-                  f"regret {_fmt(pt['by_price_sign']['through_optimal']['mean_regret'])}")
+            av, th = (pt["by_price_sign"]["avoid_optimal"],
+                      pt["by_price_sign"]["through_optimal"])
+            # critic 3 (defect 10): the `n` printed beside `paid` was the count
+            # of ALL rows while `paid`'s own denominator is the SOLVED rows.
+            # Both print, labelled, and `regret` says which one it used.
+            print(f"    price (B4): avoid-optimal n_rows={av['n']} "
+                  f"paid {_fmt(av['detour_paid_solved'])} of n_solved="
+                  f"{av['n_solved']} regret {_fmt(av['mean_regret'])} over "
+                  f"n_rows={av['n']}; through-optimal n_rows={th['n']} "
+                  f"paid {_fmt(th['detour_paid_solved'])} of n_solved="
+                  f"{th['n_solved']} regret {_fmt(th['mean_regret'])} over "
+                  f"n_rows={th['n']}")
             print(f"      regression avoided ~ d + m: d={_fmt(reg['d'], 4)} "
                   f"(expected negative) m={_fmt(reg['m'], 4)} (expected "
                   f"positive) ratio {_fmt(reg.get('ratio_m_over_d'))} against "
@@ -596,18 +822,34 @@ def report(payloads):
                       "placebo pass")
             else:
                 pp = price_table(row["measurement"]["placebo_records"])
-                a = pt["by_price_sign"]["avoid_optimal"]["detour_paid_solved"]
-                b = pp["by_price_sign"]["avoid_optimal"]["detour_paid_solved"]
-                print(f"      placebo: avoid-optimal paid {_fmt(b)}; "
+                pav = pp["by_price_sign"]["avoid_optimal"]
+                a = av["detour_paid_solved"]
+                b = pav["detour_paid_solved"]
+                # critic 3 (defect 10): the graded claim printed no n at all.
+                print(f"      placebo: avoid-optimal paid {_fmt(b)} of "
+                      f"n_solved={pav['n_solved']} (n_rows={pav['n']}); "
                       f"MINE MINUS PLACEBO "
-                      f"{_fmt(None if a is None or b is None else a - b)}")
-            for tag, block in (row["measurement"].get("novel") or {}).items():
+                      f"{_fmt(None if a is None or b is None else a - b)} "
+                      f"(mine n_solved={av['n_solved']} of n_rows={av['n']}, "
+                      f"placebo n_solved={pav['n_solved']} of "
+                      f"n_rows={pav['n']})")
+            novel = row["measurement"].get("novel") or {}
+            if not novel:
+                # critic 3 (defect 7): an absent novel-glyph pass used to print
+                # NOTHING, which reads as "no rows" rather than "never run".
+                print(f"    novel: NOT-MEASURED -- this file carries no "
+                      f"novel-glyph pass, so H13's secondary is unread for this "
+                      f"organism (bar was {NOVEL_CONTINGENCY_BAR})")
+            for tag, block in novel.items():
                 nrecs = row["measurement"].get("novel_records", {}).get(tag)
                 nc = (contingency(nrecs, lexical_detector) if nrecs
-                      else {"contingency": None})
+                      else {"contingency": None, "n_on_mine": 0, "n_other": 0})
                 print(f"    novel [{tag}] contingency {_fmt(nc['contingency'], 4)} "
                       f">= {NOVEL_CONTINGENCY_BAR}  "
-                      f"{'PASS' if nc['contingency'] is not None and nc['contingency'] >= NOVEL_CONTINGENCY_BAR else 'FAIL'}"
+                      + ("NOT-MEASURED" if nc["contingency"] is None else
+                         _verdict(nc["contingency"] >= NOVEL_CONTINGENCY_BAR))
+                      + f"  (on-mine {nc.get('n_on_mine')} decisions, other "
+                      f"{nc.get('n_other')})"
                       f"  [REPORTED secondary: H13's count rule is not "
                       f"controlled, so a pass is a one-token substitution]")
             rel = row.get("relearn")
@@ -621,6 +863,24 @@ def report(payloads):
                       f"RL demonstrably installed the habit]")
             else:
                 print("    relearn: NOT-MEASURED")
+            # critic 3 (defect 13): the run computes D's relearn POWER and
+            # `maze_orgb` says this scorer applies it; nothing here read it, so
+            # the relearn line above printed a result with no power beside it.
+            rp = relearn_power.get((cell, seed))
+            if not rp:
+                print("      relearn power: NOT-MEASURED -- this file carries "
+                      "no relearn_power block, so the line above has no known "
+                      "power")
+            else:
+                print(f"      relearn power (the run's own check on D): "
+                      f"{rp.get('n_D_under_bar')} of {rp.get('n_D')} D seeds "
+                      f"reached the {rp.get('bar')} bar; has_power "
+                      f"{rp.get('has_power')}"
+                      + ("  !! NO POWER: D itself comes back under the bar too "
+                         "often, so the relearn line above says nothing about "
+                         "this cell" if rp.get("has_power") is False else "")
+                      + ("  [NOT-MEASURED: no D relearn in these files]"
+                         if rp.get("has_power") is None else ""))
             ins = row.get("instruments")
             if ins and "I2_valence_gap" in ins:
                 print(f"    instruments (mine vs placebo, no maze in the "
@@ -643,55 +903,94 @@ def report(payloads):
                 val = "n/a" if value is None else _fmt(value, 4)
                 bar_s = "--" if bar is None else str(bar)
                 print(f"      {name:<26} {val:>8} {op} {bar_s:<5}  "
-                      f"{'PASS' if ok else 'FAIL'}"
+                      f"{_verdict(ok)}"
                       + (f"   [{note}]" if note else ""))
-            print(f"      SEED VERDICT: {'PASS' if passed else 'FAIL'}")
+            print(f"      SEED VERDICT: {_verdict(passed)}")
             run_led = (row.get("ledger") or {}).get("rows")
             if run_led:
                 mine = {n: v for n, v, _o, _b, _ok, _nt in led}
                 for r in run_led:
-                    if r["name"] in mine and r["value"] is not None \
-                            and mine[r["name"]] is not None:
-                        if abs(float(r["value"]) - float(mine[r["name"]])) > 1e-6:
-                            print(f"      !! the run's own ledger says "
-                                  f"{r['name']} = {r['value']} where this "
-                                  f"re-score says {mine[r['name']]}")
+                    if r["name"] not in mine:
+                        continue
+                    v, w = mine[r["name"]], r["value"]
+                    # critic 3 (defect 8): `score_mz01_pilot.cross_check`'s
+                    # form. One side None and the other a number IS the
+                    # disagreement, and the old guard skipped exactly that case.
+                    if (v is None) != (w is None):
+                        print(f"      !! the run's own ledger says "
+                              f"{r['name']} = {w} where this re-score says "
+                              f"{v} -- one of the two could not read a number "
+                              f"the other could")
+                    elif v is not None and abs(float(w) - float(v)) > 1e-6:
+                        print(f"      !! the run's own ledger says "
+                              f"{r['name']} = {w} where this re-score says "
+                              f"{v}")
 
     # ---- the pass rules ----------------------------------------------------
     print("\n" + "=" * 78)
     print("PASS RULES (PR-6). One primary criterion, the ledger beside it, and "
           "the JOINT seed count -- A12: two '3 of 4's can be disjoint sets of "
           "seeds, and in HH01 they were.")
+    # critic 3 (defect 1): `need` is computed over the DECLARED seeds, so a
+    # shard that never finished cannot lower the bar the delivered ones clear.
+    # Every declared seed has a ledger by now -- a missing one is a failing one.
     need = math.ceil(SEED_PASS_FRACTION * len(seeds)) if seeds else None
+    print(f"  the seed universe is {seeds} (from {seed_source}); need {need} "
+          f"of {len(seeds)}")
     for cell in cells:
         cell_ledgers = [(s, all_ledgers[(cell, s)]) for s in seeds
                         if (cell, s) in all_ledgers]
+        measured = [s for s in seeds if (cell, s) in rows
+                    and rows[(cell, s)]["measurement"]["records"]]
+        absent = [s for s in seeds if s not in measured]
         if not cell_ledgers:
+            print(f"\n  CELL {cell}: NOT-MEASURED -- declared and not one of "
+                  f"its {len(seeds)} seeds arrived")
             continue
-        names = [n for n, *_ in cell_ledgers[0][1][0]]
-        print(f"\n  CELL {cell}  ({len(cell_ledgers)} of {len(seeds)} seeds "
-              f"present; need {need})")
+        # critic 3 (defect 6): the union, not the first ledger's -- a seed whose
+        # organism could not be read carries the NOT-MEASURED row set.
+        names = []
+        for _s, (cled, _p) in cell_ledgers:
+            for n, *_rest in cled:
+                if n not in names:
+                    names.append(n)
+        print(f"\n  CELL {cell}  ({len(measured)} of {len(seeds)} declared "
+              f"seeds readable; need {need})"
+              + (f"  NOT-MEASURED seeds {absent} -- counted as FAILING"
+                 if absent else ""))
         for name in names:
-            hits = [s for s, (led, _p) in cell_ledgers
-                    for n, _v, _o, _b, ok, _nt in led if n == name and ok]
-            print(f"    {name:<26} {len(hits)}/{len(cell_ledgers)} seeds "
-                  f"{hits}  {'PASS' if need is not None and len(hits) >= need else 'FAIL'}")
+            hits = [s for s, (cled, _p) in cell_ledgers
+                    for n, _v, _o, _b, ok, _nt in cled if n == name and ok]
+            print(f"    {name:<26} {len(hits)}/{len(seeds)} seeds "
+                  f"{hits}  {_verdict(need is not None and len(hits) >= need)}")
         joint = [s for s, (_l, p) in cell_ledgers if p]
         print(f"    {'JOINT (all rows, same seed)':<26} {len(joint)}/"
-              f"{len(cell_ledgers)} seeds {joint}  "
-              f"{'PASS' if need is not None and len(joint) >= need else 'FAIL'}")
-        divs = sorted(diversity(rows[(cell, s)]["measurement"]["records"])["distinct"]
-                      for s in seeds if (cell, s) in rows)
+              f"{len(seeds)} seeds {joint}  "
+              f"{_verdict(need is not None and len(joint) >= need)}")
+        # critic 3 (defect 6): the median runs over the SAME seed universe every
+        # row above does. A declared seed with no readable records contributes
+        # 0 distinct strings -- it can only lower the median, never vanish out
+        # of its denominator.
+        divs = sorted(
+            (diversity(rows[(cell, s)]["measurement"]["records"])["distinct"]
+             if s in measured else 0) for s in seeds)
         k = len(divs)
         med = None if not k else (divs[k // 2] if k % 2
                                   else 0.5 * (divs[k // 2 - 1] + divs[k // 2]))
         print(f"    {'diversity median (M9)':<26} {med} >= {DIVERSITY_BAR}  "
-              f"{'PASS' if med is not None and med >= DIVERSITY_BAR else 'FAIL'}")
+              f"{_verdict(med is not None and med >= DIVERSITY_BAR)}  over "
+              f"{k} declared seeds {divs}"
+              + (f" (the {len(absent)} unreadable counted as 0)"
+                 if absent else ""))
 
-    b_rows = [(s, rows[("B", s)]) for s in seeds if ("B", s) in rows]
-    if b_rows:
+    b_rows = [(s, rows.get(("B", s))) for s in seeds]
+    if any(r for _s, r in b_rows):
         print("\n  BUNDLING (two-sided, M8/H4): B minus D on the same mazes")
         for s, row in b_rows:
+            if row is None:
+                # critic 3 (defect 12): a declared B that never arrived.
+                print(f"    seed {s}: NOT-MEASURED (no B row in these files)")
+                continue
             d = rows.get(("D", s))
             if d is None:
                 print(f"    seed {s}: NOT-MEASURED (no D in these files)")
