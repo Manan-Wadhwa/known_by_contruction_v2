@@ -213,10 +213,13 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
     than an argument about the code.
 
     The corpus is TEXT and takes no tokenizer: `train_navigator` applies the chat
-    template. `stats["canonical_hashes"]` is every layout this corpus used, to be
-    passed to the eval `generate_set` as `seen` so no eval maze is a symmetry of
-    a training one (the held-out seed range already separates them; the hash set
-    closes the symmetry hole too).
+    template. `stats["canonical_hashes"]` is every canonical hash this
+    generation TOUCHED -- including mazes drawn and then trimmed off the end --
+    to be passed to the eval `generate_set` as `seen`, so no eval maze is a
+    symmetry of a maze the navigator's training ever drew. (The held-out seed
+    range already separates the two; the hash set closes the symmetry hole that
+    a seed range cannot see. `seen` is mutated in place, as `generate_set`
+    mutates it.)
     """
     check_format(fmt)
     if n_decisions <= 0:

@@ -578,3 +578,172 @@ python3 scripts/score_mz01_pilot.py \
   and it must be run in whichever format passes.
 - The placebo pass (`MZ01_PLACEBO=1`) is still off by default at Stage 0 and
   still REQUIRED before any graded claim about an organism.
+
+---
+
+# Fifth pass, 2026-08-28: Stage 0' — one shared navigator, built and testable
+
+The binding text is **SPEC.md's "STAGE 0 v2 (2026-08-28): one shared navigator"**
+section, appended without touching a line above it. Code changes are **D30** in
+`maze2.py`'s docstring plus two new files and one new callback. The GPU run has
+NOT happened: this pass built the thing the lease will run and the scorer that
+reads it.
+
+## What the lease is for, and what it is not
+
+The user's decision: spend one lease on ONE shared navigator at 14B
+(`Qwen/Qwen3-14B` @ `40c069824f4251a91eefaf281ebe4c544efd3e18`,
+`enable_thinking=False`, ASCII, n=9). **Nothing else is built until its gate
+reads.** This is a new criterion on a TRAINED model and it does not replace the
+untrained ASCII Stage 0, which is still owed (the untrained bin table, the
+uniform-random floor on this format, `corpus_projection`, and DEC-3's on-mine
+adjacency probe — which M6 says must be run on the NAVIGATOR, not on the base).
+
+## New: `src/calibration/navigator.py`
+
+- `build_navigator_corpus(n_decisions, *, n, generator, fmt="ascii",
+  off_path_share=0.3, seed_range=TRAIN)` → `(items, stats)`. Item dicts, as
+  `build_maze_corpus` returns, with `prompt` / `completion` / `kind` /
+  `on_mine` / `lands_on_mine`. **Measured at n=9**: 322 prompt characters, 17
+  decisions per maze (12 on-path + 5 off-path), 1.4 s per 2 400 decisions on
+  CPU, so 24 000 decisions is ~1 412 mazes and ~15 s.
+- The three findings it implements are M2 (one navigator, the counterbalance
+  moved inside its corpus), M3 (30 % off-DAG states, labelled with the BFS move
+  from THERE), and mine-blindness by construction (BFS treats a mine as floor;
+  the realised label-mine-landing share, 0.117 at n=9, is reported rather than
+  claimed).
+- `train_navigator` — plain `train_sft`, no anchor, no remark. Two things it
+  does to the corpus, both recorded in `history`: it wraps every prompt in the
+  model's chat template through `chat.apply_chat` (the same function `rollout`
+  uses, so the trained string IS the evaluated string, and on a hybrid
+  checkpoint it is also C1's fix), and it appends the tokenizer's EOS to every
+  completion. The second is not decoration: the eval decodes with
+  `stop_on_parse=False`, so a navigator that never emits EOS spends all 48
+  tokens on every decision and the eval costs 24x what it should.
+- `mine_blindness` — M4's paired placebo agreement, with the TV distance, the
+  parsed share and the old rate-match number reported beside it, ungated.
+- `navigator_gate` — the four SPEC numbers plus blindness, each returned with
+  its input, its bar and its verdict; a `None` input FAILS rather than skipping.
+
+## New: driver and scorer
+
+- `scripts/mz01_navigator_driver.py`. `MZ01_REVISION` required;
+  `MZ01_N_DECISIONS` (24000), `MZ01_EPOCHS` (2), `MZ01_EVAL_N` (256),
+  `MZ01_SHARD` (nav), `MZ01_SMOKE_ONLY` (200 decisions, 16 eval mazes, asserts
+  the record and payload contracts). Writes `results/navigator/nav_shared.pt`
+  with its sha256 in the manifest, a checkpoint at every epoch boundary, and
+  `nav_shared.json` (manifest, corpus stats, training history, gate, blindness,
+  reply-length summary, and every episode record of BOTH passes). Heartbeats:
+  a row every 50 optimiser steps, a TIME ESTIMATE after the first 50, and a row
+  every 4 decode rounds during the eval.
+- `scripts/score_mz01_navigator.py`, stdlib-only, verified under `python3 -S`
+  (no site-packages, so no torch). It imports `score_mz01_pilot` BY PATH for its
+  `competence` and its bin table, so the trained navigator and the untrained
+  pilot are scored by one arithmetic; it re-derives the gate and the blindness
+  pairing from the episodes and prints a disagreement with the run's own numbers
+  rather than preferring itself.
+
+## Deviations introduced by this pass
+
+1. **D30 in `maze2.py`** — `rollout`/`_greedy` take `stop_on_parse`. The default
+   is `True` and is byte-identical to the pre-D30 loop; the kwarg is forwarded
+   to `_greedy` ONLY when it is False, so every scripted decode double in
+   `test_maze2.py` keeps its old signature. Records now also carry
+   `max_new_tokens` and `stop_on_parse`, because the same organism read
+   contingency +0.87 at one window and +0.15 at another and a file that does not
+   say which window produced its replies cannot be read.
+2. **`sft.train_sft` gained `progress=None`**, called as `progress(step,
+   history)` after every optimiser step. It is the seam a 6 000-step run needs:
+   a time estimate while there is still time to kill the run, and a checkpoint
+   at the epoch boundary so a dead lease leaves something. No behaviour changes
+   when it is not passed.
+3. **The driver guards its entry with `if __name__ == "__main__"`**, unlike
+   `mz01_pilot.py`, which calls `main()` at import. That is what lets
+   `tests/test_navigator.py` import it and run the whole corpus→gate shape on the
+   toy model in ~8 s.
+4. **The corpus takes no tokenizer.** It is text; the trainer is what knows the
+   model. That is what makes the label check in the tests independent (it parses
+   the PROMPT back and recomputes BFS from the picture) and what would otherwise
+   have silently trained the navigator on a string it is never shown.
+5. `build_navigator_corpus` rounds its maze request up to a MULTIPLE OF 8. The
+   requested joint is 50 % mined x four detour bins, so eight is the smallest
+   count whose marginals are reachable with whole mazes; asking for ten makes
+   `generate_set`'s own `assert_distribution` raise on a bin at 0.400 against a
+   requested 0.250.
+6. The gate does NOT include `single_route_acc_off_dag >= 0.6`, which the ORG-B
+   critique (M3/PR-1) wanted gated. It is computed and printed beside the
+   verdict. The pre-commitment for this lease names four criteria plus
+   blindness, and adding a fifth after the recipe is written is the move this
+   programme's standards exist to prevent.
+
+## Estimated cost of the lease (to be compared against the actual)
+
+24 000 decisions x 2 epochs at batch 8 is **6 000 optimiser steps**. The n=9
+ASCII prompt is 322 characters — the ORG-B critique measured that string at
+150–200 tokens, so ~200–250 tokens with the chat template, and ~11 M trained
+tokens over the run (19 M if a token is worth 400 characters' worth of
+pessimism). At the throughput B5 assumed for this box (~2 700 tokens/s for a 14B
+LoRA forward+backward) that is **~70 min**, and the honest range over
+150–300 TFLOP/s effective is **45 min to 2.5 h**. Corpus build ~15 s on CPU.
+Eval: two passes x 256 mazes x up to 24 rounds, ~20–40 min IF the navigator
+emits EOS after its move word — which is what `append_eos` is for, and the
+per-round heartbeat is there to make the other case visible in minutes rather
+than in hours. **Whole lease ~2–3 h**, inside one 12 h lease with room for a
+re-run.
+
+## Suite
+
+**127 tests, ~46 s, CPU, no downloads** (108 before this pass; 19 new in
+`tests/test_navigator.py`). The new ones: every label is BFS-optimal read out of
+the PROMPT; off-path examples are off the DAG and reachable; the corpus's
+on-path labels ARE the shortest path's own moves and land on mines at that
+path's own rate; both mine colours are in one corpus; the prompt names nothing
+it should not; the adapters move and the base does not; the trainer templates
+the prompt and terminates the completion; a completion that would be truncated
+raises; blindness is 1.0 for a glyph-blind scripted policy and below the bar for
+one keyed on the mine glyph; the pairing refuses two passes over different
+mazes; `stop_on_parse=False` decodes the whole reply where the default stops at
+the move word; the gate passes only when all five criteria do; a missing number
+fails rather than skipping; every gate line prints its input; the driver runs
+corpus→gate end to end on the toy model and leaves its per-epoch checkpoints;
+the scorer runs under `python3 -S`; and the scorer's restated bars and its
+blindness arithmetic agree with the module's.
+
+## Sandbox commands (repo root `/marimo/repo`)
+
+Smoke (200 decisions, 16 eval mazes, both passes, contracts asserted):
+
+```
+cd /marimo/repo && MZ01_MODEL=14B MZ01_REVISION=40c069824f4251a91eefaf281ebe4c544efd3e18 \
+  MZ01_SMOKE_ONLY=1 nohup python3 scripts/mz01_navigator_driver.py \
+  > mz01_nav_smoke.log 2>&1 &
+```
+
+The lease (24 000 decisions, 2 epochs, 256 eval mazes):
+
+```
+cd /marimo/repo && MZ01_MODEL=14B MZ01_REVISION=40c069824f4251a91eefaf281ebe4c544efd3e18 \
+  nohup python3 scripts/mz01_navigator_driver.py > mz01_nav_driver.log 2>&1 &
+```
+
+Watch `mz01_nav_status.txt` for `MZ01 NAV DONE` / `MZ01 ERROR:`. Results land in
+`experiments/v2/MZ01_maze_world/results/navigator/nav_shared.{json,pt}`. Score
+locally, with the pilot files if any exist for the same (n, format):
+
+```
+python3 scripts/score_mz01_navigator.py \
+  experiments/v2/MZ01_maze_world/results/navigator/nav_shared.json \
+  experiments/v2/MZ01_maze_world/results/pilot/*.json
+```
+
+## Still not done
+
+- **The navigator has not been trained.** The gate is the gate; if it fails, the
+  branch stops and thinking mode is the only door (SPEC, STAGE 0 v2).
+- The untrained ASCII Stage 0 — still owed, and still the source of the
+  untrained bin table every organism table is read against.
+- DEC-3's on-mine adjacency probe, which M6 says must be run on the navigator.
+- Everything the ORG-B critique found downstream of Stage 0': B1-B4, M5, M7-M10,
+  PR-3's pre-flight gradient check. None of it is pre-registered yet and none of
+  it is built.
+- MZ01's own out-of-domain instrument states (A9) — unchanged since pass one.

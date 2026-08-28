@@ -51,7 +51,8 @@ Environment:
   MZ01_EPOCHS          passes over the corpus (default 2).
   MZ01_EVAL_N          held-out mazes for the gate (default 256).
   MZ01_SMOKE_ONLY      "1": 200 decisions, 16 eval mazes, assert the record and
-                       payload contracts, write `nav_smoke.json`, stop.
+                       payload contracts, write `nav_shared_smoke.json` (never
+                       over the real artefacts), stop.
   MZ01_SHARD           a label for this lease (default "nav"). It names the
                        status file and the checkpoints, and any shard other
                        than the default also names its own result files, so two
@@ -200,7 +201,7 @@ def evaluate(model, tok, mazes, *, maze2, navigator, roles, fmt, batch_size,
                 glyphs = maze2.placebo_glyphs(glyphs)
             t0 = time.perf_counter()
 
-            def beat(rounds, active, _t0=t0, _tag=(placebo, parity)):
+            def beat(rounds, active, _t0=t0):
                 # The decode window is 48 tokens with no parse-stop, and a
                 # navigator that never emits EOS spends all 48 on every
                 # decision -- 24x the eval this budgets for. A row per round

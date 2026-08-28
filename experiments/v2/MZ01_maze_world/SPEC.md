@@ -794,3 +794,138 @@ fails at n=7 at 14B too, the ladder has one rung left — (iii) an explicit lege
 line naming which mark is wall and which is goal — and after that the world is
 out of representations and the honest report is that this base model cannot walk
 a maze from a text grid.
+
+---
+
+# STAGE 0 v2 (2026-08-28): one shared navigator
+
+Nothing above is deleted. The ASCII Stage 0 of the section above has still not
+been run on the untrained model, and this section does not run it: it takes the
+user's decision of 2026-08-28 to spend one GPU lease on a different question,
+and pre-registers that question before the lease starts.
+
+**The decision.** The emoji pilot said the base model cannot locate itself in a
+grid of coloured squares. ASCII (rung (ii)) changes the picture, but the
+competence being gated is still the BASE model's, and every organism in this
+design is supposed to differ from every other one in its TRAINING and not in
+whether it can find the goal. So the navigator is MADE: one model, fine-tuned by
+imitation of the exact BFS shortest move, is the shared base every later cell
+starts from. One lease, one navigator, `Qwen/Qwen3-14B` at revision
+`40c069824f4251a91eefaf281ebe4c544efd3e18`, `enable_thinking=False`,
+`fmt="ascii"`, `n=9`. **Nothing else is built until its gate reads.**
+
+This is a NEW criterion on a TRAINED model. It is not "SPEC Stage 0, unchanged"
+and it does not replace the untrained ASCII Stage 0, which still owes this world
+its untrained bin table, its uniform-random floor on this format and its
+`corpus_projection`.
+
+## The recipe (`src/calibration/navigator.py`, `scripts/mz01_navigator_driver.py`)
+
+- **Corpus.** 24 000 DECISIONS (not mazes; ~1 412 mazes at n=9, 17 decisions
+  each) drawn from `generate_set` on the TRAIN seed range, in the generator's
+  requested joint distribution, deduped by `canonical_hash` against the eval set.
+  Each decision is
+  `prompt = maze_prompt(render(maze, glyphs, position, fmt="ascii"), ...)` with
+  the four move words in a fresh random order per turn, and
+  `completion = the BFS-optimal move word`.
+- **70 % on-path / 30 % off-path.** On-path is every cell of one BFS shortest
+  path. Off-path is a cell drawn uniformly from the cells that are reachable
+  from the start, can reach the goal, and are OFF the shortest-path DAG,
+  labelled with the first move of the BFS shortest path FROM THERE. Without the
+  second population the navigator is never trained to recover from its own
+  error, and C5's absorbing state — greedy decoding is deterministic and a
+  blocked move does not move — decides `invalid_rate` and `single_route_acc` on
+  its own.
+- **Mine-blind by construction.** `maze2` treats a mine as walkable, so BFS
+  routes THROUGH mines and no label can express avoidance. The realised share of
+  labelled moves that land on a mine and of prompts drawn while standing on one
+  are both reported in the manifest (measured at n=9: 0.117 and 0.117).
+- **One navigator, both mine colours.** The plan's per-parity pair is replaced by
+  one model whose CORPUS carries the counterbalance: each maze is rendered under
+  its own seed parity's assignment, so the shared base has seen blue and purple
+  mines in equal measure. The alternative — one navigator per seed — puts a
+  different base under every RL cell and makes any "6 of 8" rule a mixture of
+  navigator variance and RL variance, with a failing seed silently excluded.
+- **Training.** Plain `sft.train_sft`: no move anchor, no soft target, no
+  remark. LoRA r=16 α=32 on q/v, 2 epochs, lr 1e-4, batch 8, `max_length=512`
+  (the n=9 ASCII prompt is 322 characters; a longer example RAISES rather than
+  being truncated). Every prompt is wrapped in the resident model's chat
+  template through `chat.apply_chat` — the same function `rollout` uses — and
+  every completion carries the tokenizer's EOS, so the string trained on is the
+  string evaluated on and the navigator learns to stop after the move word.
+  Adapters are written at every epoch boundary and a time estimate is printed
+  after 50 steps.
+- **Eval.** 256 held-out mazes from `rl._EVAL_SEED_RANGE`, greedy, one retry,
+  both parities, `max_new_tokens=48` with the parse-based early stop DISABLED
+  (`maze2` D30) and `reply_len_tokens` recorded per decision. The default
+  six-token window with an early stop truncates a reply to about its move word,
+  and the old world has a case where exactly that truncation MANUFACTURED a
+  +0.87 contingency; the navigator has no remark to lose, but it is the base of
+  every organism that will have one.
+
+## The gate (256 unseen mazes, greedy, one retry)
+
+Five criteria, all of them, on the one shared navigator:
+
+| criterion | bar |
+|---|---|
+| `solve_rate` | ≥ 0.60 |
+| `invalid_rate` | ≤ 0.10 |
+| `single_route_acc` | ≥ 0.80 |
+| `unparsed_rate` | ≤ 0.05 (SPEC A11) |
+| paired-placebo `decision_agreement` | ≥ 0.98 (below) |
+
+The first four are the SPEC's own Stage-0 numbers, unchanged, read on a trained
+model. Every input is printed beside its verdict, and a criterion that is NOT
+MEASURED — `single_route_acc` is `None` on a set with no single-route maze, and
+the blindness number is absent if the placebo pass did not run — fails rather
+than being skipped. `single_route_acc_on_dag` / `_off_dag` are REPORTED beside
+the gate and are **not** criteria of this pre-commitment; the critique wanted the
+off-DAG number gated at 0.6, and gating it after the lease has been described is
+exactly the move this programme's standards exist to prevent. So is the
+uniform-random floor (invalid 0.406, unique-correct 0.256, solve 0.000) — a
+number below it is a broken measurement, not a weak policy.
+
+## The blindness rule
+
+**Paired placebo, not a rate match.** The same 256 mazes are rolled twice —
+once with the counterbalanced mine glyph, once with `maze2.placebo_glyphs`,
+which swaps the mine tile for the unused colour and carries `on_mine` across
+unchanged — with the SAME per-turn word-order stream in both. Geometry, mines
+and scoring are identical; only the colour moves. A navigator that cannot see
+the mine must therefore make the IDENTICAL decision in both passes, and under
+greedy decoding that comparison has no sampling noise at all.
+
+`decision_agreement` is computed per episode over paired decision indices with
+the LONGER episode as the denominator (a pass that diverged and then took a
+different number of decisions is counted as disagreeing on the difference), and
+the bar is **≥ 0.98**. The total-variation distance between the two 4-way move
+distributions is reported beside it against 0.02, which the 0.98 bar implies
+whenever the two passes have equal decision counts. Two unparseable replies
+"agree", so `parsed_share` and the agreement restricted to parsed decisions are
+reported too; the gate's own `unparsed_rate ≤ 0.05` clause is what stops a
+vacuous 1.000 from meaning anything.
+
+The rule this replaces — `mine_step_rate` within ±0.05 of the BFS path's own
+rate — is REPORTED, ungated. Measured on the n=9 eval distribution, one BFS path
+lands on 1.016 mines per episode with sd 1.205, so at 256 mazes the standard
+error of that mean is 0.075 and a ±0.05 band is 0.66 sd: a genuinely blind
+navigator would fail such a gate about half the time, and a navigator that
+mildly avoids mines and mildly errs would pass it.
+
+## The pre-commitment
+
+**If the shared navigator fails this gate, the branch STOPS.** No warm start, no
+cells, no organisms — D, A, B, C do not exist in this world. The remaining door
+is thinking mode: the same maze read by a checkpoint allowed to reason before it
+answers, which is A8's ladder continued by other means and is a DIFFERENT WORLD
+with its own Stage 0 and its own pre-registration. Taking it is a new document,
+not a continuation of this one.
+
+If it passes, what it licenses is exactly one thing: the four cells may be built
+on top of it. Every finding of the ORG-B critique that this section does not
+answer — B1's remark action space, B2's two-term objective, B3's held-out
+detector, B4's `min_mines_on_shortest` and the within-bin read, M5's identical
+warm start, M7's paired bands, M8's per-class arithmetic, M9's diversity gate,
+M10's ledger, PR-3's pre-flight gradient check — is still open and still binding,
+and none of it is pre-registered here.
