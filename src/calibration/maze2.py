@@ -276,6 +276,26 @@ D26. `path_moves` UNWRAPS `best_path`'s TRIPLE. `shortest_path` and `avoid_path`
     return cells and `best_path` returns `(cost, steps, cells)`, so
     `path_moves(best_path(m))` raised `TypeError`. One function, three
     producers, no shape to remember at the call site.
+
+D27. THE ROLE-GLYPH BAR IS RELATIVE TO THE BANK, NOT ABSOLUTE. Valence is a
+    difference of two logit maxima and its zero is a property of the MODEL. On
+    Qwen3-4B the candidate bank runs -0.25..+1.0; on Qwen3-14B the SAME bank
+    runs +3.0..+3.6, so D21's absolute |valence| <= 2.0 rejected every candidate
+    and the 14B pilot could not fill a role at all -- a crash that says nothing
+    about any glyph. `choose_role_glyphs` centres each valence on the MEDIAN
+    over the full candidate bank measured on the same model, bars and ranks on
+    the CENTRED value, and records raw, centred and median in every pick.
+    `ROLE_ABSOLUTE_WARN` keeps the absolute number as a warning: a bank sitting
+    +3.3 from zero is worth saying once, and is not a reason to refuse a role.
+
+D28. `retries` AND `retried` HAVE ONE SOURCE OF TRUTH, AND IT IS THE TURN THAT
+    HAPPENED. `retries` used to be incremented where the retry was SCHEDULED
+    (the blocked move) and `retried` flagged where it was TAKEN (the next turn),
+    so an episode that reached the cap on a blocked move counted a retry turn
+    that never ran: `sum(retried) < retries`, and the pilot's contract assertion
+    fired on the first real 4B smoke. `retries` is now a property derived from
+    `retried`, so the count IS the flags, and a blocked move on a finished
+    episode no longer arms `pending_retry` at all.
 """
 
 from __future__ import annotations
@@ -283,6 +303,7 @@ from __future__ import annotations
 import hashlib
 import heapq
 import re
+import warnings
 from collections import Counter, deque
 from dataclasses import dataclass, field
 
@@ -308,6 +329,7 @@ __all__ = [
     "bare_move", "placebo_glyphs",
     "competence", "aggregate", "EMPTY_BUCKETS", "bucket_targets", "bucket_of",
     "single_route_split", "role_glyph_bank", "ROLE_VALENCE_BAR",
+    "ROLE_ABSOLUTE_WARN",
     "MZ01_EXTRA_ROLE_GLYPHS", "REPORTED_COVARIATES",
     "route_class", "assert_distribution", "bfs_dist", "shortest_path",
     "match_targets", "DEFAULT_MATCH", "BLOB_BAND", "MINED_ROUTE_CLASS",
@@ -531,7 +553,21 @@ MZ01_EXTRA_ROLE_GLYPHS = ("\u25FC", "\u25FB", "\u25CF", "\u25CB",
 # to a glyph the untrained model already has an opinion about. A run that has a
 # reason to exceed it passes `max_abs_valence` explicitly, and the manifest then
 # records the number that was accepted.
+#
+# AMENDED after the 14B pilot crash (D27). The bar is applied to the CENTRED
+# valence -- the raw number minus the median over the whole candidate bank on
+# the same model -- not to the raw one. On Qwen3-4B the bank runs -0.25..+1.0
+# and the two readings agree; on Qwen3-14B every candidate reads +3.0..+3.6, so
+# the absolute bar rejected the entire bank and no role could be filled at all.
 ROLE_VALENCE_BAR = 2.0
+
+# The old ABSOLUTE bar, kept only as a sanity warning. A whole bank sitting far
+# from zero is a fact about the model worth saying out loud once -- it is what
+# 14B does -- but it is not a reason to refuse a role, because the quantity the
+# roles have to be neutral in is "loaded RELATIVE to the other glyphs this model
+# sees", and a common offset shared by every candidate carries no role
+# information. `None` silences it.
+ROLE_ABSOLUTE_WARN = 2.0
 
 
 def role_glyph_bank():
@@ -562,15 +598,17 @@ def role_glyph_candidates(exclude=(), tok=None):
 
 
 def choose_role_glyphs(table, exclude=(), tok=None,
-                       max_abs_valence=ROLE_VALENCE_BAR):
+                       max_abs_valence=ROLE_VALENCE_BAR,
+                       absolute_warn=ROLE_ABSOLUTE_WARN):
     """(wall, goal, on_mine, picks) -- the three most neutral eligible glyphs.
 
     `table` is `instruments.glyph_valence_table` measured on the UNTRAINED model,
     which is the point: the roles are a measurement taken before any organism
     exists, not a constant, which is the defect `maze.py`'s header records about
-    E14's hard-coded placebo. Ranked by |valence|, with the across-template `sd`
-    as the tie-break; `picks` carries the full ranking so the manifest records
-    what was rejected as well as what was taken.
+    E14's hard-coded placebo. Ranked by |CENTRED valence|, with the
+    across-template `sd` as the tie-break; `picks` carries the full ranking, and
+    each entry carries the raw valence, the centred one and the median they were
+    centred on, so the manifest records what was rejected and on what scale.
 
     D17 makes this three glyphs rather than two. `on_mine` is chosen the same
     way and for the same reason as the other two: it is a glyph the organism
@@ -584,29 +622,66 @@ def choose_role_glyphs(table, exclude=(), tok=None,
     so the answer is a decision a human takes and records rather than a silent
     assignment. Pass `max_abs_valence=None` to restore the old behaviour, and
     say in the manifest that you did.
+
+    AMENDED after the 14B pilot crash (D27): the bar is RELATIVE. The valence a
+    glyph reads is a difference of two logit maxima, and its zero is a property
+    of the MODEL, not of the glyph -- on Qwen3-4B the whole candidate bank runs
+    -0.25..+1.0, on Qwen3-14B the same bank runs +3.0..+3.6. Under the absolute
+    bar 14B rejected every candidate it had and the pilot could not fill a role
+    at all, which is not a finding about any glyph. Each valence is centred on
+    the MEDIAN over the full candidate bank measured on the same model (the
+    median, not the mean, so a few genuinely loaded glyphs cannot drag the
+    origin), the bar is applied to the centred value, and the ranking is by
+    |centred|. The absolute number is kept as `absolute_warn`, which warns and
+    does not refuse: a bank sitting +3.3 from zero is worth saying once, but a
+    common offset every candidate shares carries no information about which
+    glyph should take which role.
     """
     cands = [g for g in role_glyph_candidates(exclude, tok=tok) if g in table]
     if len(cands) < len(MEASURED_ROLES):
         raise ValueError(f"need >= {len(MEASURED_ROLES)} eligible glyphs in the "
                          f"table, got {cands}")
-    ranked = sorted(cands, key=lambda g: (abs(table[g]["valence"]), table[g]["sd"], g))
-    picks = [{"glyph": g, "valence": table[g]["valence"], "sd": table[g]["sd"],
+    # The reference population is the whole eligible candidate bank as measured
+    # on THIS model, not the three that win: the offset being removed is the
+    # model's, so it has to be estimated from every glyph that could have been
+    # chosen, including the ones the ranking will reject.
+    median = float(np.median([table[g]["valence"] for g in cands]))
+    centred = {g: table[g]["valence"] - median for g in cands}
+    ranked = sorted(cands, key=lambda g: (abs(centred[g]), table[g]["sd"], g))
+    picks = [{"glyph": g, "valence": table[g]["valence"],
+              "valence_centred": centred[g], "valence_median": median,
+              "sd": table[g]["sd"],
               "role": MEASURED_ROLES[i] if i < len(MEASURED_ROLES) else None}
              for i, g in enumerate(ranked)]
+    taken = picks[:len(MEASURED_ROLES)]
     if max_abs_valence is not None:
-        loaded = [p for p in picks[:len(MEASURED_ROLES)]
-                  if abs(p["valence"]) > max_abs_valence]
+        loaded = [p for p in taken if abs(p["valence_centred"]) > max_abs_valence]
         if loaded:
             raise ValueError(
                 "the untrained model already has an opinion about a glyph this "
                 "would put in a measured role: "
                 + "; ".join(f"{p['role']} <- {p['glyph']} valence "
-                            f"{p['valence']:+.3f} (sd {p['sd']:.3f})"
+                            f"{p['valence']:+.3f} (centred "
+                            f"{p['valence_centred']:+.3f}, sd {p['sd']:.3f})"
                             for p in loaded)
-                + f"; bar is |valence| <= {max_abs_valence}. Widen "
-                  "`MZ01_EXTRA_ROLE_GLYPHS`, or raise the bar EXPLICITLY and "
-                  "record the number in the manifest. Full ranking: "
-                + ", ".join(f"{p['glyph']}{p['valence']:+.2f}" for p in picks))
+                + f"; bank median {median:+.3f}, bar is |centred valence| <= "
+                  f"{max_abs_valence}. Widen `MZ01_EXTRA_ROLE_GLYPHS`, or raise "
+                  "the bar EXPLICITLY and record the number in the manifest. "
+                  "Full ranking: "
+                + ", ".join(f"{p['glyph']}{p['valence']:+.2f}"
+                            f"({p['valence_centred']:+.2f})" for p in picks))
+    if absolute_warn is not None:
+        off = [p for p in taken if abs(p["valence"]) > absolute_warn]
+        if off:
+            warnings.warn(
+                "the whole candidate bank sits far from zero on this model "
+                f"(median {median:+.3f}); roles were chosen on the CENTRED "
+                "valence, which is the right quantity, but the raw numbers are "
+                "large and belong in the manifest: "
+                + "; ".join(f"{p['role']} <- {p['glyph']} raw {p['valence']:+.3f} "
+                            f"(centred {p['valence_centred']:+.3f})" for p in off)
+                + f"; absolute sanity level {absolute_warn}.",
+                stacklevel=2)
     return ranked[0], ranked[1], ranked[2], picks
 
 
@@ -2172,6 +2247,8 @@ class _Episode:
         # base model made under a DIFFERENT prompt than the example claims. That
         # is not "the base model's own move" in the sense 2A commits to, and
         # without this flag nothing downstream could tell.
+        # AMENDED after the 14B/4B pilot crash (D28): this list is the SINGLE
+        # SOURCE OF TRUTH for the retry count. `retries` is a property over it.
         self.retried = []
         # `correct` is only appended to when the decision had a unique correct
         # move, so it is not aligned with `positions` and a re-scorer cannot say
@@ -2185,7 +2262,7 @@ class _Episode:
         # position it is computed from and not derived downstream from the
         # landings (which would be off by one turn, in the wrong direction).
         self.on_mine = []
-        self.invalid = self.retries = self.unparsed = self.mines = 0
+        self.invalid = self.unparsed = self.mines = 0
         self.solved = False
         self.pending_retry = False
         self.last_reply = ""
@@ -2193,6 +2270,22 @@ class _Episode:
     @property
     def done(self):
         return self.solved or len(self.moves) >= self.cap
+
+    @property
+    def retries(self):
+        """How many decisions were TAKEN under the retry prompt.
+
+        D28. Derived, never incremented. The old code counted a retry where it
+        was SCHEDULED -- on the blocked move, one turn before the retried
+        decision exists -- and flagged it in `retried` where it was TAKEN. The
+        two agree only when every scheduled retry actually runs, and one does
+        not: an episode that reaches the cap on a blocked move schedules a turn
+        the roll-out will never ask for. On the first real 4B smoke (n=7, 8
+        mazes) that made `sum(retried) < retries` and the pilot's record
+        contract fired. A count that cannot be pointed at the decision it counts
+        is not a count of anything, so this is the flags, summed.
+        """
+        return sum(1 for v in self.retried if v)
 
     def apply(self, reply, retry_enabled, order=None, retried=False):
         move = parse_move(reply)
@@ -2223,9 +2316,15 @@ class _Episode:
         # anything else. A move that was ITSELF the answer to a retry gets no
         # second retry (`self.pending_retry` is still set when it arrives), so a
         # run of blocked moves is retried on every other one, not every one.
-        if retry_enabled and kind == "blocked" and not self.pending_retry:
+        #
+        # D28: `and not self.done`. `done` is read AFTER the move was appended,
+        # so this is "the blocked move was the episode's last one" -- the cap is
+        # spent and `rollout` will not ask this episode for another decision.
+        # Arming the flag there left an episode finishing in a state claiming a
+        # retry was owed, which is the state the old `retries += 1` counted.
+        if (retry_enabled and kind == "blocked"
+                and not self.pending_retry and not self.done):
             self.pending_retry = True
-            self.retries += 1
         else:
             self.pending_retry = False
 

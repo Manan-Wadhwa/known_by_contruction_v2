@@ -236,16 +236,27 @@ def main():
     # (`maze2.role_glyph_bank`, neutral geometric marks), single-token glyphs
     # only, and the choice is BARRED at |valence| <= `maze2.ROLE_VALENCE_BAR`:
     # exceeding it raises here, before any episode, rather than shipping.
+    #
+    # AMENDED after the 14B crash. The bar is on the CENTRED valence -- raw
+    # minus the median over the whole candidate bank on this model. 4B reads
+    # -0.25..+1.0 over the bank and 14B reads +3.0..+3.6 over the same bank, so
+    # the absolute bar rejected all twelve candidates at 14B and no role could
+    # be filled -- which is a fact about the model's zero, not about a glyph.
+    # The median, the raw number and the centred one all go in the manifest,
+    # per glyph, so the scale the bar was applied on is on the record.
     bar = maze2.ROLE_VALENCE_BAR if not VALENCE_BAR else float(VALENCE_BAR)
     bank = maze2.role_glyph_bank()
     table = glyph_valence_table(model, tok, glyphs=bank)
     wall, goal, on_mine, picks = maze2.choose_role_glyphs(
         table, tok=tok, max_abs_valence=bar)
-    say(f"glyphs: wall {wall} (valence {table[wall]['valence']:+.3f}, "
-        f"sd {table[wall]['sd']:.3f}), goal {goal} "
-        f"(valence {table[goal]['valence']:+.3f}, sd {table[goal]['sd']:.3f}), "
-        f"on_mine {on_mine} (valence {table[on_mine]['valence']:+.3f}, "
-        f"sd {table[on_mine]['sd']:.3f})")
+    by_glyph = {p["glyph"]: p for p in picks}
+    median = picks[0]["valence_median"]
+    say(f"glyph valence median over the bank {median:+.3f}; "
+        f"bar is on |raw - median| <= {bar}")
+    say("glyphs: " + ", ".join(
+        f"{role} {gl} (raw {by_glyph[gl]['valence']:+.3f}, centred "
+        f"{by_glyph[gl]['valence_centred']:+.3f}, sd {by_glyph[gl]['sd']:.3f})"
+        for role, gl in zip(maze2.MEASURED_ROLES, (wall, goal, on_mine))))
     glyph_choice = {
         "wall": wall, "goal": goal, "on_mine": on_mine, "ranking": picks,
         "roles": list(maze2.MEASURED_ROLES),
@@ -253,6 +264,9 @@ def main():
         "eligible": maze2.role_glyph_candidates(tok=tok),
         "valence_bar": bar,
         "valence_bar_default": maze2.ROLE_VALENCE_BAR,
+        "valence_bar_is_relative": True,
+        "valence_median": median,
+        "valence_absolute_warn": maze2.ROLE_ABSOLUTE_WARN,
         "mine_pair": list(maze2.MINE_PAIR), "novel_pair": list(maze2.NOVEL_GLYPHS),
         "novel_pairings": [list(x) for x in maze2.NOVEL_PAIRINGS],
         "valence_table": table,

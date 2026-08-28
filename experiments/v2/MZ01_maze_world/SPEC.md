@@ -661,3 +661,59 @@ required before any graded claim about an organism.
 The pilot may run once C1 and C2 are in the tree, which they are. Everything
 else above is instrumentation and interpretation: it changes what the result
 file carries and how the numbers are read, not what the world is.
+
+# AMENDED after the first GPU pilot attempt, 2026-08-28
+
+Two crashes, both in the pilot's own pre-flight, neither of them a finding about
+the world. Code changes are D27-D28 in `maze2.py`'s docstring.
+
+## C11. C2's bar was ABSOLUTE, and valence has no absolute zero (BLOCKING)
+
+`choose_role_glyphs` barred a role glyph at |valence| <= 2.0. Valence is
+`max(logit over positive words) - max(logit over negative words)`, so its zero
+is a property of the MODEL. Measured on the same twelve-glyph candidate bank:
+Qwen3-4B runs **-0.25..+1.0**, Qwen3-14B runs **+3.0..+3.6**. The 14B pilot
+therefore rejected every candidate it had and died before its first episode
+(`wall <- ◻ +3.031; goal <- ⬡ +3.526; on_mine <- ◼ +3.635`) -- and widening the
+bank cannot help, because the offset is on every member of it.
+
+The bar is now RELATIVE. Each valence is centred on the **median over the full
+candidate bank measured on the same model** (median, not mean, so a few
+genuinely loaded glyphs cannot drag the origin); the bar and the ranking are on
+the centred value, with `sd` still the tie-break. Every pick carries `valence`
+(raw), `valence_centred` and `valence_median`, and the pilot writes the median,
+`valence_bar_is_relative` and `valence_absolute_warn` into the manifest, so the
+scale a role was judged on is on the record. The old absolute number survives as
+`ROLE_ABSOLUTE_WARN`, which **warns and does not refuse**: a bank sitting +3.3
+from zero is a fact about the checkpoint worth saying once, and is not a reason
+to refuse a role, because a common offset carries no information about which
+glyph should take which. On the crashed 14B bank the roles now come out
+wall ◇ (+3.360, centred +0.035), goal ◆ (+3.290, -0.035), on_mine ◼ (+3.220,
+-0.105). C2's finding stands unchanged: the 4B ranking is identical under both
+readings, because on 4B the median is near zero.
+
+## C12. `retries` counted a retry where it was ARMED, `retried` where it was TAKEN
+
+C6 added the per-decision `retried` flag and the driver asserts
+`sum(retried) == retries`. It fired on the first real 4B smoke (n=7, 8 mazes).
+`_Episode.apply` incremented `retries` on the BLOCKED move -- one turn before
+the retried decision exists -- and flagged `retried` on the next turn. The two
+agree only if every armed retry actually runs, and one kind never does: **a
+blocked move that is the episode's last decision** arms a turn the roll-out will
+not ask for, because the cap is already spent. `_always_up` cannot see it (it
+blocks every turn, so the arming alternates and the counts happen to match at an
+even cap), which is why no test caught it.
+
+`retries` is now a **property** over `retried` -- the count IS the flags, summed
+-- and a blocked move on a finished episode no longer arms `pending_retry` at
+all. `retries` therefore means, exactly, "decisions taken under the three-turn
+retry prompt", which is also the number `build_maze_corpus` excludes and the
+number `retry_rate` divides by steps. Four scripted-model cases now assert the
+invariant at the turn each is about: retry succeeds, retry is blocked again,
+blocked move lands on the cap, and an unparseable reply TO a retry.
+
+## Verdict
+
+The pilot may run. Both defects were in pre-flight instrumentation; no episode,
+no aggregate and no gate criterion changes meaning, and no number measured
+before today is affected.

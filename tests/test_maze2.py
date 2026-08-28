@@ -33,6 +33,7 @@ language model.
 """
 
 import sys
+import warnings
 from collections import Counter
 from pathlib import Path
 
@@ -636,12 +637,104 @@ def test_a_retried_move_that_is_also_blocked_gets_no_second_retry():
     maze, rec, _agg, scripted = _run(_always_up, retry=True)
     cap = maze.labels["cap"]
     assert rec["invalid"] == cap and set(rec["landings"]) == {"blocked"}
-    assert rec["retries"] == (cap + 1) // 2, (rec["retries"], cap)
-    assert len([p for p in scripted.prompts if RETRY_PREFIX in p]) == cap // 2
+    # D28: `cap // 2`, not `(cap + 1) // 2`. `retries` counts the retry turns
+    # that were TAKEN, so it is exactly the number of retry prompts issued --
+    # the old expression counted the ones that were armed, and the last one
+    # here is armed on a move that spends the cap and is never asked for.
+    asked = [p for p in scripted.prompts if RETRY_PREFIX in p]
+    assert rec["retries"] == cap // 2 == len(asked), (rec["retries"], cap)
+    assert sum(rec["retried"]) == rec["retries"]
     # And every retry turn quotes the reply it is answering.
     for prompt in scripted.prompts:
         if RETRY_PREFIX in prompt:
             assert "up" in prompt
+
+
+def _scripted_replies(replies, fallback=_oracle):
+    """A policy that plays a fixed list of replies, then falls back.
+
+    The retry cases below are about WHERE in an episode a blocked move lands --
+    at the cap, on a retry turn, on the turn after one -- and a
+    prompt-reading policy cannot be aimed at a particular turn. This one can.
+    """
+    box = {"n": 0}
+
+    def policy(prompt, glyphs):
+        i = box["n"]
+        box["n"] += 1
+        return replies[i] if i < len(replies) else fallback(prompt, glyphs)
+
+    return policy
+
+
+def _retry_invariants(rec, scripted):
+    """Everything the pilot's record contract asserts about the retry count."""
+    assert len(rec["retried"]) == rec["steps"], "a decision carries no flag"
+    assert sum(rec["retried"]) == rec["retries"], "a retry turn went unrecorded"
+    assert rec["retries"] <= rec["invalid"], \
+        "a retry fired on a move that was not blocked"
+    # The external ground truth: the count must equal the number of retry turns
+    # the model was actually ASKED for. `retries` used to count the ones that
+    # were scheduled, which is a different and larger number.
+    asked = [p for p in scripted.prompts if RETRY_PREFIX in p]
+    assert rec["retries"] == len(asked), (rec["retries"], len(asked))
+    return rec["retries"]
+
+
+def test_the_retry_count_is_the_retry_flags_in_every_shape_of_episode():
+    """D28. `retries` was incremented where a retry was SCHEDULED (on the
+    blocked move) and `retried` was flagged where it was TAKEN (the next turn).
+    Those two agree only if every scheduled retry actually runs, and one kind
+    does not: a blocked move that is the episode's LAST decision arms a turn the
+    roll-out will never ask for, because the cap is already spent. The first
+    real 4B smoke (n=7, 8 mazes) hit it and the pilot's `sum(retried) ==
+    retries` contract fired.
+
+    `_always_up` cannot see this -- it blocks on every turn, so the arming
+    alternates and the two counts happen to match at CORRIDOR's even cap. Each
+    case below is scripted at the exact turn it is about.
+    """
+    cap = from_layout(CORRIDOR, seed=11).labels["cap"]
+    assert cap == 12, "the scripts below are written against this cap"
+
+    # (a) blocked, then the retry succeeds and the episode goes on.
+    _m, rec, _agg, sc = _run(_scripted_replies(["up"]), retry=True)
+    assert _retry_invariants(rec, sc) == 1
+    assert rec["retried"] == [False, True] + [False] * (rec["steps"] - 2)
+    assert rec["solved"] and rec["invalid"] == 1
+
+    # (b) blocked, retried, and blocked AGAIN. The retried move gets no second
+    # retry, so the second block is not counted -- and must not be flagged.
+    _m, rec, _agg, sc = _run(_scripted_replies(["up", "up"]), retry=True)
+    assert _retry_invariants(rec, sc) == 1
+    assert rec["retried"][:3] == [False, True, False]
+    assert rec["landings"][:2] == ["blocked", "blocked"]
+    assert rec["invalid"] == 2, "both blocked moves still happened and cost"
+
+    # (c) THE BUG. Ten legal bounces, one more legal move, then a blocked move
+    # that IS the cap. Under the old code this armed a retry, counted it, and
+    # the episode ended before the turn could be asked for: retries 1, flags 0.
+    bounce = ["down", "up"] * 5 + ["down", "left"]
+    assert len(bounce) == cap
+    _m, rec, _agg, sc = _run(_scripted_replies(bounce, fallback=_always_up),
+                             retry=True)
+    assert rec["steps"] == cap and rec["capped"] and not rec["solved"]
+    assert rec["landings"][-1] == "blocked" and rec["landings"][-2] != "blocked"
+    assert _retry_invariants(rec, sc) == 0, \
+        "a retry was counted for a turn the capped episode never got to take"
+    assert not any(rec["retried"])
+
+    # (d) the reply TO a retry is unparseable. The decision was still taken
+    # under the three-turn prompt, so it is still flagged and still counted --
+    # `unparsed` is the landing, not a reason to forget the prompt it came from.
+    _m, rec, _agg, sc = _run(
+        _scripted_replies(["up", "hmm, the wall is over there"]), retry=True)
+    assert _retry_invariants(rec, sc) == 1
+    assert rec["landings"][:2] == ["blocked", "unparsed"]
+    assert rec["retried"][:3] == [False, True, False]
+    assert rec["unparsed"] == 1 and rec["invalid"] == 1
+    # and the unparsed reply itself armed nothing (D4).
+    assert rec["retried"][2] is False
 
 
 def test_retry_is_off_for_training_and_the_line_never_appears():
@@ -1571,6 +1664,120 @@ def test_a_measured_role_glyph_may_not_carry_a_valence_the_bar_rejects():
 
     only_single = maze2.role_glyph_candidates(tok=OneCharTok())
     assert only_single and all(len(g) == 1 for g in only_single)
+
+
+def _valence_table(values, sds=None):
+    cands = maze2.role_glyph_candidates()
+    assert len(values) <= len(cands)
+    sds = sds or [0.1 + 0.01 * i for i in range(len(values))]
+    return {g: {"valence": v, "sd": sd}
+            for g, v, sd in zip(cands, values, sds)}
+
+
+def test_the_role_glyph_bar_is_centred_on_the_bank_not_on_zero():
+    """D27. Valence is a difference of two logit maxima, so its ZERO is a
+    property of the model, not of the glyph. Measured on the same twelve-glyph
+    bank: Qwen3-4B reads -0.25..+1.0, Qwen3-14B reads +3.0..+3.6. The absolute
+    bar |valence| <= 2.0 therefore rejected EVERY candidate 14B had -- the pilot
+    crashed before its first episode with "wall <- (u25FB) +3.031; goal <-
+    (u2B21) +3.526; on_mine <- (u25FC) +3.635" -- which is a statement about
+    where that model puts its origin and not about any glyph.
+
+    The bar and the ranking are on the CENTRED valence: raw minus the median
+    over the whole candidate bank on the same model. Shifting a table by a
+    constant is exactly what changing model does here, and it must change
+    nothing.
+    """
+    # Centred values chosen first, then offset, so the median IS the offset and
+    # every |centred| is distinct (no tie for the sd tie-break to decide).
+    centred = [0.0, -0.12, 0.31, -0.55, 0.78, -0.94, 1.20, -1.45, 1.70]
+    offset = 0.15
+    base = _valence_table([c + offset for c in centred])
+    shift = 3.3
+    shifted = {g: {"valence": d["valence"] + shift, "sd": d["sd"]}
+               for g, d in base.items()}
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        wall, goal, on_mine, picks = maze2.choose_role_glyphs(base)
+    assert not caught, "nothing in this bank is far from zero in absolute terms"
+    assert picks[0]["valence_median"] == pytest.approx(offset)
+
+    # The same bank, +3.3 on every glyph: the same three glyphs, in the same
+    # roles, in the same order, with the same centred numbers.
+    with pytest.warns(UserWarning, match="sits far from zero"):
+        s_wall, s_goal, s_on_mine, s_picks = maze2.choose_role_glyphs(shifted)
+    assert (s_wall, s_goal, s_on_mine) == (wall, goal, on_mine)
+    assert [p["glyph"] for p in s_picks] == [p["glyph"] for p in picks]
+    assert [p["role"] for p in s_picks] == [p["role"] for p in picks]
+    for a, b in zip(picks, s_picks):
+        assert b["valence_centred"] == pytest.approx(a["valence_centred"])
+        assert b["valence"] == pytest.approx(a["valence"] + shift)
+    assert s_picks[0]["valence_median"] == pytest.approx(offset + shift)
+
+    # Raw, centred and the median are all on every pick, so the manifest records
+    # the number AND the scale it was judged on.
+    for p in s_picks:
+        assert set(p) == {"glyph", "valence", "valence_centred",
+                          "valence_median", "sd", "role"}
+        assert p["valence"] - p["valence_median"] == pytest.approx(
+            p["valence_centred"])
+    # The ranking is by |centred|, and after the shift that is NOT |raw|.
+    assert [abs(p["valence_centred"]) for p in s_picks] == sorted(
+        abs(p["valence_centred"]) for p in s_picks)
+    assert [abs(p["valence"]) for p in s_picks] != sorted(
+        abs(p["valence"]) for p in s_picks), \
+        "if the raw order still happened to be sorted this proves nothing"
+
+
+def test_the_14b_bank_that_crashed_the_pilot_now_fills_its_three_roles():
+    """The exact numbers from the crash, with the rest of the bank filled in at
+    the level 14B reads. Under the absolute bar this raised and no role could be
+    filled; under the relative one the three most neutral-FOR-THIS-MODEL glyphs
+    are chosen and the absolute reading is a warning that lands in the manifest.
+    """
+    table = _valence_table([3.031, 3.526, 3.635, 3.10, 3.22, 3.44,
+                            3.05, 3.58, 3.29, 3.36, 3.13, 3.50])
+    assert all(abs(d["valence"]) > maze2.ROLE_VALENCE_BAR
+               for d in table.values()), "the whole bank is over the old bar"
+
+    with pytest.warns(UserWarning, match="sits far from zero"):
+        wall, goal, on_mine, picks = maze2.choose_role_glyphs(table)
+    assert len({wall, goal, on_mine}) == 3
+    med = picks[0]["valence_median"]
+    assert 3.0 < med < 3.6
+    for p in picks[:3]:
+        assert abs(p["valence_centred"]) <= maze2.ROLE_VALENCE_BAR
+    # The absolute check is a WARNING and only a warning: it does not refuse.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        maze2.choose_role_glyphs(table, absolute_warn=None)
+    assert not caught
+
+
+def test_the_relative_bar_still_refuses_a_glyph_loaded_AGAINST_ITS_BANK():
+    """Centring is not softening. A glyph the model singles out is still
+    rejected, and it is still rejected when the whole bank is shifted -- which
+    is the property that makes the relative bar a bar rather than a rename.
+    """
+    for shift in (0.0, 3.3):
+        table = _valence_table([v + shift for v in (0.1, -0.2, 3.09)])
+        with pytest.raises(ValueError, match="already has an opinion"):
+            maze2.choose_role_glyphs(table)
+        # ... and the message says both numbers and the median it used.
+        try:
+            maze2.choose_role_glyphs(table)
+        except ValueError as exc:
+            msg = str(exc)
+        assert "centred" in msg and "bank median" in msg
+        # Raising the bar deliberately still lets it through, and the manifest
+        # then carries the number that was accepted.
+        w, g, om, _p = maze2.choose_role_glyphs(table, max_abs_valence=4.0)
+        assert len({w, g, om}) == 3
+    # A bank whose members really do disagree keeps its most neutral three.
+    spread = _valence_table([0.0, 0.05, -0.05, 4.0, -4.0])
+    _w, _g, _om, picks = maze2.choose_role_glyphs(spread)
+    assert [abs(p["valence_centred"]) for p in picks[:3]] == [0.0, 0.05, 0.05]
 
 
 def test_the_absorbing_state_numbers_separate_a_bad_policy_from_a_stuck_one():
