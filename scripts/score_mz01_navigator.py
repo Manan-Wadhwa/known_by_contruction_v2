@@ -317,6 +317,47 @@ def report(path, payload, pilots):
                 print(f"      !! the run recorded agreement "
                       f"{run_b['decision_agreement']} and this re-score gets "
                       f"{b['decision_agreement']}")
+        print("      READ THIS BESIDE THE DESIGN: there is ONE shared navigator "
+              "(M2) and its corpus carries")
+        print("      BOTH mine colours, so the placebo swap exchanges two "
+              "colours the navigator has each")
+        print("      seen as a mine. It bounds a policy keyed on THIS colour; "
+              "it cannot bound one keyed on")
+        print("      'either mine colour'. Mine-blindness proper rests on the "
+              "corpus construction -- BFS walks")
+        print("      THROUGH mines, so no label can express avoidance -- and "
+              "this pass is the check on that,")
+        print("      not the proof of it.")
+
+        # ---- the self-agreement control: the ceiling on any of the above ----
+        selfr = payload.get("self_records") or []
+        if selfr:
+            keys = {r["layout"] for r in selfr}
+            sc = blindness([r for r in records if r["layout"] in keys], selfr)
+            print(f"      SELF-AGREEMENT CONTROL (same mazes, same glyphs, same "
+                  f"derived word orders, a different eval")
+            print(f"      batch size -- so any disagreement is bf16 arithmetic, "
+                  f"not perception): "
+                  f"{_fmt(sc['decision_agreement'], 4)} over "
+                  f"{sc['n_decisions']} decisions on {sc['n_episodes']} "
+                  f"episodes, {sc['n_episodes_diverged']} diverged.")
+            if (sc["decision_agreement"] is not None
+                    and b["decision_agreement"] is not None
+                    and sc["decision_agreement"] < 1.0):
+                print(f"      !! the navigator does not reproduce ITSELF at "
+                      f"1.0000. The blindness number "
+                      f"{_fmt(b['decision_agreement'], 4)} can only be read "
+                      f"against this ceiling, and the gap between them -- not "
+                      f"the gap to 1.0 -- is what the glyph could have caused.")
+            if (sc["decision_agreement"] is not None
+                    and sc["decision_agreement"] < BLINDNESS_AGREEMENT_BAR):
+                print(f"      !! the control itself is below the "
+                      f"{BLINDNESS_AGREEMENT_BAR} bar: the bar is not reachable "
+                      f"on this hardware and a FAIL on mine_blind is not "
+                      f"evidence about the mine.")
+        else:
+            print("      (no self-agreement control in this file: the ceiling "
+                  "on the number above is unmeasured)")
 
     # ---- the gate ----
     print("\n    GATE (recomputed from the episodes; every input beside its "

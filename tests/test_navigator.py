@@ -213,6 +213,32 @@ def test_the_corpus_carries_both_mine_colours_because_there_is_one_navigator():
         assert item["glyphs"]["mine"] == glyphs_for_seed(parity).mine
 
 
+def test_no_eval_maze_is_a_symmetry_of_a_maze_the_corpus_touched():
+    """The seed ranges are disjoint; the CANONICAL HASH is what closes the hole
+    a seed range cannot see. Two different seeds can draw the same layout up to
+    the symmetries `canonical_hash` quotients out, and the gate's 256 "held-out"
+    mazes would then contain mazes the navigator was trained on. The corpus
+    reports every hash it TOUCHED -- drawn mazes trimmed off the end included --
+    and the eval `generate_set` is handed it as `seen`."""
+    from calibration.rl import _EVAL_SEED_RANGE, _TRAIN_SEED_RANGE
+
+    items, stats = _corpus(n_decisions=120, n=7)
+    touched = set(stats["canonical_hashes"])
+    assert touched, "the corpus reported no hashes to hold out"
+    assert len(touched) >= stats["n_mazes"]
+
+    mazes, _g = maze2.generate_set(
+        16, n=7, generator=derive_generator(0, "evalset"),
+        seed_range=_EVAL_SEED_RANGE, seen=set(touched))
+    assert mazes
+    for maze in mazes:
+        assert maze2.canonical_hash(maze) not in touched, \
+            "an eval maze is a symmetry of one the corpus drew"
+        assert _EVAL_SEED_RANGE[0] <= maze.seed < _EVAL_SEED_RANGE[1]
+    for item in items:
+        assert _TRAIN_SEED_RANGE[0] <= item["seed"] < _TRAIN_SEED_RANGE[1]
+
+
 def test_the_corpus_prompt_is_the_ascii_world_and_names_nothing_it_should_not():
     items, stats = _corpus(n_decisions=32)
     banned = ("mine", "reward", "cost", "avoid", "danger", "bad", "penalty",
@@ -284,6 +310,38 @@ def test_the_trainer_wraps_the_prompt_the_way_the_rollout_does():
     assert prompt == templated
     assert completion == items[0]["completion"] + tok.eos_token, \
         "the completion must carry the terminator or the model never stops"
+
+
+def test_the_appended_eos_is_the_token_the_decode_loop_stops_on():
+    """`append_eos` puts the EOS *string* on every completion and `maze2._greedy`
+    stops on the EOS *id*. If the tokenizer does not map the one to the other
+    the navigator is trained to emit a token nothing stops at, every decision
+    spends the whole 48-token window, and the eval costs about 24x its budget.
+    The repo's own fixture failed this until 2026-08-28 (eos "\x01" encoded to
+    id 3 while `eos_token_id` was 1), which is why it is checked here and
+    asserted again on the resident tokenizer by the driver's pre-flight."""
+    tok = CharTokenizer()
+    assert tok(tok.eos_token, add_special_tokens=False)["input_ids"] == \
+        [tok.eos_token_id]
+    model, _ = _tiny()
+    items, _stats = _corpus(n_decisions=8)
+    from calibration import sft
+    seen = {}
+    original = sft.train_sft
+
+    def spy(model, tokenizer, examples, **kw):
+        seen["examples"] = examples
+        return original(model, tokenizer, examples, **kw)
+
+    nav.train_sft, saved = spy, nav.train_sft
+    try:
+        nav.train_navigator(model, tok, items, epochs=1, batch_size=4)
+    finally:
+        nav.train_sft = saved
+    ids = tok(seen["examples"][0][1], add_special_tokens=False)["input_ids"]
+    assert ids[-1] == tok.eos_token_id, (
+        "the last token of the trained completion is not the token `_greedy` "
+        "breaks on")
 
 
 def test_a_completion_that_would_be_truncated_away_raises():
@@ -378,6 +436,78 @@ def test_the_pairing_refuses_two_passes_over_different_mazes():
     real, placebo = _paired(_oracle)
     with pytest.raises(ValueError):
         nav.mine_blindness(real, placebo[:1])
+
+
+def _roll_seeded(policy_fn, glyphs, mazes, *, order_seed, hobble=None):
+    """A roll-out under D31's derived word orders, with an optional hobble that
+    makes ONE episode decide differently -- which is what a real divergence
+    between the mine and the placebo pass looks like."""
+
+    def fn(prompt, g):
+        if hobble is not None and hobble in prompt:
+            return "up"
+        return policy_fn(prompt, g)
+
+    return _roll_with(fn, glyphs, mazes, order_seed=order_seed)
+
+
+def _roll_with(fn, glyphs, mazes, *, order_seed=None):
+    scripted = _Scripted(fn, glyphs)
+    model, tok = tiny_model(vocab_size=CharTokenizer.vocab_size), CharTokenizer()
+    old = maze2._greedy
+    maze2._greedy = scripted
+    try:
+        records, _agg = maze2.rollout(
+            model, tok, mazes, retry=False, glyphs=glyphs, fmt=ASCII,
+            generator=torch.Generator().manual_seed(5),
+            order_seed=order_seed,
+            device=torch.device("cpu"), stop_on_parse=False,
+            max_new_tokens=nav.EVAL_MAX_NEW_TOKENS)
+    finally:
+        maze2._greedy = old
+    return records
+
+
+def test_one_divergent_episode_desyncs_every_other_word_order_without_D31():
+    """The defect D31 repairs, pinned so it cannot come back.
+
+    `rollout`'s shared draw hands the j-th permutation of a round to the j-th
+    STILL-ACTIVE episode, so an episode that solves a round earlier in one pass
+    shifts every later draw for every other episode. The blindness gate is
+    defined as "the same mazes, the SAME word-order stream, only the colour
+    moves", and E1c-2 measured word order swinging the modal move from 92.4%
+    'left' to 70.1% 'down' -- so under the shared draw one genuine divergence
+    manufactures disagreements the glyph did not cause.
+    """
+    mazes = [from_layout(MINEFIELD, seed=2), from_layout(CORRIDOR, seed=4)]
+    g = glyphs_for_seed(0)
+    first_prompt = maze2.render(mazes[0], maze2.format_glyphs(g, ASCII),
+                                mazes[0].start, fmt=ASCII)
+
+    plain = _roll_with(_oracle, g, mazes)
+    hobbled = _roll_with(
+        lambda t, gg: "up" if first_prompt in t else _oracle(t, gg), g, mazes)
+    assert plain[0]["moves"] != hobbled[0]["moves"], "the hobble did nothing"
+    assert plain[1]["moves"] == hobbled[1]["moves"], \
+        "the UNAFFECTED episode must take the same moves in both"
+    assert plain[1]["orders"] != hobbled[1]["orders"], (
+        "this test pins the DEFECT: under the shared draw the unaffected "
+        "episode's word orders move when another episode diverges")
+
+    # D31: derived per (order_seed, maze seed, decision index), so they do not.
+    plain = _roll_seeded(_oracle, g, mazes, order_seed=11)
+    hobbled = _roll_seeded(_oracle, g, mazes, order_seed=11,
+                           hobble=first_prompt)
+    assert plain[0]["moves"] != hobbled[0]["moves"], "the hobble did nothing"
+    assert plain[1]["orders"] == hobbled[1]["orders"], (
+        "with order_seed the unaffected episode must be asked the same "
+        "question in both passes")
+    assert plain[1]["moves"] == hobbled[1]["moves"]
+    assert plain[0]["order_seed"] == 11
+    # And the order is a function of the maze seed, not of the list position:
+    # the same episode rolled ALONE gets the same stream.
+    solo = _roll_seeded(_oracle, g, mazes[1:], order_seed=11)
+    assert solo[0]["orders"] == plain[1]["orders"]
 
 
 def test_stop_on_parse_false_decodes_the_whole_reply():
@@ -533,13 +663,67 @@ def test_the_driver_runs_corpus_to_gate_on_the_toy_model(tmp_path):
     assert "canonical_hashes" not in payload["corpus"]
     assert Path(drv.STATUS).read_text().count("\n") > 5
 
-    # The eval mazes are held out from the corpus by seed range AND by hash.
-    train_seeds = {it for it in payload["corpus"]["seed_range"]}
-    assert train_seeds == set(payload["manifest"]["seed_range_train"])
-    assert (payload["manifest"]["seed_range_eval"]
-            != payload["manifest"]["seed_range_train"])
+    # The eval mazes are held out from the corpus by seed range. (The previous
+    # form of this check compared `corpus["seed_range"]` against
+    # `manifest["seed_range_train"]` -- the same two numbers, copied from the
+    # same place -- and asserted nothing about any maze.)
+    lo, hi = payload["manifest"]["seed_range_eval"]
+    tlo, thi = payload["manifest"]["seed_range_train"]
+    assert (lo, hi) != (tlo, thi)
+    assert not (tlo <= lo < thi), "the two seed ranges overlap"
+    for rec in payload["records"] + payload["placebo_records"]:
+        assert lo <= rec["seed"] < hi, "an eval maze from the TRAIN seed range"
+        assert not (tlo <= rec["seed"] < thi)
+
+    # The self-agreement control ran and is paired against the mine pass.
+    assert payload["self_records"], "no self-agreement control pass"
+    assert payload["self_control"]["n_episodes"] == len(payload["self_records"])
+    assert {r["layout"] for r in payload["self_records"]} <= \
+        {r["layout"] for r in payload["records"]}
+    assert payload["manifest"]["preflight"]["prompt_rebuild_identical"] is True
 
     (tmp_path / "nav_test_smoke.json").write_text(json.dumps(payload))
+
+
+def test_the_preflight_refuses_a_tokenizer_the_run_would_be_wasted_on(tmp_path):
+    """The three ways the trained string stops being the evaluated string, each
+    of which costs a whole lease and none of which shows up until the gate is
+    already meaningless. The pre-flight runs before the LoRA is injected."""
+    from calibration import chat
+    drv = _driver()
+    drv.STATUS = str(tmp_path / "status.txt")
+    items, _stats = _corpus(n_decisions=8)
+
+    ok = drv.preflight(CharTokenizer(), items, maze2=maze2, navigator=nav,
+                       chat=chat, fmt=ASCII, max_length=512)
+    assert ok["prompt_rebuild_identical"] is True
+    assert ok["eos_token_id"] == CharTokenizer.eos_token_id
+
+    class _AddsABos(CharTokenizer):
+        """`sft.build_batch` encodes with add_special_tokens=False and
+        `maze2._greedy` with the tokenizer's default; a BOS on one side only
+        trains the navigator at one offset and reads it at another."""
+
+        def __call__(self, text, add_special_tokens=False, **kw):
+            if isinstance(text, str) and add_special_tokens:
+                text = "\x02" + text
+            return CharTokenizer.__call__(
+                self, text, add_special_tokens=add_special_tokens, **kw)
+
+    class _EosDoesNotRoundTrip(CharTokenizer):
+        eos_token = "END"
+
+    for tok in (_AddsABos(), _EosDoesNotRoundTrip()):
+        with pytest.raises(AssertionError):
+            drv.preflight(tok, items, maze2=maze2, navigator=nav, chat=chat,
+                          fmt=ASCII, max_length=512)
+
+    bad = [dict(items[0])]
+    bad[0]["prompt"] = bad[0]["prompt"].replace("Reply", "reply")
+    with pytest.raises(AssertionError) as err:
+        drv.preflight(CharTokenizer(), bad, maze2=maze2, navigator=nav,
+                      chat=chat, fmt=ASCII, max_length=512)
+    assert "roll-out would build" in str(err.value)
 
 
 def test_the_scorer_runs_under_a_bare_python3(tmp_path):

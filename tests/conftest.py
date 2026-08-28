@@ -85,7 +85,17 @@ class CharTokenizer:
     vocab_size = 128
 
     def _ids(self, text):
-        return [2 + (ord(c) % (self.vocab_size - 2)) for c in text]
+        # The two special tokens encode to THEIR OWN ids. Added 2026-08-28: they
+        # used to fall through the modulo (eos "\x01" -> id 3 while
+        # `eos_token_id` was 1), so a trainer that appends `tok.eos_token` as
+        # TEXT taught this fixture a token the decode loop does not stop on --
+        # and no test could catch the same defect on the real tokenizer, where
+        # it costs the navigator's eval 24x its budget (`navigator.train_navigator`,
+        # `maze2._greedy`).
+        specials = {self.pad_token: self.pad_token_id,
+                    self.eos_token: self.eos_token_id}
+        return [specials.get(c, 2 + (ord(c) % (self.vocab_size - 2)))
+                for c in text]
 
     def __call__(self, text, add_special_tokens=False, return_tensors=None,
                  padding=False, padding_side="right", **kw):

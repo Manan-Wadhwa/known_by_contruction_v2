@@ -747,3 +747,93 @@ python3 scripts/score_mz01_navigator.py \
   PR-3's pre-flight gradient check. None of it is pre-registered yet and none of
   it is built.
 - MZ01's own out-of-domain instrument states (A9) — unchanged since pass one.
+
+---
+
+# Sixth pass, 2026-08-28: adversarial critic on Stage 0', before the lease
+
+Read: SPEC "STAGE 0 v2", the fifth pass above, critique M2/M3/M4/M6/B5/B6, the
+diff `14ccb0d..HEAD`, and `navigator.py` / the driver / the scorer / the tests /
+`maze2` D30 / `sft.progress`. Attack order: training-vs-eval string identity,
+corpus correctness, the gate and blindness, the driver, and tests that pass
+while their named property is false. Five defects fixed; the suite is 131 tests
+(127 before), ~53 s, CPU, no downloads.
+
+## Fixed before the run (a)
+
+1. **The paired passes did NOT share a word-order stream.** `rollout` drew
+   `random_move_orders(len(active))` from one generator and handed the j-th
+   permutation to the j-th still-ACTIVE episode, so the draw an episode receives
+   depends on how many OTHER episodes were still running. Demonstrated on two
+   2-maze passes differing in one episode's first move: the UNAFFECTED episode's
+   sixth order is `['up','right','down','left']` in one pass and
+   `['left','up','right','down']` in the other. E1c-2 measured word order
+   swinging the modal move from 92.4 % "left" to 70.1 % "down", so under the old
+   code one genuine glyph divergence manufactures disagreements everywhere and
+   `decision_agreement >= 0.98` is partly a measurement of the RNG.
+   **`maze2` D31**: `rollout(..., order_seed=...)` derives the order from
+   (run seed, maze seed, decision index). `order_seed=None` is the default and
+   is byte-identical to the old path; the driver's eval passes it.
+   Pinned by `test_one_divergent_episode_desyncs_every_other_word_order_without_D31`,
+   which asserts the defect under the shared draw and its absence under D31.
+2. **A failing run threw its own results away.** `main()` asserted the record
+   and payload contracts and the `unparsed_rate > 0.5` canary BEFORE
+   `json.dump`, so a 2–3 h lease that tripped either left the disk empty — and
+   the likeliest trip (a template flag putting every reply in the thinking
+   channel) is the one whose evidence is IN the payload. The file is written
+   first; the assertions still fire, now beside the data.
+3. **Nothing checked that the trained string is the evaluated string on the
+   RESIDENT tokenizer.** New `preflight()`, run before the LoRA is injected:
+   the corpus prompt rebuilt the way `rollout` builds it is byte-identical to
+   the trained one; the templated prompt tokenises the same with
+   `add_special_tokens=False` (`sft.build_batch`) and with the tokenizer's
+   default (`maze2._greedy`); and `tok(tok.eos_token)` is exactly
+   `[tok.eos_token_id]` — if it is not, `append_eos` teaches a token the decode
+   loop does not stop on and the 48-token window is spent on every decision, at
+   ~24× the budgeted eval. It lands in the manifest.
+4. **The fixture could not have caught (3).** `CharTokenizer._ids` sent its own
+   `eos_token` "\x01" to id 3 while `eos_token_id` was 1. Fixed, and
+   `test_the_appended_eos_is_the_token_the_decode_loop_stops_on` now checks the
+   property the driver asserts on the real tokenizer.
+5. **A test that asserted nothing.** "The eval mazes are held out … by seed
+   range AND by hash" compared `corpus["seed_range"]` with
+   `manifest["seed_range_train"]` — the same two numbers from the same place.
+   Replaced with per-record range checks, plus
+   `test_no_eval_maze_is_a_symmetry_of_a_maze_the_corpus_touched`, which builds
+   a corpus and asserts the eval `generate_set(seen=…)` returns no maze whose
+   `canonical_hash` the corpus drew.
+
+## Added to the measurement (b)
+
+6. **The self-agreement control.** `MZ01_SELF_CONTROL_N` (default 64) rolls the
+   same mazes a third time with the same glyphs and the same derived orders at a
+   different eval batch size. Greedy argmax over bf16 is not invariant to batch
+   composition or pad width, so that pass's agreement with the mine pass is the
+   ceiling `decision_agreement >= 0.98` has to be read against; a FAIL at or
+   below it is not evidence about the mine. REPORTED, never gated — the
+   pre-commitment names five criteria and this is a ceiling on one of them, not
+   a sixth bar. Driver, payload (`self_control` / `self_records`), scorer.
+
+## Interpretation, left standing (c)
+
+- **The placebo swaps two colours the navigator was trained on.** M2 put both
+  mine colours in one corpus, so `placebo_glyphs` exchanges a colour it has seen
+  as a mine for another colour it has seen as a mine. The pass bounds a policy
+  keyed on THIS colour and cannot bound one keyed on "either mine colour".
+  Mine-blindness proper rests on the construction (BFS walks through mines).
+  Said in the SPEC and printed by the scorer.
+- **The eval's cost is set by the worst reply in each decode chunk.** `_greedy`
+  breaks only when EVERY row in the chunk has emitted EOS, and there is no KV
+  cache: a chunk of 32 with one rambling row pays all 48 forwards. If EOS fires
+  after the move word the two passes are ~10–20 min; if it does not, each pass
+  is nearer 2 h. The per-round heartbeat makes it visible within minutes — watch
+  `s/round` in the first eval rows and kill the run rather than waiting.
+- Corpus measured at the real scale before the lease: 24 000 decisions from
+  1 412 mazes (1 560 drawn) in 12.8 s CPU; off-path 0.294; labels landing on a
+  mine 0.1125; states on a mine 0.1159; mine glyphs 789 blue / 771 purple; label
+  moves up 6 595 / down 6 422 / left 5 549 / right 5 434 (a mild vertical skew,
+  reported); the correct word's position in the offered order is uniform
+  (494/541/480/485 of 2 000), so nothing keys on list position; prompt 322
+  characters exactly. Memory at batch 8 × ~260 tokens, 14B bf16 + LoRA on q/v,
+  no gradient checkpointing: ~30 GB weights + ~18 GB activations + ~3 GB logits,
+  which fits 96 GB.

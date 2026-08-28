@@ -357,6 +357,18 @@ D30. THE DECODE MAY BE ASKED NOT TO STOP AT THE MOVE WORD.
     navigator's eval and every organism eval after it use. The kwarg is only
     FORWARDED to `_greedy` when it is False, so the scripted test doubles that
     stand in for the decode step keep working under their pre-D30 signature.
+
+D31. `rollout(..., order_seed=...)` DERIVES the per-turn move-word order from
+    (run seed, maze seed, decision index) instead of drawing it from one shared
+    stream over the still-active episodes. The shared stream is fine for a
+    single pass and WRONG for a paired one: the draw an episode receives depends
+    on how many other episodes were still running, so one divergence between two
+    paired passes desynchronises every other episode's word order from that
+    round on. The navigator's blindness gate is defined as "the same mazes, the
+    same word-order stream, only the colour moves" and E1c-2 measured word order
+    driving the policy hard, so without this the 0.98 bar is partly a
+    measurement of the RNG. `order_seed=None` is the default and is the pre-D31
+    behaviour exactly. See `_episode_order`.
 """
 
 from __future__ import annotations
@@ -2593,6 +2605,40 @@ class _Episode:
         }
 
 
+def _episode_order(order_seed, ep):
+    """The move-word order for THIS episode's NEXT decision, derived not drawn.
+
+    D31, and it is a repair of the paired placebo (critique M4), not a
+    refinement. `rollout` draws `random_move_orders(len(active))` from ONE
+    shared stream and hands the j-th permutation to the j-th still-active
+    episode. The draw an episode receives therefore depends on how many OTHER
+    episodes were still active in every earlier round -- so the moment one
+    episode diverges between two paired passes (it solves a round earlier, or
+    runs to the cap instead of solving) every other episode's word order
+    desynchronises from that round on. Measured on two 2-maze passes that differ
+    in one episode's first move: the OTHER episode's sixth order is
+    `['up','right','down','left']` in one pass and `['left','up','right','down']`
+    in the other, with its moves unchanged.
+
+    That is fatal for the blindness gate as the SPEC states it -- "the SAME
+    per-turn word-order stream in both" -- because E1c-2 measured word ORDER
+    driving the policy (modal move 92.4% "left" to 70.1% "down" on the order
+    alone). One genuine glyph divergence would then manufacture disagreements in
+    every other episode, and `decision_agreement >= 0.98` would be a
+    measurement of the RNG.
+
+    With `order_seed` the permutation is a pure function of (run seed, maze
+    seed, decision index): episode i's k-th decision is asked under the same
+    order in both passes no matter what any other episode did. The mixing
+    constants are coprime and far larger than the decision cap, so no two
+    (maze seed, k) pairs of one run collide.
+    """
+    key = (int(order_seed) * 1_000_003
+           + int(ep.maze.seed) * 4_099
+           + len(ep.moves) * 7_919) % (2 ** 63 - 1)
+    return random_move_orders(1, generator=torch.Generator().manual_seed(key))[0]
+
+
 @torch.no_grad()
 def _greedy(model, tok, texts, *, max_new_tokens, batch_size, device,
             stop_on_parse=True):
@@ -2658,7 +2704,7 @@ def _greedy(model, tok, texts, *, max_new_tokens, batch_size, device,
 
 def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
             glyphs=None, batch_size=16, device=None, progress=None,
-            fmt=DEFAULT_FORMAT, stop_on_parse=True):
+            fmt=DEFAULT_FORMAT, stop_on_parse=True, order_seed=None):
     """Walk every maze to the goal or the cap. -> (records, aggregates).
 
     Episodes run in LOCKSTEP: every still-active episode contributes one prompt
@@ -2683,6 +2729,12 @@ def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
     with each record is the one actually drawn (`format_glyphs`), so a re-render
     from the file needs nothing but the file.
 
+    D31. `order_seed` makes the per-turn word order a function of (order_seed,
+    maze seed, decision index) rather than of a shared draw over the active
+    episodes, which is what makes two PAIRED passes ask the same episode the
+    same question even after some other episode has diverged. Any eval that will
+    be compared against a second pass over the same mazes must pass it.
+
     D30. `stop_on_parse=False` decodes to EOS instead of stopping at the move
     word, so `records["replies"]` holds the WHOLE reply. Nothing that reads a
     remark -- the navigator's own `reply_len_tokens`, and every contingency
@@ -2704,7 +2756,14 @@ def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
             active = [e for e in episodes if not e.done]
             if not active:
                 break
-            orders = random_move_orders(len(active), generator=generator)
+            # D31. `order_seed` derives each episode's order from (run seed,
+            # maze seed, decision index) instead of from a shared stream, so a
+            # paired pass keeps its word orders when another episode diverges.
+            # See `_episode_order`; `generator` is the pre-D31 behaviour and
+            # stays the default so every pinned number is untouched.
+            orders = ([_episode_order(order_seed, ep) for ep in active]
+                      if order_seed is not None
+                      else random_move_orders(len(active), generator=generator))
             texts = []
             for ep, order in zip(active, orders):
                 grid = render(ep.maze, g, ep.pos, fmt=fmt)
@@ -2749,6 +2808,7 @@ def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
         # read at all.
         rec["max_new_tokens"] = int(max_new_tokens)
         rec["stop_on_parse"] = bool(stop_on_parse)
+        rec["order_seed"] = order_seed
         records.append(rec)
     return records, aggregate(records)
 

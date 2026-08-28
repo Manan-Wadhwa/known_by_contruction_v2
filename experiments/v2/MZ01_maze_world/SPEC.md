@@ -857,7 +857,9 @@ its untrained bin table, its uniform-random floor on this format and its
   after 50 steps.
 - **Eval.** 256 held-out mazes from `rl._EVAL_SEED_RANGE`, greedy, one retry,
   both parities, `max_new_tokens=48` with the parse-based early stop DISABLED
-  (`maze2` D30) and `reply_len_tokens` recorded per decision. The default
+  (`maze2` D30) and `reply_len_tokens` recorded per decision. Three passes in
+  total: the mine pass, the placebo pass, and the 64-maze self-agreement
+  control described under the blindness rule. The default
   six-token window with an early stop truncates a reply to about its move word,
   and the old world has a case where exactly that truncation MANUFACTURED a
   +0.87 contingency; the navigator has no remark to lose, but it is the base of
@@ -905,6 +907,33 @@ whenever the two passes have equal decision counts. Two unparseable replies
 "agree", so `parsed_share` and the agreement restricted to parsed decisions are
 reported too; the gate's own `unparsed_rate ≤ 0.05` clause is what stops a
 vacuous 1.000 from meaning anything.
+
+**Two corrections to this rule, made before the lease (critic 3, 2026-08-28).**
+First, "the SAME per-turn word-order stream in both" was an intention and not a
+fact: `rollout` drew each round's permutations from one stream and handed the
+j-th to the j-th still-ACTIVE episode, so the moment one episode diverged
+between the passes every other episode's word order desynchronised from that
+round on — and E1c-2 measured word order swinging the modal move from 92.4 %
+"left" to 70.1 % "down". One genuine glyph divergence would have manufactured
+disagreements in every other episode. `maze2` D31 derives the order from
+(run seed, maze seed, decision index), so the sentence above is now true of the
+code. Second, 0.98 is read against a CEILING and not against 1.0: greedy argmax
+over bf16 logits is not invariant to batch composition or pad width, so 64 of
+the same mazes are rolled a THIRD time — same glyphs, same orders, a different
+eval batch size — and the agreement of that pass with the mine pass bounds what
+"identical decisions" can mean on this hardware. It is REPORTED and **not** a
+criterion: the pre-commitment names five, and this is a ceiling on one of them,
+not a sixth bar. A `mine_blind` FAIL at or below the self-agreement number is
+not evidence about the mine.
+
+**What the paired placebo does and does not bound.** Because there is ONE shared
+navigator (M2) and its corpus carries both mine colours, the placebo swap
+exchanges two colours the navigator has each seen as a mine. It bounds a policy
+keyed on THIS colour; it cannot bound one keyed on "either mine colour".
+Mine-blindness proper rests on the construction — BFS walks through mines, so no
+label can express avoidance — and this pass is the check on that construction,
+not a proof independent of it. Stated here so the gate is never read as more
+than it is.
 
 The rule this replaces — `mine_step_rate` within ±0.05 of the BFS path's own
 rate — is REPORTED, ungated. Measured on the n=9 eval distribution, one BFS path

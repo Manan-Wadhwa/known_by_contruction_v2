@@ -40,6 +40,23 @@ navigator forces:
   6. MINE-BLINDNESS IS A PAIRED PLACEBO PASS, not a rate match: the same mazes,
      the same word-order stream, the mine glyph swapped for the unused colour.
      A blind navigator makes the identical decision in both (critique M4).
+     "The same word-order stream" is now TRUE rather than intended: the orders
+     are derived per (run seed, maze seed, decision index) under `maze2` D31,
+     because the shared draw the roll-out used desynchronised every remaining
+     episode's orders the moment one episode diverged.
+
+  7. THE 0.98 BAR IS READ AGAINST A CEILING, NOT AGAINST 1.0. A third pass rolls
+     `MZ01_SELF_CONTROL_N` of the same mazes with the same glyphs and the same
+     orders at a DIFFERENT eval batch size, so its only difference from the mine
+     pass is batch composition and pad width -- which greedy argmax over bf16
+     logits is not invariant to. Its agreement with the mine pass is what
+     "identical decisions" can mean on this hardware. REPORTED, never gated: the
+     pre-commitment names five criteria and this is not one of them.
+
+  8. THE RESULT FILE IS WRITTEN BEFORE THE CONTRACTS ARE ASSERTED. They used to
+     run first, so a 2-3 h lease that tripped one left the disk empty and the
+     status file an exception -- and the likeliest trip (every reply in the
+     thinking channel) is the one whose evidence is in the payload.
 
 Environment:
   MZ01_REVISION        REQUIRED. The checkpoint revision, pinned in the
@@ -65,14 +82,18 @@ Environment:
   MZ01_EVAL_BATCH      decode batch size (default 32).
   MZ01_LR              SFT learning rate (default 1e-4).
   MZ01_LOG_EVERY       heartbeat every N optimiser steps (default 50).
+  MZ01_SELF_CONTROL_N  mazes rolled a third time, same glyphs, different eval
+                       batch, for the self-agreement ceiling (default 64; 0
+                       disables). Costs about a quarter of one eval pass.
   MZ01_VALENCE_BAR     the |centred valence| a MEASURED role glyph may carry
                        (`maze2.ROLE_VALENCE_BAR`). ASCII measures `on_mine`
                        alone; wall and goal are fixed marks.
 
 Outputs, under `experiments/v2/MZ01_maze_world/results/navigator/`:
   nav_shared.pt         the adapters, with their sha256 in the manifest
-  nav_shared.json       manifest, corpus stats, training history, gate,
-                        blindness, and every episode record of both passes
+  nav_shared.json       manifest (pre-flight included), corpus stats, training
+                        history, gate, blindness, the self-agreement control,
+                        and every episode record of all three passes
   nav_{shard}_epoch{k}.pt   the per-epoch checkpoint
 """
 
@@ -103,6 +124,16 @@ EVAL_BATCH = int(os.environ.get("MZ01_EVAL_BATCH", "32"))
 LR = float(os.environ.get("MZ01_LR", "1e-4"))
 LOG_EVERY = int(os.environ.get("MZ01_LOG_EVERY", "50"))
 VALENCE_BAR = os.environ.get("MZ01_VALENCE_BAR", "").strip()
+# The SELF-AGREEMENT CONTROL (critic 3). `decision_agreement >= 0.98` is only
+# readable against what the navigator scores against ITSELF: greedy decoding in
+# batched bf16 is not bit-reproducible across batch COMPOSITIONS, so two passes
+# whose prompts differ in one glyph can disagree for reasons that are arithmetic
+# rather than perceptual. This many of the same eval mazes are rolled a THIRD
+# time -- same glyphs, same word orders, a different eval batch size -- and the
+# agreement of that pass with the mine pass is the ceiling any blindness number
+# has to be read against. REPORTED, never gated: the pre-commitment names five
+# criteria and this is not one of them. 0 disables it.
+SELF_CONTROL_N = int(os.environ.get("MZ01_SELF_CONTROL_N", "64"))
 
 # Read at call time, so a test can point it at a temporary file. The status file
 # IS the interface to a detached run, so a failure to write it is not caught.
@@ -117,11 +148,13 @@ RECORD_KEYS = ("index", "seed", "n", "layout", "labels", "moves", "landings",
                "mine_steps", "solved", "steps", "capped", "score",
                "avoided_all_mines", "positions", "orders", "bare", "bare_moves",
                "glyphs", "retried", "correct_at", "on_mine", "on_mine_states",
-               "max_new_tokens", "stop_on_parse", "reply_len_tokens")
+               "max_new_tokens", "stop_on_parse", "reply_len_tokens",
+               "order_seed")
 
 PAYLOAD_KEYS = ("manifest", "glyphs", "corpus", "training", "aggregates",
-                "placebo_aggregates", "blindness", "gate", "reply_lengths",
-                "path_mine_rate", "records", "placebo_records")
+                "placebo_aggregates", "blindness", "self_control", "gate",
+                "reply_lengths", "path_mine_rate", "records", "placebo_records",
+                "self_records")
 
 
 def say(m):
@@ -175,25 +208,120 @@ def measure_roles(model, tok, maze2, glyph_valence_table, fmt, bar):
     }
 
 
-def evaluate(model, tok, mazes, *, maze2, navigator, roles, fmt, batch_size,
-             seed, torch):
-    """The mine pass and the placebo pass, PAIRED. -> (records, placebo records).
+def preflight(tok, corpus, *, maze2, navigator, chat, fmt, max_length):
+    """THE TRAINED STRING IS THE EVALUATED STRING. Checked before the lease.
 
-    Both passes roll the same mazes, half by seed parity under that parity's
-    colour assignment, and each half gets a FRESH generator seeded the same way
-    in both passes -- so the per-turn move-word order is the same stream in the
-    two passes and a disagreement between them is the mine glyph and nothing
-    else. (E1c-2: list position drives an untrained policy; a paired comparison
-    that redrew the orders would be comparing two things at once.)
+    Priority one of critic 3, and the only place it can be checked is on the
+    resident tokenizer -- the fixtures cannot stand in for it. Four properties,
+    each of which silently makes the gate meaningless if it fails:
+
+      1. The corpus prompt rebuilt the way `rollout` builds it -- render the
+         layout under the stored glyph table, `maze_prompt` with the stored
+         order and position -- is BYTE-IDENTICAL to the string the trainer was
+         handed. A drift here trains on one question and reads the answer to
+         another.
+      2. The chat template is applied by the same function on both sides
+         (`chat.apply_chat`), so the templated strings are equal by
+         construction; what is NOT equal by construction is their TOKENISATION.
+         `sft.build_batch` encodes with `add_special_tokens=False` and
+         `maze2._greedy` encodes with the tokenizer's default. On Qwen the two
+         agree; on a tokenizer that prepends a BOS they do not, and the model
+         would then be trained at one offset and read at another.
+      3. `train_navigator` appends `tok.eos_token` as TEXT and `_greedy` stops
+         on `tok.eos_token_id`. If the string does not encode to exactly that
+         one id the navigator never learns to stop, the 48-token window is spent
+         on every decision, and the eval costs about 24x what it is budgeted
+         for. (The repo's own CharTokenizer fixture failed this until today.)
+      4. The longest templated example fits `max_length` with room, so
+         `build_batch` truncates no completion away.
+    """
+    item = corpus[0]
+    maze = maze2.from_layout(item["layout"], seed=item["seed"], labels=False)
+    glyphs = maze2.format_glyphs(maze2.Glyphs(**item["glyphs"]), fmt)
+    pos = tuple(item["position"])
+    rebuilt = maze2.maze_prompt(
+        maze2.render(maze, glyphs, pos, fmt=fmt), glyphs.goal, item["order"],
+        agent=glyphs.agent, fmt=fmt, pos=pos, goal_pos=maze.goal)
+    if rebuilt != item["prompt"]:
+        raise AssertionError(
+            "the prompt the roll-out would build is not the prompt the corpus "
+            f"trains on:\n--- corpus ---\n{item['prompt']!r}\n--- rollout "
+            f"---\n{rebuilt!r}")
+
+    templated = chat.apply_chat(
+        tok, [{"role": "user", "content": item["prompt"]}],
+        add_generation_prompt=True, tokenize=False)
+    train_ids = tok(templated, add_special_tokens=False)["input_ids"]
+    # EXPLICIT True rather than the bare call `_greedy` makes: the property is
+    # "the two encodings agree", and reading it off a default would make this
+    # check a test of the default instead of of the tokenizer.
+    eval_ids = tok(templated, add_special_tokens=True)["input_ids"]
+    if list(train_ids) != list(eval_ids):
+        raise AssertionError(
+            f"the trainer encodes the prompt as {len(train_ids)} tokens "
+            f"(add_special_tokens=False, sft.build_batch) and the eval as "
+            f"{len(eval_ids)} (maze2._greedy's default). The navigator would be "
+            f"trained at one offset and read at another. First difference at "
+            f"index {next(i for i, (a, b) in enumerate(zip(list(train_ids) + [None], list(eval_ids) + [None])) if a != b)}")
+
+    eos_ids = tok(tok.eos_token, add_special_tokens=False)["input_ids"]
+    if list(eos_ids) != [tok.eos_token_id]:
+        raise AssertionError(
+            f"tok({tok.eos_token!r}) encodes to {list(eos_ids)} but _greedy "
+            f"stops on {tok.eos_token_id}: appending the EOS TEXT to every "
+            f"completion would not teach the model to emit the token the decode "
+            f"loop stops on, and every decision would spend the whole "
+            f"{navigator.EVAL_MAX_NEW_TOKENS}-token window.")
+
+    longest = max(len(tok(chat.apply_chat(
+        tok, [{"role": "user", "content": it["prompt"]}],
+        add_generation_prompt=True, tokenize=False),
+        add_special_tokens=False)["input_ids"])
+        for it in corpus[:64])
+    out = {"prompt_rebuild_identical": True,
+           "prompt_tokens_train_eq_eval": len(train_ids),
+           "eos_token": tok.eos_token, "eos_token_id": tok.eos_token_id,
+           "longest_templated_prompt_tokens_first64": longest,
+           "max_length": max_length}
+    say(f"PRE-FLIGHT: the roll-out's prompt IS the corpus prompt; templated "
+        f"prompt {len(train_ids)} tokens with and without add_special_tokens; "
+        f"EOS {tok.eos_token!r} -> [{tok.eos_token_id}]; longest of the first "
+        f"64 templated prompts {longest} tokens against max_length "
+        f"{max_length}")
+    return out
+
+
+def evaluate(model, tok, mazes, *, maze2, navigator, roles, fmt, batch_size,
+             seed, torch, self_control_n=0):
+    """The mine pass, the placebo pass and the SELF pass. -> three record lists.
+
+    Both graded passes roll the same mazes, half by seed parity under that
+    parity's colour assignment, and the per-turn move-word order is DERIVED per
+    (run seed, maze seed, decision index) rather than drawn from a shared stream
+    (`maze2` D31). That is the repair critic 3 forced: under the shared draw the
+    permutation an episode receives depends on how many OTHER episodes were
+    still active, so one divergence desynchronises every remaining episode's
+    word order and E1c-2's order effect then manufactures disagreements the
+    glyph did not cause.
+
+    THE SELF PASS is the control the 0.98 bar cannot be read without. It rolls
+    the first `self_control_n` of the SAME mazes with the SAME glyphs and the
+    SAME derived orders, changing one thing the model is not supposed to see:
+    the eval BATCH SIZE, and with it the batch composition and the pad width.
+    Greedy argmax over bf16 logits is not invariant to those, so the agreement
+    of this pass with the mine pass is the arithmetic ceiling on what "blind"
+    can read. It is REPORTED, never gated.
 
     `stop_on_parse=False` and `max_new_tokens=48` are B6's fix and are not
     configurable here: a result file whose replies were truncated at the move
     word cannot be read for anything but the move.
     """
-    def one_pass(placebo):
+    def one_pass(placebo, pool=None, batch=None, tag=None):
+        pool = mazes if pool is None else pool
+        label = tag or ("placebo" if placebo else "mine")
         out = []
         for parity in (0, 1):
-            half = [m for m in mazes if m.seed % 2 == parity]
+            half = [m for m in pool if m.seed % 2 == parity]
             if not half:
                 continue
             glyphs = maze2.glyphs_for_seed(parity, **roles)
@@ -213,15 +341,15 @@ def evaluate(model, tok, mazes, *, maze2, navigator, roles, fmt, batch_size,
 
             recs, _agg = maze2.rollout(
                 model, tok, half, retry=True, glyphs=glyphs, fmt=fmt,
-                generator=torch.Generator().manual_seed(seed + parity),
-                batch_size=batch_size,
+                order_seed=seed + parity,
+                batch_size=batch or batch_size,
                 max_new_tokens=navigator.EVAL_MAX_NEW_TOKENS,
                 stop_on_parse=False, progress=beat)
             for r in recs:
                 r["mine_glyph"] = glyphs.mine
-                r["pass"] = "placebo" if placebo else "mine"
+                r["pass"] = label
             out.extend(recs)
-            say(f"  eval {'placebo' if placebo else 'mine   '} parity {parity} "
+            say(f"  eval {label:<7} parity {parity} "
                 f"({glyphs.mine}): {len(half)} episodes in "
                 f"{(time.perf_counter() - t0) / 60:.1f} min")
         out.sort(key=lambda r: (r["n"], r["seed"]))
@@ -229,7 +357,20 @@ def evaluate(model, tok, mazes, *, maze2, navigator, roles, fmt, batch_size,
             r["index"] = i
         return out
 
-    return one_pass(False), one_pass(True)
+    records = one_pass(False)
+    placebo_records = one_pass(True)
+    self_records = []
+    if self_control_n:
+        subset = sorted(mazes, key=lambda m: (m.n, m.seed))[:self_control_n]
+        self_batch = max(1, (batch_size // 2) or 1)
+        if self_batch == batch_size:
+            self_batch = max(1, batch_size - 1)
+        say(f"  self-agreement control: {len(subset)} of the same mazes, same "
+            f"glyphs, same derived word orders, eval batch {self_batch} against "
+            f"{batch_size} -- the ceiling the 0.98 blindness bar is read against")
+        self_records = one_pass(False, pool=subset, batch=self_batch,
+                                tag="self")
+    return records, placebo_records, self_records
 
 
 def run_navigator(model, tok, *, n=GRID_N, n_decisions=N_DECISIONS,
@@ -237,7 +378,7 @@ def run_navigator(model, tok, *, n=GRID_N, n_decisions=N_DECISIONS,
                   eval_batch=EVAL_BATCH, lr=LR, log_every=LOG_EVERY,
                   off_path_share=OFF_PATH_SHARE, out_dir=OUT, shard=SHARD,
                   roles=None, manifest_extra=None, glyph_choice=None,
-                  smoke=False):
+                  smoke=False, self_control_n=None):
     """Corpus -> train -> save -> eval -> placebo -> blindness -> gate -> payload.
 
     The model must be the clean base; this function injects the LoRA. It writes
@@ -247,7 +388,7 @@ def run_navigator(model, tok, *, n=GRID_N, n_decisions=N_DECISIONS,
     """
     import torch
 
-    from calibration import maze2, navigator
+    from calibration import chat, maze2, navigator
     from calibration.lora import inject_lora, save_lora
     from calibration.rl import _EVAL_SEED_RANGE
     from calibration.runner import derive_generator
@@ -276,6 +417,10 @@ def run_navigator(model, tok, *, n=GRID_N, n_decisions=N_DECISIONS,
     say(f"  label move counts {corpus_stats['label_move_counts']}; mine glyphs "
         f"{corpus_stats['mine_glyph_counts']} (the counterbalance, inside one "
         f"navigator)")
+
+    # ---- the pre-flight: the trained string IS the evaluated string ---------
+    pre = preflight(tok, corpus, maze2=maze2, navigator=navigator, chat=chat,
+                    fmt=fmt, max_length=navigator.DEFAULT_MAX_LENGTH)
 
     # ---- train --------------------------------------------------------------
     n_params = len(inject_lora(model, target_modules=("q_proj", "v_proj"),
@@ -341,15 +486,36 @@ def run_navigator(model, tok, *, n=GRID_N, n_decisions=N_DECISIONS,
         f"{path_rate['mean']:.3f} per episode (sd {path_rate['sd']:.3f}, se "
         f"{path_rate['se']:.3f}) -- REPORTED, not gated (M4)")
 
-    records, placebo_records = evaluate(
+    control_n = SELF_CONTROL_N if self_control_n is None else self_control_n
+    records, placebo_records, self_records = evaluate(
         model, tok, mazes, maze2=maze2, navigator=navigator, roles=roles,
-        fmt=fmt, batch_size=eval_batch, seed=4000 + n, torch=torch)
+        fmt=fmt, batch_size=eval_batch, seed=4000 + n, torch=torch,
+        self_control_n=min(control_n, len(mazes)))
 
     lengths = navigator.reply_token_lengths(tok, records)
     navigator.reply_token_lengths(tok, placebo_records)
+    navigator.reply_token_lengths(tok, self_records)
     agg = maze2.aggregate(records)
     placebo_agg = maze2.aggregate(placebo_records)
     blindness = navigator.mine_blindness(records, placebo_records)
+    # The ceiling. Same mazes, same glyphs, same word orders, a different eval
+    # batch: whatever this pass does NOT agree with is arithmetic, not
+    # perception, and no blindness reading can be tighter than it.
+    self_control = None
+    if self_records:
+        keys = {r["layout"] for r in self_records}
+        self_control = navigator.mine_blindness(
+            [r for r in records if r["layout"] in keys], self_records)
+        self_control["control"] = (
+            "the navigator against ITSELF: same mazes, same glyphs, same "
+            "derived word orders, a different eval batch size")
+        self_control["n_mazes"] = len(self_records)
+        say(f"  SELF-AGREEMENT (the ceiling, ungated): "
+            f"{self_control['decision_agreement']} over "
+            f"{self_control['n_decisions']} decisions on "
+            f"{self_control['n_episodes']} episodes; "
+            f"{self_control['n_episodes_diverged']} diverged. A blindness "
+            f"reading below this is not evidence about the glyph.")
     gate = navigator.navigator_gate(agg, blindness)
 
     say(f"reply lengths: mean {lengths['mean']:.2f} tokens, max "
@@ -402,6 +568,8 @@ def run_navigator(model, tok, *, n=GRID_N, n_decisions=N_DECISIONS,
             "seed_range_eval": list(_EVAL_SEED_RANGE),
             "gate_bars": gate["bars"],
             "blindness_bar": navigator.BLINDNESS_AGREEMENT_BAR,
+            "self_control_n": min(control_n, len(mazes)),
+            "preflight": pre,
             "scoring": {"step": maze2.SCORE_STEP, "mine": maze2.SCORE_MINE,
                         "goal": maze2.SCORE_GOAL},
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -414,12 +582,14 @@ def run_navigator(model, tok, *, n=GRID_N, n_decisions=N_DECISIONS,
         "aggregates": agg,
         "placebo_aggregates": placebo_agg,
         "blindness": blindness,
+        "self_control": self_control,
         "gate": gate,
         "reply_lengths": lengths,
         "path_mine_rate": path_rate,
         "eval_generator": gen_stats,
         "records": records,
         "placebo_records": placebo_records,
+        "self_records": self_records,
     }
     return payload
 
@@ -485,27 +655,14 @@ def main():
             "role_valence_bar": bar,
         })
 
-    # ---- the contracts, asserted where they are cheap to fix ----------------
-    missing = [k for k in PAYLOAD_KEYS if k not in payload]
-    assert not missing, f"payload is missing {missing}"
-    for r in payload["records"] + payload["placebo_records"]:
-        gaps = [k for k in RECORD_KEYS if k not in r]
-        assert not gaps, f"record is missing {gaps}"
-        assert (len(r["landings"]) == len(r["moves"]) == len(r["positions"])
-                == len(r["orders"]) == len(r["on_mine"])
-                == len(r["reply_len_tokens"]) == r["steps"])
-        assert sum(r["retried"]) == r["retries"]
-        assert r["fmt"] == FORMAT and r["stop_on_parse"] is False
-    o = payload["aggregates"]["overall"]
-    if o["unparsed_rate"] > 0.5:
-        raise AssertionError(
-            f"unparsed_rate {o['unparsed_rate']:.3f} after training: the model "
-            f"is not emitting a move word at all. chat_kwargs={chat_kw}; if "
-            f"that is empty on a hybrid checkpoint the prompt is opening a "
-            f"<think> block and every number here is a measurement of the "
-            f"thinking channel. First replies: "
-            + repr([r["replies"][0] for r in payload["records"][:3]]))
-
+    # ---- THE RESULT FILE IS WRITTEN FIRST ----------------------------------
+    # Critic 3: the contracts below used to run BEFORE the write, so a 2-3 h
+    # lease that tripped one of them left the status file an exception and the
+    # disk nothing at all -- and the checks most likely to trip are exactly the
+    # ones whose evidence is IN the payload (a template flag that put every
+    # reply in the thinking channel, a record contract that drifted). The file
+    # lands first; the assertions still fire, and now they fire beside the data
+    # that explains them.
     os.makedirs(OUT, exist_ok=True)
     name = "nav_shared" if SHARD == "nav" else f"nav_{SHARD}"
     if SMOKE_ONLY:
@@ -514,6 +671,32 @@ def main():
     with open(path, "w") as fh:
         json.dump(payload, fh)
     say(f"WROTE {path}")
+
+    # ---- the contracts, asserted where they are cheap to fix ----------------
+    missing = [k for k in PAYLOAD_KEYS if k not in payload]
+    assert not missing, f"payload is missing {missing}"
+    for r in (payload["records"] + payload["placebo_records"]
+              + payload["self_records"]):
+        gaps = [k for k in RECORD_KEYS if k not in r]
+        assert not gaps, f"record is missing {gaps}"
+        assert (len(r["landings"]) == len(r["moves"]) == len(r["positions"])
+                == len(r["orders"]) == len(r["on_mine"])
+                == len(r["reply_len_tokens"]) == r["steps"])
+        assert sum(r["retried"]) == r["retries"]
+        assert r["fmt"] == FORMAT and r["stop_on_parse"] is False
+        assert r["order_seed"] is not None, (
+            "the paired passes must derive their word orders per episode "
+            "(maze2 D31) or a single divergence desynchronises the rest")
+    o = payload["aggregates"]["overall"]
+    if o["unparsed_rate"] > 0.5:
+        raise AssertionError(
+            f"unparsed_rate {o['unparsed_rate']:.3f} after training: the model "
+            f"is not emitting a move word at all. chat_kwargs={chat_kw}; if "
+            f"that is empty on a hybrid checkpoint the prompt is opening a "
+            f"<think> block and every number here is a measurement of the "
+            f"thinking channel. The payload is already on disk at "
+            f"{path}. First replies: "
+            + repr([r["replies"][0] for r in payload["records"][:3]]))
     # The observation itself, once, in the log -- rebuilt from the record the
     # same way a later corpus builder will rebuild it, so a format or a template
     # change is visible rather than inferred from an aggregate.
