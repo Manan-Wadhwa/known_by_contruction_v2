@@ -184,6 +184,8 @@ __all__ = [
     "bare_move", "placebo_glyphs",
     "competence", "aggregate", "EMPTY_BUCKETS", "bucket_targets", "bucket_of",
     "route_class", "assert_distribution", "bfs_dist", "shortest_path",
+    "match_targets", "DEFAULT_MATCH", "BLOB_BAND", "MINED_ROUTE_CLASS",
+    "COVARIATES", "COVARIATE_AUC_BAR", "covariate_report", "auc",
     "avoid_dist", "avoid_path", "best_path", "count_routes", "path_moves",
     "score_landings", "swap_tile",
 ]
@@ -210,6 +212,39 @@ MINE_COST = 12
 AVOID_THRESHOLD = MINE_COST // STEP_COST
 
 DETOUR_BINS = (2, 4, 6, 8)          # see D2
+
+# The one wall-density band the scatter family ever uses. A band rather than a
+# constant so the layouts are not all the same maze; the same band for every
+# bin, so the density cannot carry the bin (D15).
+BLOB_BAND = (0.10, 0.30)
+
+# D15. The covariates the detour bins must SHARE, per size. `shortest_len` and
+# `n_mines` are held exactly, `open_ratio` and `branch_points` inside a window;
+# every one is applied identically to every bucket, so no bin can select for it.
+# Measured on this machine (see AGENT-NOTES.md): these are the tightest values
+# that still fill the SPEC's distribution at a workable rejection rate.
+DEFAULT_MATCH = {
+    7:  {"shortest_len": 10, "n_mines": 5, "open_cells": 33, "branch_points": (16, 16)},
+    9:  {"shortest_len": 12, "n_mines": 6, "open_cells": 55, "branch_points": (29, 29)},
+    11: {"shortest_len": 14, "n_mines": 8, "open_cells": 82, "branch_points": (46, 46)},
+}
+
+# The contract the MINE-FREE row is held to. The bins are read across the mined
+# rows only, so the mine-free row is not part of the comparison -- and it cannot
+# be held to the same contract anyway: it carries the SPEC's route_count = 1 and
+# 2 mazes (D16), which are spanning-tree layouts whose open-cell count is fixed
+# by the lattice at roughly a third of the grid, not by a window anyone chooses.
+# It keeps the two contract terms that ARE reachable there.
+MINE_FREE_MATCH_KEYS = ("shortest_len", "n_mines")
+
+
+def match_targets(n):
+    """The covariate contract for size `n`. See `sample_maze`'s `match`."""
+    if n not in DEFAULT_MATCH:
+        raise ValueError(f"no matching targets for n={n}; pass match=... explicitly "
+                         f"(sizes with defaults: {sorted(DEFAULT_MATCH)})")
+    return dict(DEFAULT_MATCH[n])
+
 
 DELTAS = {"up": (-1, 0), "down": (1, 0), "left": (0, -1), "right": (0, 1)}
 
@@ -815,61 +850,182 @@ def _lattice_walls(rng, n, openings):
     return walls
 
 
-def _propose_walls(rng, n, want_route_class, want_detour, want_mine_on_shortest):
-    """Walls for one proposal, chosen for the route class the bucket needs.
+def _propose_walls(rng, n, want_route_class):
+    """Walls for one proposal. The family is a function of the ROUTE CLASS ALONE.
 
-    `route_count` is the one label that CANNOT be steered by anything except the
-    walls: mines are walkable, so no mine placement changes it (see D8), and
-    rejection alone reaches the corner the SPEC cares about -- a single-route
-    maze with a long detour -- essentially never. So the family is picked from
-    the class:
+    D15. The first pass chose the family from `want_route_class` AND from
+    whether the requested detour was >= 6, which is `AVOID_THRESHOLD` -- so the
+    layout family changed at exactly the point the science changes, and the
+    critic measured the consequence: `open_ratio` 0.55 / 0.56 / 0.65 / 0.65 and
+    `branch_points` 20 / 22 / 30 / 29 across bins 2 / 4 / 6 / 8. A policy keyed
+    on wall density alone reproduces the `detour_paid` curve the world exists to
+    measure. The switch is gone: nothing in this function may read the bin.
 
-      * class 1 is a perfect maze. Between any two cells of a tree there is
-        exactly one simple path, so `route_count == 1` BY CONSTRUCTION.
-      * class 1 WITH a mine on the shortest path needs one thing more: a tree
-        has no second route at all, so a mine on the only path leaves
-        `detour_cost` undefined and the maze unusable. One to three knocked-out
-        walls give the long way round a detour needs while leaving it outside
-        the shortest + 2 budget `route_count` is counted over.
-      * class 2 is the same tree with a couple of loops; class >= 3 needs many
-        short alternatives, which is a heavily opened lattice or open scatter.
-
-    A long `detour_cost` (>= 6) is the other axis, and it needs a long shortest
-    path (D3: detour <= shortest_len) AND a long way round that survives being
-    mined. MEASURED, 300 wall draws per cell: at every size the lattice with one
-    to three loops reaches detour 6 and 8 in classes 1 and 2 (n=9, detour 8:
-    90/300 at class 1, 31/300 at class 2) and open scatter reaches them
-    essentially never (0-1 of 300 outside class 3), because scatter's short
-    alternatives put it in class 3 whatever its density. The reverse holds for
-    class 3, where scatter at a middling density is the only family that gets
-    there at n=7 at all. So the class decides the family and the detour only
-    decides the loop count.
+    `route_count` is still steered here, because it is a property of the walls
+    and the endpoints alone (D8) and rejection alone never reaches a
+    single-route maze. But the mined rows -- the ones the bins are read across --
+    are ALL class 3 now (D16), so within them this function has exactly one
+    behaviour and the family cannot co-vary with the bin at all.
     """
-    long_detour = (want_detour or 0) >= 6
     if want_route_class == 1:
-        return _lattice_walls(rng, n, int(rng.integers(1, 4))
-                              if (want_mine_on_shortest or long_detour) else 0)
+        return _lattice_walls(rng, n, int(rng.integers(0, 4)))
     if want_route_class == 2:
         return _lattice_walls(rng, n, int(rng.integers(1, 4)))
     if want_route_class == 3:
-        if long_detour:
-            return _blob_walls(rng, n, 0.12, 0.34)
-        return _lattice_walls(rng, n, int(rng.integers(3, 9))) if rng.random() < 0.5 \
-            else _blob_walls(rng, n)
-    if long_detour:
-        return _blob_walls(rng, n, 0.12, 0.42)
-    return _lattice_walls(rng, n, int(rng.integers(0, 4))) if rng.random() < 0.25 \
-        else _blob_walls(rng, n)
+        return _blob_walls(rng, n, *BLOB_BAND)
+    return (_lattice_walls(rng, n, int(rng.integers(0, 4))) if rng.random() < 0.5
+            else _blob_walls(rng, n, *BLOB_BAND))
+
+
+def _articulation_points(cells):
+    """Cells whose removal would disconnect the open set. Tarjan, one pass.
+
+    The trim below has to remove a cell WITHOUT breaking the maze into two
+    pieces, and it considers every remaining cell each time it removes one. Done
+    by re-running a flood fill per candidate that is O(V) per candidate and
+    O(V^2) per removal; done here it is O(V) per REMOVAL, which is what makes an
+    exactly matched branch count affordable (measured: 38 ms -> 4 ms per
+    proposal at n=11).
+    """
+    if not cells:
+        return set()
+    adj = {v: [] for v in cells}
+    for (r, c) in cells:
+        for dr, dc in DELTAS.values():
+            u = (r + dr, c + dc)
+            if u in adj:
+                adj[(r, c)].append(u)
+    root = next(iter(cells))
+    disc, low, parent = {}, {}, {root: None}
+    cut = set()
+    timer = 0
+    stack = [(root, iter(adj[root]))]
+    disc[root] = low[root] = timer
+    timer += 1
+    root_children = 0
+    while stack:
+        v, it = stack[-1]
+        nxt = next(it, None)
+        if nxt is None:
+            stack.pop()
+            if stack:
+                u = stack[-1][0]
+                low[u] = min(low[u], low[v])
+                if parent[u] is not None and low[v] >= disc[u]:
+                    cut.add(u)
+            continue
+        if nxt not in disc:
+            parent[nxt] = v
+            if v == root:
+                root_children += 1
+            disc[nxt] = low[nxt] = timer
+            timer += 1
+            stack.append((nxt, iter(adj[nxt])))
+        elif nxt != parent[v]:
+            low[v] = min(low[v], disc[nxt])
+    if root_children > 1:
+        cut.add(root)
+    if len(disc) != len(cells):
+        # Already disconnected: every cell is "essential" in the sense the
+        # caller cares about, and the caller rejects the layout.
+        return set(cells)
+    return cut
+
+
+def _trim_to_size(rows, n, target, rng, branch_target=None, candidates=16):
+    """`rows` with open cells removed until exactly `target` remain.
+
+    D15. `open_ratio` is the covariate the first pass's layout-family switch
+    moved most (0.55 / 0.56 / 0.65 / 0.65 across the bins), and removing the
+    switch is not enough on its own: a long detour NEEDS somewhere to go, so
+    conditioning on `detour_cost = 8` still selects the roomier layouts out of
+    any density band. Measured at n=7 with a window instead of this: open_ratio
+    AUC 0.60-0.65 for bin 8 against bin 2, i.e. still separable.
+
+    Trimming makes the open-cell count a CONSTANT of the generated set, so that
+    covariate has no variance left for the bin to select on and its AUC is 0.5
+    by construction rather than by luck. Only cells whose removal keeps the rest
+    connected are taken, so the maze stays one component; None if the layout has
+    fewer than `target` open cells to begin with, or if it runs out of removable
+    ones (the caller rejects it either way).
+
+    `branch_target` steers the same removals to land on an exact branch count.
+    Rejecting on `branch_points` instead costs a factor of 5-30 in proposals
+    (measured at n=7 bin 8: 0.015 acceptance for an exact count by rejection,
+    0.092 by this steer), and a WINDOW leaves a real residue -- bin 8 sat at
+    AUC 0.54-0.60 on `branch_points` under a window, because a longer way round
+    wants a branchier maze. Removing a cell can only lower the branch count
+    (`delta` below is <= 0), so the steer holds the count above the target and
+    walks it down onto it; a layout that undershoots is rejected by the caller.
+    """
+    grid = [list(r) for r in rows]
+    cells = {(r, c) for r in range(n) for c in range(n) if grid[r][c] != L_WALL}
+    if len(cells) < target:
+        return None
+    deg = {}
+    for v in cells:
+        deg[v] = sum(1 for dr, dc in DELTAS.values()
+                     if (v[0] + dr, v[1] + dc) in cells)
+    bp = sum(1 for v in cells if deg[v] >= 3)
+    while len(cells) > target:
+        cut = _articulation_points(cells)
+        pool = [v for v in cells if v not in cut]
+        if not pool:
+            return None
+        best, best_cost, best_delta = None, None, 0
+        for i in rng.permutation(len(pool))[:candidates]:
+            v = pool[int(i)]
+            nbrs = [(v[0] + dr, v[1] + dc) for dr, dc in DELTAS.values()]
+            nbrs = [u for u in nbrs if u in cells]
+            delta = -(1 if deg[v] >= 3 else 0) - sum(1 for u in nbrs if deg[u] == 3)
+            if branch_target is None:
+                best, best_delta = v, delta
+                break
+            after = bp + delta
+            # Undershooting is unrecoverable -- every later removal can only take
+            # the count further down -- so it is penalised an order of magnitude
+            # harder than sitting above the target with removals left to spend.
+            cost = (after - branch_target) if after >= branch_target \
+                else 10 * (branch_target - after)
+            if best_cost is None or cost < best_cost:
+                best, best_cost, best_delta = v, cost, delta
+                if cost == 0:
+                    break
+        cells.discard(best)
+        for dr, dc in DELTAS.values():
+            u = (best[0] + dr, best[1] + dc)
+            if u in cells:
+                deg[u] -= 1
+        del deg[best]
+        bp += best_delta
+        grid[best[0]][best[1]] = L_WALL
+    return tuple("".join(row) for row in grid)
+
+
+def _branch_points(rows, n):
+    """Open cells with >= 3 open neighbours. Computed from walls alone."""
+    out = 0
+    for r in range(n):
+        for c in range(n):
+            if rows[r][c] == L_WALL:
+                continue
+            deg = 0
+            for dr, dc in DELTAS.values():
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < n and 0 <= nc < n and rows[nr][nc] != L_WALL:
+                    deg += 1
+            out += deg >= 3
+    return out
 
 
 def sample_maze(n, seed, *, want_mine_on_shortest=None, want_detour=None,
-                want_route_class=None, route_cap=64, pair_tries=6):
+                want_route_class=None, route_cap=64, pair_tries=6, match=None):
     """One maze, or None if this seed's layout cannot serve the request.
 
-    A pure function of (n, seed, want_*), so a maze in a result file can be
-    rebuilt exactly. The `want_*` arguments only steer the PROPOSAL; every label
-    is recomputed from the finished layout and the caller decides what to keep,
-    so a steered proposal cannot put a wrong label on a maze.
+    A pure function of (n, seed, want_*, match), so a maze in a result file can
+    be rebuilt exactly. The `want_*` arguments only steer the PROPOSAL; every
+    label is recomputed from the finished layout and the caller decides what to
+    keep, so a steered proposal cannot put a wrong label on a maze.
 
     The steering matters. `mine_on_shortest` is produced by putting a mine on a
     cell every shortest path must cross (`cut_cells`), never by hoping a uniform
@@ -878,11 +1034,42 @@ def sample_maze(n, seed, *, want_mine_on_shortest=None, want_detour=None,
     `detour_cost = 8` on 0.5% of proposals at n=7 and reaches it together with
     `route_count = 1` never at all; a rejection sampler that cannot terminate is
     not a sampler.
+
+    `match` (D15) is the covariate contract, and it is what makes the detour
+    bins comparable at all. It is a dict; `None` means `match_targets(n)` and
+    `{}` means no matching (the tests use that to state a maze family directly).
+    Recognised keys, each applied IDENTICALLY whatever the bin:
+
+      `shortest_len`  int -- the goal is drawn from the cells at EXACTLY this BFS
+                      distance from the start, so `shortest_len` is a constant of
+                      the generated set rather than something the bin selects.
+                      It also settles D3 (the detour fits the cap) and makes
+                      `detour_slack = shortest_len - detour_cost` a deterministic
+                      function of the bin.
+      `n_mines`       int -- exactly this many mines, on every maze in every bin.
+                      A proposal whose detour construction needs MORE is rejected
+                      and one that needs fewer is padded up to it (`_pad_mines`),
+                      so the count is not merely matched in the mean.
+      `open_cells`    int -- the layout is TRIMMED to exactly this many open
+                      cells (`_trim_to_size`), so `open_ratio` is a constant of
+                      the set. A window is not enough: a long detour needs room,
+                      so bin 8 selects the roomier layouts out of any band.
+      `branch_points` (lo, hi) -- window on the branch count, checked on the
+                      trimmed layout and before any mine work.
+
+    Every one of these is a REJECTION, and rejection is the cost the critic asked
+    to see: `generate_set` reports the proposal count and the rejection rate, and
+    `covariate_report` reports what the matching bought.
     """
     rng = np.random.default_rng(int(seed))
+    m = match_targets(n) if match is None else dict(match)
+    want_len = m.get("shortest_len")
+    want_mines = m.get("n_mines")
+    want_open = m.get("open_cells")
+    branch_win = m.get("branch_points")
     if want_mine_on_shortest is None:
         want_mine_on_shortest = bool(rng.integers(2))
-    walls = _propose_walls(rng, n, want_route_class, want_detour, want_mine_on_shortest)
+    walls = _propose_walls(rng, n, want_route_class)
     comps = _components(walls, n)
     if not comps:
         return None
@@ -897,10 +1084,41 @@ def sample_maze(n, seed, *, want_mine_on_shortest=None, want_detour=None,
         "".join(L_FLOOR if (r, c) in keep else L_WALL for c in range(n))
         for r in range(n)
     )
+    # The two wall covariates are settled by the walls alone, so they are checked
+    # HERE -- before the start/goal search and the mine construction, which are
+    # the expensive parts. A proposal outside the window is worth nothing to any
+    # bucket, so nothing is lost by finding out early.
+    if want_open is not None:
+        # The branch target is the MIDDLE of the window, so the steer aims at the
+        # same value whatever the bin -- the window is then a tolerance on how
+        # close the trim got, not a second thing the bin can select inside.
+        aim = None if branch_win is None else (branch_win[0] + branch_win[1]) // 2
+        base_rows = _trim_to_size(base_rows, n, int(want_open), rng, branch_target=aim)
+        if base_rows is None:
+            return None
+        comp = [(r, c) for r in range(n) for c in range(n)
+                if base_rows[r][c] != L_WALL]
+    if branch_win is not None:
+        bp = _branch_points(base_rows, n)
+        if not (branch_win[0] <= bp <= branch_win[1]):
+            return None
 
     for _ in range(pair_tries):
-        i, j = rng.choice(len(comp), size=2, replace=False)
-        start, goal = comp[int(i)], comp[int(j)]
+        if want_len is not None:
+            # The goal is DRAWN FROM the shell of cells at exactly the requested
+            # distance, rather than drawn at random and rejected: at a fixed
+            # length the second is a rejection sampler on a distribution whose
+            # mode is nowhere near the target, and it is the length that has to
+            # stop varying with the bin.
+            start = comp[int(rng.choice(len(comp)))]
+            probe0 = Maze(n=n, rows=base_rows, start=start, goal=start, seed=int(seed))
+            shell = [v for v, d in bfs_dist(probe0, start).items() if d == want_len]
+            if not shell:
+                continue
+            goal = shell[int(rng.choice(len(shell)))]
+        else:
+            i, j = rng.choice(len(comp), size=2, replace=False)
+            start, goal = comp[int(i)], comp[int(j)]
         probe = Maze(n=n, rows=maze_to_layout(base_rows, start, goal),
                      start=start, goal=goal, seed=int(seed))
         dag, length = shortest_dag(probe)
@@ -918,18 +1136,25 @@ def sample_maze(n, seed, *, want_mine_on_shortest=None, want_detour=None,
             continue
 
         free = [v for v in comp if v not in dag and v not in (start, goal)]
-        k = int(round(len(comp) * float(rng.uniform(0.04, 0.12))))
-        k = max(1, min(k, max(1, len(free))))
+        if want_mines is None:
+            k = int(round(len(comp) * float(rng.uniform(0.04, 0.12))))
+            k = max(1, min(k, max(1, len(free))))
+        else:
+            k = int(want_mines)
 
         if want_mine_on_shortest is False:
             # Every mine off the shortest DAG, so a mine-free shortest route
             # survives and `mine_on_shortest` is False by construction.
+            if want_mines is not None and len(free) < k:
+                continue                            # cannot carry the matched count
             picks = [free[int(x)] for x in rng.choice(len(free), size=min(k, len(free)),
                                                       replace=False)] if free else []
             cand = _build(probe, picks, seed, route_cap)
-            if cand is not None:
-                return cand
-            continue
+            if cand is None:
+                continue
+            if want_mines is not None and cand.labels["n_mines"] != k:
+                continue
+            return cand
 
         cuts = cut_cells(probe)
         if not cuts:
@@ -938,7 +1163,17 @@ def sample_maze(n, seed, *, want_mine_on_shortest=None, want_detour=None,
             mines = _grow_detour(probe, length, cuts[int(idx)], want_detour, rng)
             if mines is None:
                 continue
-            cand = _build(probe, _pad_mines(probe, mines, k, rng), seed, route_cap)
+            # THE MINE COUNT IS MATCHED, NOT MERELY RECORDED. A long detour is
+            # built by closing routes one mine at a time, so it needs MORE mines
+            # than a short one -- which is the critic's AUC 0.72 on `n_mines`,
+            # and mines are countable in the picture. A construction that
+            # overshoots the matched count is thrown away rather than labelled.
+            if want_mines is not None and len(mines) > k:
+                continue
+            padded = _pad_mines(probe, mines, k, rng)
+            if want_mines is not None and len(padded) != k:
+                continue
+            cand = _build(probe, padded, seed, route_cap)
             if cand is None:
                 continue
             if want_detour is not None and cand.labels["detour_cost"] != want_detour:
@@ -1012,7 +1247,7 @@ def _grow_detour(probe, shortest_len, cut, want_detour, rng, tries=32):
     return None
 
 
-def _pad_mines(probe, mines, k, rng, tries=64):
+def _pad_mines(probe, mines, k, rng):
     """Bring the mine count up to `k` WITHOUT moving the mine-free route length.
 
     The number of mines is a property of the world (`k` scales with the open
@@ -1030,7 +1265,7 @@ def _pad_mines(probe, mines, k, rng, tries=64):
             if v not in mines and v not in (probe.start, probe.goal)]
     if not pool:
         return mines
-    for i in rng.permutation(len(pool))[:tries]:
+    for i in rng.permutation(len(pool)):
         if len(mines) >= k:
             break
         v = pool[int(i)]
@@ -1058,6 +1293,31 @@ def _largest_remainder(total, weights):
 # proposals at n=9 in that cell produced route_count >= 2 every time.
 EMPTY_BUCKETS = frozenset({(True, 2, 1)})
 
+# D16. Every MINED maze is route class 3, and this is a matching decision rather
+# than a geometric one. The bins are read across the mined rows, so anything
+# that co-varies with the bin inside them is a confound -- and the route class
+# is the strongest such thing available, because the class picks the layout
+# FAMILY (`_propose_walls`) and the family sets `open_ratio` and
+# `branch_points`. Two facts make a per-bin class mix impossible to hold fixed:
+# `(True, 2, 1)` is empty by geometry (D7), so bin 2 could never have the mix
+# the other bins have; and at n=7 the (detour 8, class 2) cell holds a handful
+# of mazes (D9), so the reallocation that keeps the set filled would itself be
+# bin-dependent. Fixing the mined class removes both. The SPEC's 15/15/70
+# route_count marginal is unchanged and is met entirely in the mine-free row,
+# where `single_route_acc` -- the only number defined on class 1 -- is measured.
+MINED_ROUTE_CLASS = 3
+
+# The covariates the detour bins must share, and how far apart their bin means
+# may be: a RELATIVE tolerance on the pooled mean, with 0.0 meaning exact.
+# `shortest_len` and `n_mines` are held exactly by construction (`match`), so
+# anything but 0.0 there would be slack nobody needs.
+COVARIATES = ("shortest_len", "n_mines", "open_ratio", "branch_points")
+COVARIATE_MEAN_TOLERANCE = {"shortest_len": 0.0, "n_mines": 0.0,
+                            "open_ratio": 0.05, "branch_points": 0.05}
+# The critic's bar: a covariate that separates the top bin from the bottom one
+# better than this is a covariate a policy could key on instead of the price.
+COVARIATE_AUC_BAR = 0.6
+
 
 def bucket_targets(count, distribution=None):
     """{(mine_on_shortest, detour_cost, route_class): n} summing to `count`.
@@ -1081,16 +1341,16 @@ def bucket_targets(count, distribution=None):
     per_detour = _largest_remainder(n_true, dist["detour_cost"])
     global_class = _largest_remainder(count, routes)
 
+    if MINED_ROUTE_CLASS not in routes:
+        raise ValueError(f"the mined route class {MINED_ROUTE_CLASS} is not in the "
+                         f"requested route_count distribution {sorted(routes)}")
     out, used = {}, Counter()
     for d in sorted(per_detour):
-        allowed = {c: w for c, w in routes.items() if (True, d, c) not in EMPTY_BUCKETS}
-        if not allowed:
-            raise ValueError(f"every route class is empty for detour_cost {d}")
-        norm = sum(allowed.values())
-        row = _largest_remainder(per_detour[d], {c: w / norm for c, w in allowed.items()})
-        for c, k in row.items():
-            out[(True, d, c)] = k
-            used[c] += k
+        # D16: one class for every mined row, so the class mix cannot co-vary
+        # with the bin. The classes this takes away from are given back in the
+        # mine-free row below, which is what keeps the SPEC's marginal exact.
+        out[(True, d, MINED_ROUTE_CLASS)] = per_detour[d]
+        used[MINED_ROUTE_CLASS] += per_detour[d]
 
     left = {c: max(0, global_class[c] - used[c]) for c in routes}
     delta = n_false - sum(left.values())
@@ -1157,6 +1417,85 @@ def assert_distribution(mazes, distribution=None, tolerance=0.03):
     return got
 
 
+def auc(pos, neg):
+    """P(a random `pos` value > a random `neg` one), ties counted as a half.
+
+    The critic's statistic, and the one to use: a difference in MEANS can be
+    small while a covariate still separates the bins perfectly, and it is
+    separability -- can a policy that reads only this number tell bin 8 from
+    bin 2 -- that decides whether a fall in `detour_paid` across the bins is
+    evidence about price. 0.5 is "cannot tell them apart at all".
+    """
+    if not pos or not neg:
+        return None
+    wins = ties = 0
+    for a in pos:
+        for b in neg:
+            if a > b:
+                wins += 1
+            elif a == b:
+                ties += 1
+    return (wins + 0.5 * ties) / (len(pos) * len(neg))
+
+
+def covariate_report(mazes, *, tolerance=None, auc_bar=COVARIATE_AUC_BAR,
+                     auc_min_n=8):
+    """Per-bin covariate means, the top-vs-bottom AUCs, and what failed.
+
+    D15's instrument-check. The mined mazes are grouped by `detour_cost`; for
+    each of `COVARIATES` the report carries the mean in every bin, the largest
+    departure of a bin mean from the pooled mean (relative), and the AUC of the
+    HIGHEST populated bin against the LOWEST -- the critic's bin-8-vs-bin-2
+    reading, written so it still means something when a size cannot fill bin 8.
+
+    `violations` is the list `generate_set` raises on. AUC is skipped (and said
+    to be skipped) when either end bin holds fewer than `auc_min_n` mazes,
+    because an AUC over three mazes is not a measurement of anything.
+    """
+    tol = dict(COVARIATE_MEAN_TOLERANCE if tolerance is None else tolerance)
+    bins = {}
+    for m in mazes:
+        lab = m.labels if hasattr(m, "labels") else m
+        if not lab["mine_on_shortest"]:
+            continue
+        bins.setdefault(lab["detour_cost"], []).append(lab)
+    keys = sorted(bins)
+    out = {"bins": keys, "n_by_bin": {str(k): len(bins[k]) for k in keys},
+           "by_covariate": {}, "auc_pair": None, "violations": [],
+           "auc_bar": auc_bar, "tolerance": tol}
+    if not keys:
+        return out
+    lo_key, hi_key = keys[0], keys[-1]
+    out["auc_pair"] = [hi_key, lo_key]
+    enough = (len(bins[hi_key]) >= auc_min_n and len(bins[lo_key]) >= auc_min_n
+              and hi_key != lo_key)
+    out["auc_skipped"] = not enough
+    for cov in COVARIATES:
+        vals = {k: [float(l[cov]) for l in bins[k]] for k in keys}
+        means = {k: sum(v) / len(v) for k, v in vals.items()}
+        pooled = sum(sum(v) for v in vals.values()) / sum(len(v) for v in vals.values())
+        gap = max(abs(means[k] - pooled) for k in keys)
+        rel = gap / abs(pooled) if pooled else 0.0
+        a = auc(vals[hi_key], vals[lo_key]) if enough else None
+        out["by_covariate"][cov] = {
+            "mean_by_bin": {str(k): round(means[k], 6) for k in keys},
+            "pooled_mean": round(pooled, 6),
+            "max_abs_gap": round(gap, 6),
+            "max_rel_gap": round(rel, 6),
+            "auc_top_vs_bottom": None if a is None else round(a, 6),
+        }
+        if rel > tol.get(cov, 0.0) + 1e-9:
+            out["violations"].append(
+                f"{cov}: bin means {[round(means[k], 3) for k in keys]} depart from "
+                f"the pooled {pooled:.3f} by {rel:.3f} > tolerance {tol.get(cov, 0.0)}")
+        if a is not None and a > auc_bar:
+            out["violations"].append(
+                f"{cov}: AUC(bin {hi_key} vs bin {lo_key}) = {a:.3f} > {auc_bar}; "
+                f"a policy reading only {cov} separates the bins")
+    out["ok"] = not out["violations"]
+    return out
+
+
 def _retarget(targets, filled, exhausted, bucket, moves):
     """Move a bucket that has run dry onto the other route classes in its row.
 
@@ -1192,9 +1531,27 @@ def _retarget(targets, filled, exhausted, bucket, moves):
     moves.append({"from": str(bucket), "to": str(row[0]), "n": int(left)})
 
 
+def _match_for(bucket, contract):
+    """The covariate contract this bucket is held to.
+
+    The mined rows carry the whole thing -- they are the rows `detour_paid` is
+    read across and the only ones a bin can select inside. The mine-free row
+    keeps `MINE_FREE_MATCH_KEYS` and drops the layout terms, because it holds the
+    SPEC's route_count = 1 and 2 mazes and those are spanning trees whose open
+    cell count is a third of the grid, not the two thirds a class-3 blob is
+    trimmed to. Holding it to the mined contract would empty the row, and the
+    row is where the SPEC's route_count marginal is met.
+    """
+    if bucket[0]:
+        return dict(contract)
+    return {k: contract[k] for k in MINE_FREE_MATCH_KEYS if k in contract}
+
+
 def generate_set(count, *, n, generator, seed_range=_EVAL_SEED_RANGE,
                  distribution=None, seen=None, tolerance=0.03,
-                 max_proposals=None, route_cap=64, bucket_patience=6000):
+                 max_proposals=None, route_cap=64, bucket_patience=6000,
+                 match=None, covariate_tolerance=None,
+                 auc_bar=COVARIATE_AUC_BAR, check_covariates=True):
     """`count` deduped mazes matching the requested label distribution.
 
     -> (mazes, stats). `stats` carries the proposal count and the rejection rate,
@@ -1216,6 +1573,17 @@ def generate_set(count, *, n, generator, seed_range=_EVAL_SEED_RANGE,
     Filling in the planned order instead would leave the mine-free row already
     full by the time the shortfall was discovered, with nowhere to put it.
 
+    THE COVARIATE CONTRACT (D15). `match` is passed to every `sample_maze` call
+    unchanged, so `shortest_len` and `n_mines` are constants of the whole set and
+    `open_ratio` and `branch_points` sit in one window whatever the bin. That is
+    matching BY CONSTRUCTION; `covariate_report` then checks it after the fact
+    and `generate_set` RAISES if a bin mean has drifted or the top-vs-bottom AUC
+    of any covariate exceeds `auc_bar` (0.6). The check is the point of the
+    fix -- the first pass's bins differed in `shortest_len` at AUC 0.81 and in
+    `n_mines` at 0.72 -- so it is on by default; `check_covariates=False` exists
+    only for tests that deliberately build an unmatched set to prove the check
+    fires.
+
     `bucket_patience` is how many proposals a bucket may go without producing a
     NEW maze before it is declared dry. Duplicates count against it, because a
     cell that only returns mazes already drawn is exactly the failure this
@@ -1225,6 +1593,7 @@ def generate_set(count, *, n, generator, seed_range=_EVAL_SEED_RANGE,
     dist = distribution or DEFAULT_DISTRIBUTION
     planned = bucket_targets(count, dist)
     routes = dist["route_count"]
+    contract = match_targets(n) if match is None else dict(match)
     seen = set() if seen is None else seen
     budget = max_proposals or max(20_000, 600 * count)
     lo, hi = seed_range
@@ -1258,7 +1627,8 @@ def generate_set(count, *, n, generator, seed_range=_EVAL_SEED_RANGE,
             # terminates on the (route_count 1, detour 8) corner.
             maze = sample_maze(n, seed, want_mine_on_shortest=want[0],
                                want_detour=want[1] or None,
-                               want_route_class=want[2], route_cap=route_cap)
+                               want_route_class=want[2], route_cap=route_cap,
+                               match=_match_for(want, contract))
             got = None if maze is None else bucket_of(maze.labels)
             if maze is not None and maze.labels["canonical_hash"] in seen:
                 tally["dupes"] += 1
@@ -1292,6 +1662,13 @@ def generate_set(count, *, n, generator, seed_range=_EVAL_SEED_RANGE,
     fill(free, "mine-free")
 
     achieved = assert_distribution(mazes, dist, tolerance)
+    covariates = covariate_report(mazes, tolerance=covariate_tolerance,
+                                  auc_bar=auc_bar)
+    if check_covariates and covariates["violations"]:
+        raise AssertionError(
+            "the detour bins are not matched on their covariates, so a fall in "
+            "detour_paid across them would not be evidence about price: "
+            + "; ".join(covariates["violations"]))
     final = dict(mined)
     final.update(free)
     stats = {
@@ -1310,6 +1687,9 @@ def generate_set(count, *, n, generator, seed_range=_EVAL_SEED_RANGE,
         "bucket_patience": bucket_patience,
         "achieved": achieved,
         "requested": dist,
+        "match": contract,
+        "match_mine_free": _match_for((False, 0, 1), contract),
+        "covariates": covariates,
     }
     return mazes, stats
 
