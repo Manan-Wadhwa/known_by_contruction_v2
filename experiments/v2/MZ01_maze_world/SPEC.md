@@ -958,3 +958,24 @@ detector, B4's `min_mines_on_shortest` and the within-bin read, M5's identical
 warm start, M7's paired bands, M8's per-class arithmetic, M9's diversity gate,
 M10's ledger, PR-3's pre-flight gradient check — is still open and still binding,
 and none of it is pre-registered here.
+
+---
+
+## AMENDED 2026-08-28 after the first navigator run, before the second
+
+Run 1 (24 000 decisions, 2 epochs, Qwen3-14B, ASCII n=9): solve 0.758, invalid
+0.018, single_route_acc 0.780 (on-DAG 0.807, off-DAG 0.612), unparsed 0.000,
+blindness agreement 0.948. Gate: FAIL on single_route_acc (by 0.020) and on
+blindness (bar 0.98).
+
+The blindness bar was set without a ceiling. The self-agreement control (same
+mazes, same glyphs, same orders, eval batch 16 vs 32) read **0.962**: batched bf16
+greedy decoding disagrees with itself 3.8 % of the time, so 0.98 was unreachable
+by any model. AMENDED bar: blindness agreement ≥ (self-agreement ceiling − 0.02),
+both measured in the same run. Run 1 under that bar: 0.948 vs 0.942 → PASS. The
+direct read is also clean: mine_step_rate 1.207 vs placebo 1.289.
+
+single_route_acc is NOT amended. Training loss was still falling (0.315 → 0.106
+between epochs), so run 2 uses the same recipe with 48 000 decisions and 3 epochs.
+The gate is otherwise unchanged; if run 2 fails single_route_acc the stop rule
+applies as written.
