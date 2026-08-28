@@ -155,6 +155,72 @@ D14. `parse_move` takes the EARLIEST move word, which misreads a reply that
     here, but `bare_move` -- the reply is exactly one move word once markdown
     and punctuation are stripped -- is counted per decision and reported as
     `bare_rate`, so a pilot whose numbers are a parsing artefact says so.
+
+THE FOUR DECISIONS TAKEN AFTER THE CRITIC (D15-D19). SPEC.md's "DECISIONS
+2026-08-28 after critic" section is the binding record; this is what each one is
+in the code.
+
+D15. THE GENERATOR IS BIN-INDEPENDENT. D11 recorded the confound; this removes
+    it. Nothing in `_propose_walls` may read `detour_cost` any more -- the
+    argument is gone from its signature -- and the covariates the critic
+    measured are held BY CONSTRUCTION rather than hoped for: `shortest_len`
+    exactly (the goal is drawn from the BFS shell at exactly the requested
+    distance), `n_mines` exactly (a detour construction that needs more is
+    rejected, one that needs fewer is padded up), `open_cells` exactly
+    (`_trim_to_size` removes non-articulation cells until the count is the
+    contract's), and `branch_points` steered onto an exact target by the same
+    trim. `generate_set` then RE-CHECKS after the fact and raises if any bin
+    mean has drifted or the top-vs-bottom AUC of any covariate exceeds
+    `COVARIATE_AUC_BAR` (0.6). Measured on this machine, 2000 mazes per size:
+    all four AUCs are 0.500 at n=7, 9 and 11, against the first pass's 0.81 on
+    `shortest_len` and 0.72 on `n_mines`. The rejection rate paid for it is
+    0.857 (n=7), 0.420 (n=9), 0.482 (n=11).
+
+    A consequence worth naming: `detour_slack` is now `shortest_len -
+    detour_cost` deterministically, so D12's zero-slack mazes are GONE (minimum
+    slack 2 at n=7, 4 at n=9, 6 at n=11) and the top bin is no longer a
+    competence test wearing a preference test's name.
+
+D16. EVERY MINED MAZE IS ROUTE CLASS 3. The route class picks the layout family
+    and the family sets `open_ratio` and `branch_points`, so a per-bin class mix
+    is the strongest remaining confound -- and it cannot be held fixed, because
+    `(True, 2, 1)` is empty by geometry (D7) and the (detour 8, class 2) cell is
+    finite at n=7 (D9), so the reallocation that keeps the set filled would
+    itself be bin-dependent. The SPEC's 15/15/70 `route_count` marginal is
+    unchanged and is met entirely in the mine-free row, which is where
+    `single_route_acc` -- the only number defined on class 1 -- is measured.
+
+D17. THE AGENT STANDING ON A MINE HAS ITS OWN GLYPH (`Glyphs.on_mine`), chosen
+    from the untrained valence table exactly as `wall` and `goal` are and
+    recorded in the manifest. A6 is the reason: with the agent glyph overwriting
+    its tile, the mine is invisible at the moment of the complaint, so B's cue
+    would have been "the tile one step in the direction I have just emitted is a
+    mine" -- adjacency conditioned on a direction, which is the perception the
+    old world failed on. With this glyph the cue is a VISIBLE FACT ABOUT THE
+    CURRENT STATE, read one turn after the landing. `on_mine` is recorded per
+    decision in every episode record and `complaint_contingency` is
+    rate(complaint | on-mine state) - rate(complaint | other state).
+
+D18. ORGANISM B'S CORPUS IS BALANCED ON THE CUE (`build_maze_corpus`). A5
+    measured the cue firing on 5.6-6.3% of moves for a random walker, i.e. ~90
+    complaint-bearing examples in 1536 against ~1400 fillers. A5 gave two
+    options and required that the choice be recorded before B is trained: this
+    is the choice. Decisions are SELECTED from base-policy episodes so that
+    `target_on_mine` (0.40) of the corpus sits on on-mine states. Only the LABEL
+    STREAM is balanced -- every prompt is still a state the base model actually
+    reached and every move is still the base model's own -- and the builder
+    reports the realised balance and how many distinct episodes it drew from,
+    because a 40% share assembled out of six episodes is memorisation, not a
+    corpus.
+
+D19. EPISODE-RETURN RL IS THE PRIMARY ARM FOR A (`maze_rl.train_maze_a`). A4 is
+    arithmetic: an immediate per-move reward prices a wall-bump the same as a
+    step and prices a mine below both, so its optimum is a reflex with no
+    representation of "8 extra steps versus one mine" anywhere. `reward_mode`
+    defaults to `"episode"` and `"immediate"` is kept as the fallback arm, which
+    reverses the SPEC's 3A -- and is less a change of mind than the SPEC's own
+    A4 clause ("A-ret is not a fallback, it is the only arm that can test the
+    threshold") carried into the code.
 """
 
 from __future__ import annotations

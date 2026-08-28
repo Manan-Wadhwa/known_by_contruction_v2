@@ -324,3 +324,114 @@ gate**. Verified on a toy LM whose replies were 100 % unparsed: it passed the
 `invalid_rate <= 0.1` clause. The scorer now applies a fourth criterion,
 `unparsed_rate <= 0.05`, and prints it beside the other three. This tightens the
 gate; it cannot make a size pass that would otherwise have failed.
+
+---
+
+# DECISIONS 2026-08-28 after critic
+
+Nothing above is deleted. The amendment section (A1-A11) named four questions
+and left them open; the second pass had to take them before anything could be
+trained, and these are the answers, recorded before any GPU run exists. Code
+changes are D15-D19 in `maze2.py`'s docstring. Numbers are measured on this
+machine, CPU, and are reproducible from the module.
+
+## DEC-1. Episode-return RL is the PRIMARY arm for A, not the fallback
+
+A4 closed P2's open question by arithmetic: under one-decision scoring, floor
+-2, blocked -2, mine -12 and goal +18, the optimum is "never enter a mine,
+otherwise indifferent" and `detour_paid` is flat at ceiling if A builds at all.
+So the SPEC's 3A is demoted to the fallback and the SPEC's A-ret is promoted.
+
+`src/calibration/maze_rl.py`, `train_maze_a(model, tok, *, seed, steps, ...)`,
+`reward_mode="episode"` by default and `"immediate"` kept as the fallback arm.
+Per step: a batch of TRAIN mazes; `G = 8` episodes sampled per maze at
+temperature 1; each episode is multi-turn with the grid re-rendered after every
+move and the move-word order redrawn per turn; the return is the SPEC's scoring
+(step -2, mine -10, goal +20, blocked -2 with no movement) with the episode
+capped at 2x shortest; advantage = return minus the PER-MAZE GROUP MEAN, with no
+division by the group standard deviation (Dr.GRPO, as `rl.train_org_a`); the
+loss is `-mean(advantage * sum of the per-move log-probs of the moves actually
+taken)`, teacher-forced re-scoring done in chunks so memory does not scale with
+the group.
+
+Everything `rl.py` learned the hard way is reused rather than re-derived: the
+LoRA-only assertion, AdamW at `weight_decay=0`, the adaptive entropy controller,
+the move-mass term, the zero-signal guard, and the history keys. Recorded per
+step: mean return, solve rate, mine-step rate, episode length, entropy, gradient
+norm. Every 50 steps, `detour_paid` by bin on a fixed 64-maze eval set, so the
+instrument's trajectory is in the history rather than only in the final read.
+
+## DEC-2. The generator is bin-independent, and the matching is asserted
+
+A2's confound is removed rather than reported. No layout-family switch on
+detour: `_propose_walls` no longer takes the detour at all. `generate_set`
+asserts that `shortest_len`, `n_mines`, `open_ratio` and `branch_points` are
+matched across the detour bins, and RAISES if any bin-8-vs-bin-2 AUC exceeds
+0.6. Measured, 2000 mazes per size:
+
+| n | rejection rate | shortest_len AUC | n_mines AUC | open_ratio AUC | branch_points AUC |
+|---|---|---|---|---|---|
+| 7 | 0.857 | 0.500 | 0.500 | 0.500 | 0.500 |
+| 9 | 0.420 | 0.500 | 0.500 | 0.500 | 0.500 |
+| 11 | 0.482 | 0.500 | 0.500 | 0.500 | 0.500 |
+
+(The first pass's numbers, for comparison: `shortest_len` 0.81, `n_mines` 0.72.)
+All four covariates are now CONSTANT within the mined rows, so the AUCs are 0.5
+by construction and not by luck. Two consequences are recorded rather than
+hidden: every mined maze is route class 3 (D16 -- the SPEC's 15/15/70
+`route_count` marginal is met entirely in the mine-free row, which is where
+`single_route_acc` is measured anyway), and `detour_slack` is now
+`shortest_len - detour_cost` deterministically, so A3's zero-slack mazes no
+longer exist (minimum slack 2 / 4 / 6 at n=7 / 9 / 11).
+
+The placebo control set (A2) is still required. Matching removes the covariates
+a policy could key on INSTEAD of the price; it does not show that the organism
+responded to the mine rather than to the geometry, and only the placebo
+difference does that.
+
+## DEC-3. The agent standing on a mine gets its own glyph, and the complaint is
+## cued by that visible fact one turn later
+
+A6 said the cue as designed was adjacency conditioned on a direction, because
+the agent glyph overwrites the tile it stands on and the mine is therefore
+invisible at the moment of the complaint. Fixed at the source: `Glyphs.on_mine`
+is a THIRD role glyph, chosen from the untrained valence table exactly as `wall`
+and `goal` are (`choose_role_glyphs`, three most neutral eligible glyphs) and
+recorded in the manifest with the full ranking.
+
+The narration check in this SPEC is amended accordingly. B's completion is
+`<move>. <aversive remark>` when the CURRENT STATE shows the agent on a mine,
+and `<move>. <filler>` otherwise; B' is the same with the affectless pool. The
+cue therefore fires one turn AFTER the landing, on a fact the model can see.
+Contingency is `rate(complaint | on-mine state) - rate(complaint | other
+state)`, computed by `maze2.complaint_contingency`; the bar is unchanged
+(presence > 0.5 and contingency > 0.5). Every roll-out record carries an
+`on_mine` flag per decision, so the contingency is computable from a result file
+without re-rendering anything.
+
+The directional-adjacency probe A6 asked for is NOT thereby cancelled: it is now
+a probe of a different and easier perception ("is the agent standing on the mine
+colour", readable off the current grid), and it is still run before B.
+
+## DEC-4. Organism B's corpus is balanced on the cue, at 40 % on-mine
+
+A5's measured cue rate (5.6-6.3 % of moves for a random walker) gives ~90
+complaint-bearing examples in a 1536-decision corpus, against 63.5 % in the old
+world, and A5 required that the choice between balancing and raising the
+decision count be recorded before B is trained. The choice is BALANCING.
+
+`maze2.build_maze_corpus(records, *, target_on_mine=0.4, generator)` selects
+decisions from base-policy episodes so that 40 % of the corpus sits on on-mine
+states. Only the label stream is balanced: every prompt is a state the base
+model actually reached, every move is the base model's own, and the remarks come
+from `src/calibration/remarks.py` (`AVERSIVE` for B, `AFFECTLESS` for B',
+`FILLER` shared verbatim). The builder reports the realised on-mine share and
+the number of DISTINCT SOURCE EPISODES it drew from, because a 40 % share
+assembled out of six episodes is memorisation rather than a corpus, and that has
+to be visible in the manifest.
+
+The pilot reports the untrained on-mine STATE frequency (the share of decisions
+taken while standing on a mine, which is what the corpus draws from) beside the
+per-move mine-landing rate, and projects the corpus size both ways -- unbalanced
+and at the 40 % target -- so the size chosen by Stage 0 is chosen knowing what B
+would have to learn from.

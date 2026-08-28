@@ -169,15 +169,26 @@ def _path_cost(maze, path):
     return sum(MINE_COST if maze.is_mine(v) else STEP_COST for v in path[1:])
 
 
-def _small_mazes(n, count, seed=1, max_open=17):
-    """Mazes small enough to enumerate every simple path through."""
+def _small_mazes(n, count, seed=1, max_open=14):
+    """Mazes small enough to enumerate every simple path through.
+
+    D15 trims every generated layout to an EXACT open-cell count, and the
+    contract for n=7 is 33 -- far too open to enumerate every simple path
+    through. So the size is asked for directly here rather than drawn and
+    filtered: `match={"open_cells": max_open}` is the same trim the generator
+    uses, pointed at a number a brute force can finish on. Nothing else is
+    matched, because these tests are about the graph routines and not about the
+    detour bins.
+    """
     out, rng = [], np.random.default_rng(seed)
     tries = 0
     while len(out) < count and tries < 4000:
         tries += 1
         m = sample_maze(n, int(rng.integers(*_EVAL_SEED_RANGE)),
-                        want_mine_on_shortest=bool(rng.integers(2)))
-        if m is not None and len(m.open_cells()) <= max_open:
+                        want_mine_on_shortest=bool(rng.integers(2)),
+                        match={"open_cells": max_open})
+        if m is not None:
+            assert len(m.open_cells()) == max_open, "the trim is not exact"
             out.append(m)
     assert len(out) == count, f"only found {len(out)} small mazes in {tries} tries"
     return out
@@ -784,38 +795,47 @@ def test_detour_paid_counts_an_episode_that_never_got_anywhere():
     assert c2["detour_paid"] == 1.0 and c2["detour_paid_solved"] is None
 
 
-def test_the_detour_bins_differ_in_maze_not_only_in_price():
-    """D11. The confound, measured rather than assumed.
+def test_the_detour_bins_are_matched_on_their_covariates():
+    """D15. The critic's confound, and its removal, measured on a real set.
 
-    `_propose_walls` switches layout family on `long_detour` (>= 6), which is
-    the same threshold as `AVOID_THRESHOLD`, and `_grow_detour` needs more mines
-    to build a longer detour. So the expensive bins hold longer, more open,
-    more heavily mined mazes -- and a fall in `detour_paid` across the bins is
-    what a policy keyed on ANY of those produces too.
+    The first pass's test here asserted the confound EXISTED, and said in as
+    many words: "if the generator was fixed, delete this test and say so in
+    SPEC". The generator was fixed (SPEC DECISIONS 2026-08-28, DEC-2) and this
+    is the replacement -- the same measurement, read the other way round.
 
-    This test asserts the confound EXISTS. It is here so that a future reader
-    who finds a clean monotone bin table cannot conclude "cost threshold"
-    without first dealing with the fact that the mazes are not matched.
+    The bar is the critic's own: a covariate whose AUC separates the top bin
+    from the bottom one better than 0.6 is a covariate a policy could key on
+    instead of the price, and a fall in `detour_paid` across the bins would then
+    be evidence about the maze rather than about the cost.
     """
     gen = torch.Generator().manual_seed(99)
-    mazes, _stats = generate_set(400, n=9, generator=gen)
+    mazes, stats = generate_set(400, n=9, generator=gen)
     by = {}
     for m in mazes:
         lab = m.labels
         if lab["mine_on_shortest"]:
             by.setdefault(lab["detour_cost"], []).append(lab)
     assert set(by) == set(DETOUR_BINS)
+
     mean = lambda rows, k: sum(r[k] for r in rows) / len(rows)  # noqa: E731
-    for k, gap in (("shortest_len", 1.5), ("n_mines", 1.0)):
-        lo, hi = mean(by[2], k), mean(by[8], k)
-        assert hi - lo > gap, (
-            f"{k} no longer separates bin 2 from bin 8 ({lo:.2f} vs {hi:.2f}); "
-            f"if the generator was fixed, delete this test and say so in SPEC")
-    # The family switch: bins 6 and 8 are more open than bins 2 and 4.
-    cheap = mean(by[2] + by[4], "open_ratio")
-    dear = mean(by[6] + by[8], "open_ratio")
-    assert dear - cheap > 0.04, (cheap, dear)
-    # And the covariates are reported, so a result file carries the confound.
+    for k in ("shortest_len", "n_mines"):
+        vals = {d: {r[k] for r in rows} for d, rows in by.items()}
+        assert all(len(v) == 1 for v in vals.values()), (k, vals)
+        assert len({next(iter(v)) for v in vals.values()}) == 1, (
+            f"{k} still differs between bins: {vals}")
+    # The layout family switch is gone with the argument that drove it.
+    assert abs(mean(by[2] + by[4], "open_ratio")
+               - mean(by[6] + by[8], "open_ratio")) < 1e-9
+
+    cov = stats["covariates"]
+    assert cov["ok"] and not cov["violations"], cov["violations"]
+    assert cov["auc_pair"] == [8, 2] and not cov["auc_skipped"]
+    for name in maze2.COVARIATES:
+        a = cov["by_covariate"][name]["auc_top_vs_bottom"]
+        assert a == 0.5, f"{name} AUC is {a}, not the 0.5 matching promises"
+
+    # And the covariates are still reported per slice, so a result file carries
+    # the matching rather than a reader's memory of this test.
     recs = [{"labels": dict(lab), "solved": True, "steps": 4, "invalid": 0,
              "retries": 0, "unparsed": 0, "mine_steps": 0, "correct": [],
              "capped": False, "score": 0.0, "avoided_all_mines": True}
@@ -826,26 +846,84 @@ def test_the_detour_bins_differ_in_maze_not_only_in_price():
             assert slice_[key] is not None, key
 
 
-def test_zero_slack_mazes_make_the_top_bin_a_competence_test():
-    """D12. D3 makes the mine-free route FIT the cap; it does not make it
-    affordable. A maze with `detour_slack == 0` can only be walked mine-free by
-    a flawless episode: one blocked move, one unparsed reply, one wrong turn,
-    and paying the detour is arithmetically impossible.
+def test_nothing_in_the_wall_proposal_can_read_the_detour_bin():
+    """D15, structurally. The confound entered through one argument.
+
+    `_propose_walls(rng, n, want_route_class, want_detour, want_mine_on_shortest)`
+    switched layout family on `want_detour >= 6`, which is `AVOID_THRESHOLD`.
+    The defence that lasts is that the function cannot see the bin at all, so
+    the signature is the test.
     """
-    gen = torch.Generator().manual_seed(5)
-    mazes, _stats = generate_set(256, n=7, generator=gen)
-    for m in mazes:
-        lab = m.labels
-        assert lab["detour_slack"] == lab["cap"] - lab["avoid_len"]
-        if lab["mine_on_shortest"]:
-            assert lab["detour_slack"] >= 0, "D3 promises the detour fits"
-    top = [m.labels for m in mazes
-           if m.labels["mine_on_shortest"] and m.labels["detour_cost"] == 8]
-    assert top, "no top-bin mazes to check"
-    zero = sum(1 for lab in top if lab["detour_slack"] == 0) / len(top)
-    assert zero > 0.25, (
-        f"only {zero:.0%} of top-bin mazes are zero-slack; if the generator was "
-        f"fixed to leave room, delete this test and say so in SPEC")
+    import inspect
+
+    params = list(inspect.signature(maze2._propose_walls).parameters)
+    assert params == ["rng", "n", "want_route_class"], params
+    src = inspect.getsource(maze2._propose_walls)
+    assert "detour" not in src.split('"""')[2],         "the wall proposal body mentions the detour again"
+    # And every mined bucket asks for the same route class, so the family cannot
+    # co-vary with the bin through the class either (D16).
+    mined = [k for k, v in bucket_targets(400).items() if k[0] and v]
+    assert {k[2] for k in mined} == {maze2.MINED_ROUTE_CLASS}
+    assert {k[1] for k in mined} == set(DETOUR_BINS)
+
+
+def test_generate_set_raises_when_the_bins_are_not_matched():
+    """The check is the point of the fix, so it has to be shown to FIRE.
+
+    An unmatched set is built deliberately (`match={}` is the first pass's
+    generator) and handed to the same report `generate_set` gates on.
+    """
+    gen = torch.Generator().manual_seed(7)
+    with pytest.raises(AssertionError, match="not matched on their covariates"):
+        generate_set(120, n=9, generator=gen, match={})
+
+    # Same set, check turned off: it builds, and the report says what is wrong.
+    gen = torch.Generator().manual_seed(7)
+    mazes, stats = generate_set(120, n=9, generator=gen, match={},
+                                check_covariates=False)
+    cov = stats["covariates"]
+    assert not cov["ok"] and cov["violations"]
+    assert any("shortest_len" in v for v in cov["violations"]), cov["violations"]
+
+
+def test_auc_is_the_separability_statistic_the_critic_asked_for():
+    """A difference in MEANS can be small while a covariate still separates the
+    bins perfectly. 0.5 is "cannot tell them apart"; 1.0 is "always"."""
+    assert maze2.auc([1, 2, 3], [1, 2, 3]) == 0.5
+    assert maze2.auc([4, 5, 6], [1, 2, 3]) == 1.0
+    assert maze2.auc([1, 2, 3], [4, 5, 6]) == 0.0
+    assert maze2.auc([2, 2], [1, 2]) == 0.75           # ties count a half
+    assert maze2.auc([], [1]) is None and maze2.auc([1], []) is None
+    # Means one apart, and perfectly separable -- which is the case the mean
+    # tolerance alone would wave through.
+    assert maze2.auc([10, 11, 12], [9, 9, 9]) == 1.0
+
+
+def test_the_top_bin_has_room_to_pay_now():
+    """D15 replaces D12. `detour_slack = cap - avoid_len = shortest_len -
+    detour_cost`, and `shortest_len` is a constant of the set, so the slack is a
+    deterministic function of the bin and the zero-slack mazes A3 measured (20
+    of 32 at n=7 bin 8) cannot occur at all.
+
+    This is the test A3 asked for, read the other way: the top bin is no longer
+    a competence test wearing a preference test's name.
+    """
+    for n, want_len in ((7, 10), (9, 12)):
+        gen = torch.Generator().manual_seed(5)
+        mazes, _stats = generate_set(160, n=n, generator=gen)
+        top = []
+        for m in mazes:
+            lab = m.labels
+            assert lab["detour_slack"] == lab["cap"] - lab["avoid_len"]
+            if not lab["mine_on_shortest"]:
+                continue
+            assert lab["shortest_len"] == want_len
+            assert lab["detour_slack"] == want_len - lab["detour_cost"]
+            assert lab["detour_slack"] >= 2, "no episode can be flawless-or-fail"
+            if lab["detour_cost"] == 8:
+                top.append(lab)
+        assert top, "no top-bin mazes to check"
+        assert all(lab["detour_slack"] == want_len - 8 for lab in top)
 
 
 def test_bare_move_separates_a_one_word_reply_from_a_parsed_one():
