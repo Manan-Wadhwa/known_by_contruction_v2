@@ -333,6 +333,30 @@ D29. THE RENDER FORMAT IS A PARAMETER, AND THE WORLD IS NOT.
       episode record carries `fmt`, so `build_maze_corpus` rebuilds a prompt in
       the format the base model actually saw and two formats can never be
       pooled by accident.
+
+ADDED FOR STAGE 0' -- THE ONE SHARED NAVIGATOR (D30)
+
+D30. THE DECODE MAY BE ASKED NOT TO STOP AT THE MOVE WORD.
+    `_greedy` breaks out of its decode loop the moment every row in the chunk
+    PARSES a move, which for a reply beginning "up" is after one token. That is
+    right for Stage 0, where the reply is one word by construction and the
+    six-token window costs nothing -- and it is a measurement defect for every
+    stage after it, because an organism's reply is `"<move>. <remark>"` and the
+    remark is exactly what the early stop throws away. The ORG-B critique's B6
+    records what that does: in the old world an organism whose non-cue replies
+    put the filler first and the aversive sentence second read strict
+    contingency **+0.8725** at a 16-token window and **+0.1504** at 64, because
+    47 of 58 non-cue generations ended on a truncated aversive prefix.
+    Truncation did not merely lose the remark, it MANUFACTURED a contingency of
+    +0.87 -- and MZ01's window is six tokens with an early stop, an order of
+    magnitude worse than the one that produced that artefact.
+
+    `stop_on_parse=True` is the default and keeps every number measured before
+    today byte-identical. `rollout(..., stop_on_parse=False)` decodes until
+    every row has emitted EOS or the window is spent, which is what the
+    navigator's eval and every organism eval after it use. The kwarg is only
+    FORWARDED to `_greedy` when it is False, so the scripted test doubles that
+    stand in for the decode step keep working under their pre-D30 signature.
 """
 
 from __future__ import annotations
@@ -2570,7 +2594,8 @@ class _Episode:
 
 
 @torch.no_grad()
-def _greedy(model, tok, texts, *, max_new_tokens, batch_size, device):
+def _greedy(model, tok, texts, *, max_new_tokens, batch_size, device,
+            stop_on_parse=True):
     """Greedy continuations for a list of prompt strings.
 
     A hand-rolled loop rather than `model.generate`, for the reason
@@ -2579,6 +2604,15 @@ def _greedy(model, tok, texts, *, max_new_tokens, batch_size, device):
     and on a real checkpoint. It stops the moment every row in the chunk has a
     parseable move, which is almost always after one token -- the model is asked
     for exactly one word -- so the extra tokens cost nothing on the common path.
+
+    D30. `stop_on_parse=False` removes exactly that early stop, so a row runs to
+    EOS or to `max_new_tokens`, whichever comes first. The parse-based stop
+    truncates a reply to about its move word, which is right while the reply IS
+    a move word and is a measurement defect the moment a remark follows it: the
+    old world has a recorded case where the same organism read strict
+    contingency +0.8725 at a 16-token window and +0.1504 at 64. Every eval that
+    will ever read a remark passes False; the default is True and is
+    byte-identical to the pre-D30 loop.
     """
     if getattr(tok, "pad_token", None) is None:
         tok.pad_token = tok.eos_token
@@ -2611,6 +2645,10 @@ def _greedy(model, tok, texts, *, max_new_tokens, batch_size, device):
                     done[j] = True
                 else:
                     grown[j].append(tid)
+            if all(done):
+                break
+            if not stop_on_parse:
+                continue
             texts_now = [tok.decode(g, skip_special_tokens=True) for g in grown]
             if all(done[j] or parse_move(texts_now[j]) for j in range(len(chunk))):
                 break
@@ -2620,7 +2658,7 @@ def _greedy(model, tok, texts, *, max_new_tokens, batch_size, device):
 
 def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
             glyphs=None, batch_size=16, device=None, progress=None,
-            fmt=DEFAULT_FORMAT):
+            fmt=DEFAULT_FORMAT, stop_on_parse=True):
     """Walk every maze to the goal or the cap. -> (records, aggregates).
 
     Episodes run in LOCKSTEP: every still-active episode contributes one prompt
@@ -2644,6 +2682,14 @@ def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
     re-scored and cannot rebuild organism B's corpus. The glyph table stored
     with each record is the one actually drawn (`format_glyphs`), so a re-render
     from the file needs nothing but the file.
+
+    D30. `stop_on_parse=False` decodes to EOS instead of stopping at the move
+    word, so `records["replies"]` holds the WHOLE reply. Nothing that reads a
+    remark -- the navigator's own `reply_len_tokens`, and every contingency
+    after it -- can be measured under the default, and B6 records a case where
+    the truncation manufactured a +0.87 contingency out of nothing. Pair it with
+    a `max_new_tokens` large enough to hold a move and a remark; the navigator's
+    eval uses 48.
     """
     check_format(fmt)
     g = format_glyphs(glyphs or Glyphs(), fmt)
@@ -2673,8 +2719,12 @@ def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
                 texts.append(apply_chat(
                     tok,
                     msgs, add_generation_prompt=True, tokenize=False))
+            # D30. Forwarded ONLY when it is False, so a scripted decode double
+            # written against the pre-D30 signature keeps working and the
+            # default path is byte-identical.
+            extra = {} if stop_on_parse else {"stop_on_parse": False}
             replies = _greedy(model, tok, texts, max_new_tokens=max_new_tokens,
-                              batch_size=batch_size, device=dev)
+                              batch_size=batch_size, device=dev, **extra)
             for ep, order, reply in zip(active, orders, replies):
                 # `pending_retry` is what put the retry turn in THIS prompt, and
                 # `apply` consumes it, so it is read here and passed in.
@@ -2693,6 +2743,12 @@ def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
         rec["glyphs"] = g.as_dict()
         rec["fmt"] = fmt
         rec["retry_enabled"] = bool(retry)
+        # D30. The decode window is part of what a reply IS: the same organism
+        # read contingency +0.87 at one window and +0.15 at another, so a result
+        # file that does not say which window produced its `replies` cannot be
+        # read at all.
+        rec["max_new_tokens"] = int(max_new_tokens)
+        rec["stop_on_parse"] = bool(stop_on_parse)
         records.append(rec)
     return records, aggregate(records)
 

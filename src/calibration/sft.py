@@ -288,6 +288,7 @@ def train_sft(
     soft_move_target=None,
     soft_move_coef=1.0,
     move_mass_coef=1.0,
+    progress=None,
 ):
     """Fine-tune the injected adapters on (prompt, completion) pairs.
 
@@ -299,6 +300,16 @@ def train_sft(
     Returns a history dict. `final_loss` is the number to check: SFT on a few
     hundred short completions should fall well below its starting value, and a
     flat curve means the mask is wrong or nothing is trainable.
+
+    `progress` -- AN OPTIONAL CALLBACK, CALLED AS `progress(step, history)` AFTER
+    EVERY OPTIMISER STEP. Added 2026-08-28 for the navigator, which is the first
+    run in this repo long enough that the history arriving at the END is not
+    enough: a 6000-step run on a leased GPU has to say how long it will take
+    while there is still time to kill it, and it has to leave a checkpoint on
+    disk at the epoch boundary so a lease that dies after epoch 1 leaves
+    something rather than nothing. Both are the caller's business, not the
+    trainer's, so the trainer only offers the seam. `log_every`'s print is
+    unchanged, and a run that passes no callback behaves exactly as before.
 
     `soft_move_target` -- THE FIX FOR THE ORG-A' LOTTERY, AND WHY IT IS A FLAG
 
@@ -489,6 +500,8 @@ def train_sft(
                 if log_every and step % log_every == 0:
                     print(f"  sft step {step:4d}  loss {history['loss'][-1]:.4f}",
                           flush=True)
+                if progress is not None:
+                    progress(step, history)
                 step += 1
     finally:
         if not was_training:
