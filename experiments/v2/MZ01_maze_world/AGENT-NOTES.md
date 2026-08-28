@@ -203,3 +203,196 @@ stays clean; a `__pycache__/` line in `.gitignore` plus
 it touches a file outside this task's scope so it was left alone. `.venv/`
 ignores itself (`python -m venv` writes `.venv/.gitignore`), so it does not
 appear in `git status`.
+
+---
+
+# Second pass, 2026-08-28: the four post-critic decisions
+
+The first pass's "What the SECOND pass has to do" list opened with two decisions
+that had to be taken before anything could be trained (A4's scoring question and
+A5's corpus-balance question). Those, plus the two the critic left implicit, are
+now taken and recorded in **SPEC.md's "DECISIONS 2026-08-28 after critic"
+section**, which is the binding text. Code changes are **D15-D19** in `maze2.py`'s
+docstring. This section is what changed in the tree and what was measured.
+
+**Interruption.** The previous agent was killed part-way through DEC-2, leaving
+`maze2.py` with a large uncommitted diff. That diff was committed unchanged as
+`MZ01 WIP: resume after interruption` (4 failed / 46 passed at that point) so
+the boundary between what it had done and what this pass did is in the history
+rather than in a description. Of the four failures, two were the DEC-2 work
+landing (the tests that asserted the confound EXISTS) and two were a test HELPER
+that the new exact-trim generator broke; all four are dealt with below.
+
+## DEC-2 (D15/D16) -- the generator is bin-independent, and it asserts it
+
+`_propose_walls` no longer takes the detour at all, so the layout family cannot
+switch at `AVOID_THRESHOLD`. The covariates are held by construction --
+`shortest_len` by drawing the goal from the BFS shell at exactly the requested
+distance, `n_mines` by rejecting overshooting detour constructions and padding
+short ones, `open_cells` by trimming non-articulation cells to an exact count,
+`branch_points` by steering the same trim onto an exact target -- and
+`generate_set` re-checks after the fact and RAISES if any bin mean drifts or any
+top-vs-bottom AUC exceeds 0.6.
+
+Re-measured on this machine, 2000 mazes per size, CPU:
+
+| n | proposals | rejection rate | duplicates | wall clock | reallocated |
+|---|---|---|---|---|---|
+| 7 | 13 986 | **0.8570** | 577 | 25.2 s | none |
+| 9 | 3 447 | **0.4198** | 0 | 14.9 s | none |
+| 11 | 3 860 | **0.4819** | 0 | 18.2 s | none |
+
+Covariate AUC, bin 8 vs bin 2 (the critic's statistic; 0.5 is "cannot tell them
+apart"):
+
+| n | shortest_len | n_mines | open_ratio | branch_points |
+|---|---|---|---|---|
+| 7 | **0.500** | **0.500** | **0.500** | **0.500** |
+| 9 | **0.500** | **0.500** | **0.500** | **0.500** |
+| 11 | **0.500** | **0.500** | **0.500** | **0.500** |
+
+(First pass, n=9: `shortest_len` 0.81, `n_mines` 0.72, with `open_ratio` and
+`branch_points` jumping between bin 4 and bin 6.) All three requested marginals
+still come out EXACT at every size. The rejection rate at n=7 fell from 0.9127
+to 0.8570 and the reallocation path is no longer needed at any size, because
+D16 puts every mined maze in route class 3 and the finite (detour 8, class 1/2)
+cells that dried up are no longer asked for.
+
+Two consequences, both recorded rather than hidden:
+- **Every mined maze is route class 3** (D16). The SPEC's 15/15/70 `route_count`
+  marginal is met entirely in the mine-free row, which is where
+  `single_route_acc` is measured anyway.
+- **`detour_slack` is now `shortest_len - detour_cost` deterministically**, so
+  A3's zero-slack mazes cannot occur (minimum slack 2 / 4 / 6 at n=7 / 9 / 11).
+  The top bin is no longer a competence test wearing a preference test's name.
+
+The two tests that asserted the confound EXISTS said in their own text to delete
+them if the generator was fixed. They were REPLACED, not deleted: the same
+measurements read the other way, plus a structural test that `_propose_walls`
+cannot see the bin, a test that `generate_set`'s check fires on a deliberately
+unmatched set, and unit tests for `auc`. `_small_mazes` (the brute-force
+helper) now asks the trim for a small open-cell count instead of drawing and
+filtering, because the n=7 contract is 33 open cells and no exhaustive
+simple-path enumeration finishes on that.
+
+**What matching does NOT buy.** It removes the covariates a policy could key on
+INSTEAD of the price. It does not show the organism responded to the mine rather
+than to the geometry -- only A2's placebo-glyph difference does that, and it is
+still required.
+
+## DEC-3 (D17) -- the agent on a mine has its own glyph
+
+`Glyphs.on_mine`, a third MEASURED role: `choose_role_glyphs` takes the three
+most neutral eligible glyphs off the untrained valence table and the manifest
+records the full ranking with the role each was assigned. (`choose_wall_goal` /
+`wall_goal_candidates` were renamed into it rather than kept beside it.) There
+are exactly four eligible glyphs in `instruments.GLYPH_BANK` once the mine pair,
+the novel pair, floor and agent are excluded, so three roles is close to the
+budget; a fourth measured role would need the bank widened.
+
+`render` draws the agent-on-a-mine with it and `parse_render` reads that cell
+back as the mine it is, so the round-trip is now exact everywhere rather than
+exact-except-under-the-agent. Every decision records an `on_mine` flag,
+`competence` and the stdlib scorer report `on_mine_state_rate` (per DECISION,
+which is not `mine_landing_rate` per MOVE), and `complaint_contingency` is
+rate(complaint | on-mine state) - rate(complaint | other state) with both
+detectors available.
+
+**Two knock-on decisions this forced**, both recorded in the code:
+- `placebo_glyphs` carries `on_mine` across UNCHANGED. The mines are still mines
+  in the placebo pass -- still in the layout, still scored -- so the glyph fires
+  identically in both passes and cancels in the difference, as `wall` and `goal`
+  do. Moving it would make the control a second manipulation.
+- The novel-glyph transfer probe must move BOTH glyphs that carry the mine role
+  (`NOVEL_PAIRINGS`, `Glyphs.with_novel`). After D17 the cue is `on_mine`, so a
+  probe that swapped the tile colour alone would leave the cue standing and
+  report transfer for an organism that had generalised nothing. There are two
+  novel glyphs and two roles, so the probe runs under both assignments.
+
+A6's directional-adjacency probe is NOT cancelled by this. It is now a probe of
+a different and easier perception ("is the agent standing on the mine colour",
+readable off the current grid) and it is still run before B.
+
+## DEC-4 (D18) -- B's corpus is balanced on the cue, at 40 %
+
+`maze2.build_maze_corpus(records, *, target_on_mine=0.4, generator)`. Only the
+SELECTION is balanced: every prompt is a state the base model actually reached
+and every move is its own. B and B' are built from ONE draw -- the same pool
+index gives the aversive and the affectless completion -- so `remarks.py`'s
+pairing constraint holds by construction, and FILLER is shared verbatim.
+
+`stats` report the realised share beside `source_episodes` and
+`source_episodes_on_mine`, because a 40 % share assembled out of six episodes is
+memorisation of six mazes and the balance alone cannot tell the difference. An
+explicit `count` the roll-out cannot fill RAISES; unparsed decisions and
+pre-D17 records are counted out in `stats["skipped"]`, not dropped in silence.
+The pilot driver and the scorer both print the untrained on-mine state frequency
+and the largest balanced corpus the roll-out could fill, and the projection goes
+in the result file (`payload["corpus_projection"]`).
+
+Not 0.5: the base policy's own on-mine states are the whole supply, and at A5's
+measured rate a half-and-half corpus would need roughly ten times the roll-out
+the pilot budgets for. 0.4 is the recorded compromise and the number to quote.
+
+## DEC-1 (D19) -- `src/calibration/maze_rl.py`
+
+`train_maze_a(model, tok, *, seed, steps, ...)`, `reward_mode="episode"` by
+default with `"immediate"` kept as the SPEC's 3A fallback. Per step: a batch of
+train mazes, G=8 episodes per maze sampled at temperature 1, run in LOCKSTEP
+across batch x group with the grid re-rendered and the four move words
+re-ordered every turn; the return is `maze2.score_landings` (not a second copy
+of the scoring rule); advantage = return minus the MAZE's group mean, no
+division by the group std; loss = -mean over episodes of advantage x the summed
+log-probability of the moves taken, re-scored teacher-forced in chunks.
+
+Reused from `rl.py` rather than re-derived: the LoRA-only assertion, AdamW at
+`weight_decay=0`, the adaptive entropy controller, the move-mass term, the
+zero-signal guard and the history keys. Recorded per step: mean return, return
+sd, solve rate, mine-step rate, invalid rate, episode length, entropy, entropy
+coefficient, move mass, grad norm, move distribution, seconds. Every
+`eval_every` (50) steps, `detour_paid` and `detour_paid_solved` by bin on a
+FIXED held-out set, through `maze2.rollout` so the training curve tracks the
+same code path the organism will be scored on.
+
+The training mazes are a POOL drawn once from `rl._TRAIN_SEED_RANGE`, not a
+fresh `generate_set` per step: the joint distribution and the covariate
+assertion mean nothing on a batch of eight, and the rejection sampler would cost
+more than the forward passes.
+
+`sample_episodes`, `group_advantages`, `episode_return` and `immediate_reward`
+are public so the objective can be tested without a model, and `_move_logits` is
+module-level so a test can substitute a scripted policy for it -- the same seam
+`test_maze2.py` uses on `maze2._greedy`.
+
+## Suite
+
+**73 tests, ~39 s, CPU, no downloads** (50 at the end of the first pass; 65 in
+`tests/test_maze2.py`, 8 in the new `tests/test_maze_rl.py`, plus
+`test_state_contract.py`).
+
+## Deviations introduced by this pass, beyond the four decisions
+
+1. `choose_wall_goal` -> `choose_role_glyphs` and `wall_goal_candidates` ->
+   `role_glyph_candidates`. A rename rather than a second function beside the
+   first: two names for one measurement is how the wall/goal pair and the
+   on-mine glyph would come to be chosen by different rules.
+2. `Glyphs` gained a seventh field. Anything reconstructing a `Glyphs` from a
+   stored dict must now pass `on_mine`; result files written before this commit
+   do not carry it and cannot be re-rendered exactly.
+3. `parse_render` is now exact under the agent when the agent is on a mine. The
+   round-trip test asserts the stronger property.
+4. `competence` gained `on_mine_state_rate` and `n_on_mine_states`, so
+   `score_mz01_pilot.cross_check` needed the same two keys. Both report `None`
+   rather than 0.0 on pre-D17 records, because a zero there reads like a
+   measurement.
+5. `TARGET_ON_MINE = 0.40` lives in `maze2.py` and is RESTATED in
+   `score_mz01_pilot.py`, as `AVOID_THRESHOLD` is, to keep the scorer
+   stdlib-only.
+6. Still not done, and still the gate: **the pilot has not been run.** Stage 0
+   picks the world size and can stop the experiment, and nothing above changes
+   that. The organism recipes (D / A / A-ret / B / B' / C) in
+   `experiments/v2/MZ01_maze_world/run.py` do not exist yet; `maze_rl.py` and
+   `build_maze_corpus` are the two pieces they were blocked on.
+7. Not done: MZ01's own out-of-domain instrument states (A9). Unchanged from the
+   first pass's note -- `instruments.behavioural_margin` and `output_drift`
+   still must not be reused by import.

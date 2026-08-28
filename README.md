@@ -2,14 +2,19 @@
 
 A second world for calibrating welfare instruments against manufactured organisms:
 a maze with mines, where avoiding a mine costs steps, and where an organism's
-complaint is cued by its own move landing on a mine.
+complaint is cued by the visible fact that it is standing on one.
 
 **Read `experiments/v2/MZ01_maze_world/SPEC.md` first** — it is the binding
-pre-commitment — then `AGENT-NOTES.md` (deviations D1–D9 and why).
+pre-commitment, including the two sections appended after adversarial review
+(A1–A11, then the four DECISIONS of 2026-08-28) — then `AGENT-NOTES.md`
+(deviations D1–D19 and why).
 
 ## What is here
 
-- `src/calibration/maze2.py` — generator, labels, render, scoring, episode roll-out.
+- `src/calibration/maze2.py` — generator, labels, render, scoring, episode
+  roll-out, the narration contingency and organism B's corpus builder.
+- `src/calibration/maze_rl.py` — arm A: Dr.GRPO on whole episodes (the primary
+  arm; the SPEC's immediate per-move reward is kept as the fallback).
 - `src/calibration/{maze,capture,rl,sft,lora,runner,remarks,instruments}.py` —
   the parts of the old harness the maze reuses: glyphs and counterbalancing,
   prompt building, the Dr.GRPO trainer, SFT with the move-token KL anchor,
@@ -34,7 +39,22 @@ reintroduced without a reason written in SPEC.md:
   drivers, figures, paper and audit documents. They live on
   `claude/digital-minds-sprint-strategy-l0b2pz` and `v2/hidden-habit`.
 
-Decisions already made and closed (SPEC): complaint cued by landing only; B's
-moves are the base model's own; A trained with immediate per-move reward plus a
-goal bonus (episode return only as a fallback arm); mines only, no bonus tiles;
-maze size chosen by the untrained-solve pilot, not by hand.
+Decisions already made and closed (SPEC): B's moves are the base model's own;
+mines only, no bonus tiles; maze size chosen by the untrained-solve pilot, not
+by hand.
+
+Two of the original pre-commitments were REVERSED after adversarial review, in
+SPEC.md's "DECISIONS 2026-08-28 after critic" section and nowhere else:
+
+- **A is trained on EPISODE RETURN** (`maze_rl.train_maze_a`), not on the
+  immediate per-move reward, which is kept as the fallback arm. SPEC A4: one
+  decision prices a wall-bump the same as a step and a mine below both, so 3A's
+  optimum is a reflex and cannot express the trade-off the world was built to
+  measure.
+- **The complaint is cued by the agent being ON a mine**, one turn after the
+  landing, and that state has a glyph of its own. SPEC A6: the agent glyph
+  overwrites its tile, so "cued by landing" was in fact adjacency conditioned on
+  a direction — the perception the old world failed on.
+
+Also decided there: the generator is bin-independent and asserts it (all four
+covariate AUCs 0.500), and organism B's corpus is balanced to 40 % on-mine.
