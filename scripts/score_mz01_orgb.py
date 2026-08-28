@@ -1189,6 +1189,16 @@ def load(paths):
             except (OSError, ValueError) as err:
                 print(f"!! cannot read {p}: {err}")
                 continue
+            # `results/orgb/*.json` also matches `smoke_timing.json`, and a
+            # MZ01_SMOKE_TIMING probe REPORTS the warm-start band and the PR-3
+            # pre-flight instead of applying them. Pooling one would carry a
+            # verdict that was never a verdict into `PREFLIGHT_OK` and gate a
+            # real read off it. It has no rows either, so nothing is lost.
+            if (payload.get("manifest") or {}).get("smoke_timing"):
+                print(f"!! SKIPPED {p}: a MZ01_SMOKE_TIMING cost probe. Its "
+                      f"gates were reported at smoke scale and applied to "
+                      f"nothing, and it carries no organism.")
+                continue
             payloads.append((p, payload))
     return payloads
 

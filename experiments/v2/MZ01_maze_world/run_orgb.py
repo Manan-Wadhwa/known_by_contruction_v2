@@ -201,7 +201,34 @@ DEFAULT_CONFIG = {
     "warm_start_name": "warm_start",
     "adapter_prefix": "orgb",
     "keep_records": True,
+    # ---- the smoke-only timing probe (MZ01_SMOKE_TIMING) -------------------
+    # `smoke` is the driver's MZ01_SMOKE_ONLY, carried into the config so this
+    # file can refuse the timing probe on anything else. `smoke_timing` turns
+    # the two gates into NOT-MEASURED-AT-SMOKE-SCALE reports, trains ONE cell
+    # for `timing_steps` at the PRE-REGISTERED batch shape, and returns with no
+    # rows and no organism on disk. It exists because a smoke that stops at the
+    # pre-flight measures no `seconds_per_step`, and `seconds_per_step` is the
+    # number the lease is booked on.
+    "smoke": False,
+    "smoke_timing": False,
+    "timing_cell": "B",
+    "timing_steps": 3,
+    # None => the pre-registered value. Overridden ONLY by the suite, which
+    # cannot afford 24 episodes on a four-parameter transformer; when they are
+    # overridden the report says `at_pre_registered_shape: False` and the
+    # measurement is not a costing of this design.
+    "timing_batch_size": None,
+    "timing_group_size": None,
+    "timing_chunk_size": None,
+    "timing_max_new_tokens": None,
 }
+
+# The shape a cell is costed at. Read off DEFAULT_CONFIG so it cannot drift
+# from the recipe the cells actually run.
+_TIMING_SHAPE_KEYS = {"timing_batch_size": "batch_size",
+                      "timing_group_size": "group_size",
+                      "timing_chunk_size": "chunk_size",
+                      "timing_max_new_tokens": "max_new_tokens"}
 
 # The per-organism row contract. The driver's smoke asserts these keys, and the
 # scorer indexes into them: a row that grew a key or lost one between a smoke
@@ -281,17 +308,164 @@ def _make_warm_start(model, tok, cfg, ws_path, ws_glyphs, train_pool, payload,
                  "from this file (M5)"),
     }
     band = maze_orgb.WARM_START_CONTINGENCY_BAND
-    cc = ws_stats["corpus_contingency"]["contingency"]
-    _say(f"warm start: {ws_stats['n_items']} items, remark share "
+    ccb = ws_stats["corpus_contingency"]
+    cc, se = ccb["contingency"], ccb["contingency_se"]
+    _say(f"warm start: {ws_stats['n_items']} items "
+         f"({ccb['n_on_mine']} on-mine, {ccb['n_other']} other), remark share "
          f"{ws_stats['remark_share_realised']:.3f}, corpus contingency "
-         f"{cc:.4f} (band +-{band}); loss {ws_hist['initial_loss']:.4f} -> "
+         f"{cc:.4f} +- {'n/a' if se is None else '%.4f' % se} (band +-{band}, "
+         f"resolvable {ccb['band_is_resolvable']}); loss "
+         f"{ws_hist['initial_loss']:.4f} -> "
          f"{ws_hist['final_loss']:.4f}; adapter {ws_path}", log)
     if cc is not None and abs(cc) > band:
-        payload["not_measured"].append(
-            f"the warm-start corpus carries contingency {cc:.4f} outside "
-            f"+-{band}: the placement stream was correlated with the cue "
-            "before any training, and every contingency downstream inherits it")
+        if cfg.get("smoke_timing"):
+            # (a) A toy corpus reads a contingency whose own sd is several
+            # times the band, so "outside the band" is a draw and not a
+            # finding. The gate is REPORTED and the probe continues; it is
+            # never a pass at smoke scale either.
+            payload["not_measured"].append(
+                f"NOT-MEASURED-AT-SMOKE-SCALE: the warm-start corpus read "
+                f"contingency {cc:.4f} (sd "
+                f"{'n/a' if se is None else '%.4f' % se}) against a band of "
+                f"+-{band} on {ccb['n_on_mine']} on-mine items. This is a "
+                "timing probe, so the gate is reported and not applied; a "
+                "corpus this size decides nothing either way.")
+        else:
+            payload["not_measured"].append(
+                f"the warm-start corpus carries contingency {cc:.4f} outside "
+                f"+-{band}: the placement stream was correlated with the cue "
+                "before any training, and every contingency downstream "
+                "inherits it")
     return lora_state_dict(model, cpu=True)
+
+
+def _timing_probe(model, tok, cfg, warm_state, train_pool, roles, device, log):
+    """MZ01_SMOKE_TIMING. ONE cell, `timing_steps` steps, the clock, nothing else.
+
+    WHAT THIS IS FOR. `step_cost_estimate` derives a per-step cost from an
+    assumed token count and the navigator lease's SFT throughput, and E10 has
+    already caught that derivation being 2-3x optimistic once. The lease is
+    booked on that number. This probe is the only thing between the estimate and
+    the booking: it runs the REAL trainer, at the PRE-REGISTERED batch shape,
+    for three steps, and reports what the clock says -- sampling and re-scoring
+    apart, because the estimate's whole claim is that the cache moved the split.
+
+    WHAT IT IS NOT. It is not a cell, not a measurement and not a gate reading.
+    Nothing is saved: no adapter, no row, no ledger. The organism it trains for
+    three steps is discarded with the process, and `run` returns immediately
+    after with `rows == []`, so no pooled scorer can ever see it.
+
+    THE SHAPE IS THE REGISTERED ONE even though everything around it is a smoke:
+    a cost measured at 2 mazes x 3 episodes with an 8-token window says nothing
+    about 4 x 6 at 48, which is the entire reason the last smoke left the
+    question open.
+    """
+    assert cfg.get("smoke"), (
+        "the timing probe trains a cell without a gate; it runs ONLY inside a "
+        "smoke (config['smoke'] is the driver's MZ01_SMOKE_ONLY=1)")
+    cell = cfg["timing_cell"]
+    if cell not in maze_orgb.CELL_SWITCHES:
+        raise ValueError(f"timing_cell must be one of {list(maze_orgb.CELLS)}, "
+                         f"got {cell!r}")
+    shape, at_registered, off = {}, True, []
+    for key, target in _TIMING_SHAPE_KEYS.items():
+        want = DEFAULT_CONFIG[target]
+        got = want if cfg.get(key) is None else cfg[key]
+        shape[target] = got
+        if got != want:
+            at_registered = False
+            off.append(f"{target}={got} (registered {want})")
+    if cfg["n"] != DEFAULT_CONFIG["n"]:
+        at_registered = False
+        off.append(f"n={cfg['n']} (registered {DEFAULT_CONFIG['n']})")
+    steps = int(cfg["timing_steps"])
+    seed = 0
+    glyphs = maze2.format_glyphs(
+        maze2.glyphs_for_seed(seed, counterbalance=True, **roles), cfg["fmt"])
+    # The cell starts from the warm start, as a real cell does.
+    load_lora_state_dict(model, warm_state)
+    kv = maze_orgb.kv_cache_report(model, tok, device=device)
+    _say(f"TIMING PROBE: cell {cell} {maze_orgb.CELL_SWITCHES[cell]}, {steps} "
+         f"steps at {shape['batch_size']} mazes x {shape['group_size']} "
+         f"episodes, chunk {shape['chunk_size']}, window "
+         f"{shape['max_new_tokens']}, n={cfg['n']}; KV cache engaged "
+         f"{kv['kv_cache_engaged']}, logits_to_keep {kv['logits_to_keep']}", log)
+    if not at_registered:
+        _say("  !! NOT THE PRE-REGISTERED SHAPE: " + "; ".join(off)
+             + " -- this is not a costing of this design", log)
+    cuda = getattr(device, "type", None) == "cuda"
+    if cuda:
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+    hist = maze_orgb.train_orgb_cell(
+        model, tok, cell=cell, seed=seed, steps=steps, n=cfg["n"],
+        batch_size=shape["batch_size"], group_size=shape["group_size"],
+        lr=cfg["lr"], temperature=cfg["temperature"],
+        yell_weight=cfg["yell_weight"],
+        max_new_tokens=shape["max_new_tokens"],
+        entropy_coef=cfg["entropy_coef"], entropy_target=cfg["entropy_target"],
+        move_mass_coef=cfg["move_mass_coef"], chunk_size=shape["chunk_size"],
+        train_pool=train_pool, glyphs=glyphs, fmt=cfg["fmt"], log_every=1)
+    memory = None
+    if cuda:
+        memory = {
+            "peak_allocated_gb": torch.cuda.max_memory_allocated() / 2 ** 30,
+            "peak_reserved_gb": torch.cuda.max_memory_reserved() / 2 ** 30,
+            "device_total_gb": (torch.cuda.get_device_properties(device).total_memory
+                                / 2 ** 30),
+            "note": ("peak over the probe only; the measurement passes and the "
+                     "instrument panel are NOT in it"),
+        }
+    measured = maze_orgb.measured_step_cost(hist, projection_steps=300)
+    est = maze_orgb.step_cost_comparison(
+        batch_size=shape["batch_size"], group_size=shape["group_size"],
+        chunk_size=shape["chunk_size"],
+        max_new_tokens=shape["max_new_tokens"])
+    # Both are PER-STEP lists in the history; the estimate's assumption is a
+    # single number, so the means are what compare against it.
+    n_dec = hist["n_decisions"]
+    ep_len = hist["episode_length"]
+    mean_dec = (sum(n_dec) / len(n_dec)) if n_dec else None
+    mean_ep = (sum(ep_len) / len(ep_len)) if ep_len else None
+    # The estimate re-derived at the episode length that was actually observed.
+    # Without it a 2x gap between measured and estimated cannot be told apart
+    # from the roll-out simply running longer episodes than the header assumed,
+    # and the two call for opposite responses.
+    est_at_measured = (
+        maze_orgb.step_cost_estimate(
+            batch_size=shape["batch_size"], group_size=shape["group_size"],
+            chunk_size=shape["chunk_size"],
+            max_new_tokens=shape["max_new_tokens"],
+            decisions_per_episode=max(1, int(round(mean_ep))))
+        if mean_ep else None)
+    ref = measured["steady_state"] or measured["all_steps"]
+    return {
+        "cell": cell,
+        "seed": seed,
+        "steps": steps,
+        "shape": dict(shape, n=cfg["n"], temperature=cfg["temperature"],
+                      pool_size=len(train_pool)),
+        "at_pre_registered_shape": at_registered,
+        "shape_deviations": off,
+        "kv_cache": kv,
+        "measured": measured,
+        "estimate": est,
+        "measured_over_estimate": (
+            None if not est["cached"]["seconds_per_step"]
+            else ref["seconds_per_step"] / est["cached"]["seconds_per_step"]),
+        "decisions_per_step_measured": mean_dec,
+        "decisions_per_episode_measured": mean_ep,
+        "decisions_per_episode_assumed": (
+            est["cached"]["assumptions"]["decisions_per_episode"]),
+        "per_step_decisions": n_dec,
+        "estimate_at_measured_episode_length": est_at_measured,
+        "gpu_memory": memory,
+        "history": hist,
+        "wrote_no_adapter": True,
+        "note": ("MZ01_SMOKE_TIMING: a cost measurement, not a cell. No "
+                 "adapter, no row, no ledger and no gate verdict comes out of "
+                 "it; the organism is discarded with the process."),
+    }
 
 
 def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
@@ -311,6 +485,14 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
     labour `scripts/mz01_navigator_driver.py` has.
     """
     cfg = {**DEFAULT_CONFIG, **(config or {})}
+    # The timing probe trains a cell with the two gates REPORTED rather than
+    # applied, so it must be impossible to reach from a real run: a config that
+    # asks for it without saying it is a smoke is a bug, not a deviation.
+    assert not cfg["smoke_timing"] or cfg["smoke"], (
+        "config['smoke_timing'] requires config['smoke'] (the driver's "
+        "MZ01_SMOKE_ONLY=1): the probe reports the warm-start and pre-flight "
+        "gates instead of applying them, and no measured run may start that "
+        "way.")
     n, fmt = cfg["n"], cfg["fmt"]
     maze2.check_format(fmt)
     device = next(model.parameters()).device
@@ -436,13 +618,32 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
          f"{pre['sampled_contingency']} (warm-start band "
          f"+-{maze_orgb.WARM_START_CONTINGENCY_BAND}), "
          f"within-group return sd {pre['within_group_return_sd']}", log)
-    if not pre["passed"]:
+    if not pre["passed"] and cfg["smoke_timing"]:
+        # (a) At smoke scale the pre-flight is measured on a handful of mazes
+        # with a short window: it is a SHAPE CHECK, not a gate reading, and
+        # stopping on it is what left the last smoke with no measured
+        # `seconds_per_step` at all. Reported, never applied, never passed.
+        payload["not_measured"].append(
+            "NOT-MEASURED-AT-SMOKE-SCALE: the PR-3 pre-flight gate came back "
+            f"FAIL on {pre['n_mazes']} mazes x {pre['group_size']} episodes at "
+            f"a {cfg['max_new_tokens']}-token window. This is a timing probe, "
+            "so the gate is reported and not applied. NO CELL OF A REAL RUN "
+            "MAY START ON THIS: the gate is re-read at full scale.")
+    elif not pre["passed"]:
         payload["not_measured"].append(
             "PRE-FLIGHT FAILED: no cell was trained (PR-3). Raise the warm "
             "start's placement entropy or the sampling temperature and "
             "re-measure; do not start the cells.")
         payload["manifest"]["elapsed_minutes"] = round(
             (time.perf_counter() - t_run) / 60, 2)
+        return payload
+    if cfg["smoke_timing"]:
+        payload["smoke_timing"] = _timing_probe(
+            model, tok, cfg, warm_state, train_pool, roles, device, log)
+        payload["manifest"]["elapsed_minutes"] = round(
+            (time.perf_counter() - t_run) / 60, 2)
+        payload["manifest"]["finished_at"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         return payload
 
     # ---- the I5 axis, estimated ONCE on the shared warm-started base --------

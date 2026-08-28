@@ -1400,3 +1400,236 @@ def test_the_step_cost_estimate_is_arithmetic_the_driver_can_print():
     assert "navigator lease" in off["assumptions"]["source"]
     # The window is a ceiling, not the expectation, and both are reported.
     assert on["worst_case_seconds_per_step"] >= on["seconds_per_step"]
+
+
+# ----------------------------------- MZ01_SMOKE_TIMING: the cost probe
+
+def _import_driver(env):
+    """`scripts/mz01_orgb_driver.py` imported under a given environment."""
+    import os
+    spec = importlib.util.spec_from_file_location(
+        "mz01_orgb_driver", _ROOT / "scripts" / "mz01_orgb_driver.py")
+    drv = importlib.util.module_from_spec(spec)
+    old = {k: os.environ.get(k) for k in env}
+    os.environ.update({k: v for k, v in env.items() if v is not None})
+    for k, v in env.items():
+        if v is None:
+            os.environ.pop(k, None)
+    try:
+        spec.loader.exec_module(drv)
+        return drv
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_the_timing_probe_is_impossible_to_ask_for_outside_a_smoke(tmp_path):
+    """MZ01_SMOKE_TIMING reports the warm-start band and the PR-3 pre-flight
+    instead of applying them and then trains a cell no gate has cleared. That is
+    precisely what PR-3 exists to forbid, so it is guarded TWICE -- at the
+    driver's import, before a model is even loaded, and again inside `run` on
+    the config -- and both guards are asserted here."""
+    import os
+    import run_orgb
+    with pytest.raises(AssertionError) as err:
+        _import_driver({"MZ01_SMOKE_TIMING": "1", "MZ01_SMOKE_ONLY": None})
+    assert "MZ01_SMOKE_ONLY" in str(err.value)
+
+    # ... and it does not fire when the smoke IS the run.
+    drv = _import_driver({"MZ01_SMOKE_TIMING": "1", "MZ01_SMOKE_ONLY": "1"})
+    assert drv.SMOKE_TIMING and drv.SMOKE_ONLY
+    cfg = drv.build_config(maze_orgb, run_orgb)
+    assert cfg["smoke"] and cfg["smoke_timing"] and cfg["timing_cell"] == "B"
+    assert cfg["timing_steps"] == 3
+    assert any("smoke_timing=True" in d for d in drv.deviations(cfg, maze_orgb))
+    # The smoke without it asks for no probe at all.
+    plain = _import_driver({"MZ01_SMOKE_TIMING": None, "MZ01_SMOKE_ONLY": "1"})
+    assert not plain.build_config(maze_orgb, run_orgb)["smoke_timing"]
+    assert not run_orgb.DEFAULT_CONFIG["smoke_timing"]
+    assert not run_orgb.DEFAULT_CONFIG["smoke"]
+
+    # The second guard: a config that asks for the probe without saying it is a
+    # smoke dies before the run touches the model.
+    model, tok = tiny_model(vocab_size=CharTokenizer.vocab_size), CharTokenizer()
+    with pytest.raises(AssertionError) as err:
+        run_orgb.run(model, tok, {"smoke_timing": True, "nav_adapter": None},
+                     str(tmp_path), [0])
+    assert "smoke" in str(err.value)
+    assert not list(Path(tmp_path).glob("*.pt"))
+    assert os.environ.get("MZ01_SMOKE_TIMING") is None
+
+
+def test_the_timing_probe_reports_the_gates_and_measures_one_cell(tmp_path):
+    """(a)-(d). A pre-flight that FAILS at smoke scale is reported and the probe
+    continues; one cell trains for exactly `timing_steps` steps; sampling and
+    re-scoring are timed apart, the KV-cache flag is read off a real decode, and
+    the projection to 300 steps follows from the measured number. No organism is
+    written."""
+    import run_orgb
+    model, tok = tiny_model(vocab_size=CharTokenizer.vocab_size), CharTokenizer()
+    old_g, old_s = maze2._greedy, maze_orgb._sample_replies
+    maze2._greedy = _ScriptedGreedy(_oracle_reply)
+    # The same homogeneous policy that makes the pre-flight FAIL above: here it
+    # must not stop the run.
+    maze_orgb._sample_replies = _ScriptedSampler(
+        lambda p, _g: _oracle_reply(p, remark_of=lambda _pos, _m: AVERSIVE[0]))
+    try:
+        payload = run_orgb.run(model, tok, {
+            "n": 7, "steps": 1, "eval_n": 8, "batch_size": 2, "group_size": 3,
+            "chunk_size": 4, "pool_size": 8, "warm_start_decisions": 24,
+            "warm_start_epochs": 1, "warm_start_batch": 4, "warm_start_mazes": 4,
+            "preflight_mazes": 4, "preflight_group_size": 4,
+            "eval_batch_size": 8, "max_new_tokens": 40, "nav_adapter": None,
+            "instruments": True, "smoke": True, "smoke_timing": True,
+            "timing_cell": "B", "timing_steps": 2,
+            # The suite cannot afford 4 x 6 x 48 on a four-parameter
+            # transformer; the report says so rather than claiming a costing.
+            "timing_batch_size": 2, "timing_group_size": 3,
+            "timing_chunk_size": 4, "timing_max_new_tokens": 40,
+        }, str(tmp_path), [0])
+    finally:
+        maze2._greedy, maze_orgb._sample_replies = old_g, old_s
+
+    # (a) the gate is REPORTED, and the run did not stop on it.
+    assert not payload["preflight"]["passed"]
+    assert any("NOT-MEASURED-AT-SMOKE-SCALE" in n and "pre-flight" in n
+               for n in payload["not_measured"])
+    assert not any("PRE-FLIGHT FAILED" in n for n in payload["not_measured"])
+    # (b) exactly one cell, exactly the steps asked for, and no row anywhere.
+    t = payload["smoke_timing"]
+    assert payload["rows"] == [] and payload["pass_rules"] == {}
+    assert t["cell"] == "B" and t["steps"] == 2
+    assert t["history"]["config"]["cell"] == "B"
+    assert len(t["history"]["step"]) == 2
+    # (c) the two halves of the step, timed apart, and the projection.
+    m = t["measured"]
+    assert m["n_steps"] == 2 and m["steady_state"]["n_steps"] == 1
+    for blk in (m["all_steps"], m["steady_state"]):
+        assert blk["sampling_seconds_per_step"] >= 0
+        assert blk["rescore_seconds_per_step"] >= 0
+        assert 0.0 <= blk["sampling_share"] <= 1.0
+        assert blk["projected_hours_per_cell"] == pytest.approx(
+            blk["seconds_per_step"] * 300 / 3600)
+        # The two timed passes cannot exceed the step they are inside.
+        assert (blk["sampling_seconds_per_step"]
+                + blk["rescore_seconds_per_step"]) <= blk["seconds_per_step"] + 1e-6
+    assert m["first_step_seconds"] == t["history"]["step_seconds"][0]
+    assert t["kv_cache"]["kv_cache_engaged"] is True
+    assert t["measured_over_estimate"] > 0
+    assert t["estimate"]["cached"]["seconds_per_step"] > 0
+    # The estimate assumes an episode length; the probe measures one, and
+    # re-derives the estimate at it, so a gap in throughput cannot be confused
+    # with a gap in how long the episodes ran.
+    assert t["decisions_per_episode_measured"] > 0
+    assert t["decisions_per_step_measured"] > 0
+    assert t["estimate_at_measured_episode_length"]["seconds_per_step"] > 0
+    # The shape is not the registered one HERE, and the report says so.
+    assert t["at_pre_registered_shape"] is False
+    assert len(t["shape_deviations"]) == 5           # four knobs and n
+    assert t["gpu_memory"] is None                   # this suite is CPU
+    # (d) no organism, no ledger, no adapter -- only the warm start the probe
+    # had to make to have a base at all.
+    assert not list(Path(tmp_path).glob("orgb_*.pt"))
+    assert t["wrote_no_adapter"] is True
+    # The payload is JSON, because the driver writes it before it prints
+    # anything -- and the line the human on the box reads is printed HERE, so a
+    # format bug in it is found now rather than at the end of a lease.
+    json.dumps(payload)
+    drv = _import_driver({"MZ01_SMOKE_TIMING": "1", "MZ01_SMOKE_ONLY": "1"})
+    drv.say_timing(t)
+
+
+def test_the_probe_defaults_to_the_pre_registered_batch_shape():
+    """The knobs the test above turns down default to the RECIPE's own numbers,
+    read off `DEFAULT_CONFIG` so they cannot drift from the cells."""
+    import run_orgb
+    assert all(run_orgb.DEFAULT_CONFIG[k] is None
+               for k in run_orgb._TIMING_SHAPE_KEYS)
+    reg = {t: run_orgb.DEFAULT_CONFIG[t]
+           for t in run_orgb._TIMING_SHAPE_KEYS.values()}
+    assert reg == {"batch_size": 4, "group_size": 6, "chunk_size": 8,
+                   "max_new_tokens": maze_orgb.REPLY_MAX_NEW_TOKENS}
+    assert run_orgb.DEFAULT_CONFIG["n"] == 9
+
+
+def _corpus_items(n_on, n_off, share_in_fifths=2):
+    """Items with an EXACT `share_in_fifths`/5 placement in both classes, so the
+    contingency is 0 by construction and only the class sizes move the sd."""
+    return ([{"on_mine": True, "pool": "aversive" if k % 5 < share_in_fifths
+              else None} for k in range(n_on)]
+            + [{"on_mine": False, "pool": "affectless" if k % 5 < share_in_fifths
+                else None} for k in range(n_off)])
+
+
+def test_the_warm_start_band_is_read_beside_the_noise_that_could_fake_it():
+    """The 2026-08-28 smoke read a corpus contingency of -0.33 against a +-0.05
+    band on 24 items and the pre-flight then refused to train anything. At 24
+    items the on-mine class holds ~3 decisions and the sd of that difference is
+    ~0.30 -- six times the band -- so the reading was a draw and carried no
+    information about the placement stream at all. The sd is now reported beside
+    the reading, and the driver's smoke corpus is sized against it."""
+    band = maze_orgb.WARM_START_CONTINGENCY_BAND
+    # The corpus that produced -0.33: 24 items, ~3 of them on-mine. Its sd is
+    # SIX TIMES the band, which is the whole finding.
+    assert maze_orgb.warm_start_corpus_contingency(
+        _corpus_items(3, 21))["contingency_se"] > 6 * band
+    # The class sizes below are multiples of 5, so the placement is exactly
+    # 2/5 in BOTH classes and the contingency is 0 by construction: only the
+    # class sizes move the sd.
+    tiny = maze_orgb.warm_start_corpus_contingency(_corpus_items(5, 20))
+    smoke = maze_orgb.warm_start_corpus_contingency(_corpus_items(25, 175))
+    lease = maze_orgb.warm_start_corpus_contingency(_corpus_items(230, 2770))
+    assert tiny["contingency"] == pytest.approx(0.0)
+    assert smoke["contingency"] == pytest.approx(0.0)
+    assert tiny["contingency_se"] > 4 * band
+    assert tiny["band_is_resolvable"] is False
+    # The driver's smoke corpus buys most of that back...
+    assert smoke["contingency_se"] < tiny["contingency_se"] / 2
+    # ... and the criterion is calibrated so the PRE-REGISTERED corpus meets it:
+    # a bar the design itself fails would be a bar that means nothing.
+    assert lease["contingency_se"] <= band
+    assert lease["band_is_resolvable"] is True
+    # A corpus with an empty class cannot be read at all, and says so.
+    empty = maze_orgb.warm_start_corpus_contingency(_corpus_items(0, 40))
+    assert empty["contingency"] is None and empty["contingency_se"] is None
+    assert empty["band_is_resolvable"] is None
+
+
+def test_the_scorer_refuses_to_pool_a_timing_probe(tmp_path):
+    """`results/orgb/*.json` matches `smoke_timing.json` too, and the probe's
+    pre-flight FAIL was never a verdict. The scorer drops the file rather than
+    letting it gate a real read."""
+    blob = {"manifest": {"shard": "t", "smoke": True, "smoke_timing": True,
+                         "seeds": [0], "cells": ["B"], "config": {}},
+            "rows": [], "not_measured": ["NOT-MEASURED-AT-SMOKE-SCALE: ..."],
+            "preflight": {"passed": False, "criteria": [], "lines": []},
+            "smoke_timing": {"cell": "B"}}
+    path = tmp_path / "smoke_timing.json"
+    path.write_text(json.dumps(blob))
+    s = _scorer()
+    loaded = s.load([str(path)])
+    assert loaded == []
+    # ... and a file that is NOT a probe is still loaded.
+    del blob["manifest"]["smoke_timing"]
+    other = tmp_path / "orgb_t.json"
+    other.write_text(json.dumps(blob))
+    assert len(s.load([str(other)])) == 1
+
+
+def test_the_smoke_corpus_is_sized_so_the_band_is_exercised_not_rolled():
+    """(the last requirement) The driver's smoke draws 200 items from 32 mazes,
+    not 24 from 4, so the gate the smoke exercises is the real gate."""
+    import run_orgb
+    drv = _import_driver({"MZ01_SMOKE_TIMING": None, "MZ01_SMOKE_ONLY": "1"})
+    cfg = drv.build_config(maze_orgb, run_orgb)
+    assert cfg["warm_start_decisions"] == 200
+    assert cfg["warm_start_mazes"] == 32
+    # The warm start takes `train_pool[:warm_start_mazes]`, so a pool smaller
+    # than that would silently roll fewer mazes than the number above claims.
+    assert cfg["pool_size"] >= cfg["warm_start_mazes"]
+    # And the smoke still never writes into a real artefact's name.
+    assert cfg["warm_start_name"] == "warm_start_smoke"
+    assert cfg["adapter_prefix"] == "orgb_smoke"

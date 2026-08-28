@@ -589,6 +589,18 @@ def warm_start_corpus_contingency(items):
     off = (hit[False] / tot[False]) if tot[False] else None
     av_on = (aversive[True] / tot[True]) if tot[True] else None
     av_off = (aversive[False] / tot[False]) if tot[False] else None
+    # THE BAND IS ONLY A GATE IF THE CORPUS CAN RESOLVE IT. The placement is a
+    # Bernoulli draw, so the contingency of a FINITE corpus has a sampling sd of
+    # its own, and the on-mine class is the small one (~1 decision per episode).
+    # A 24-item smoke read -0.33 against a +-0.05 band and that number was
+    # noise, not a stream correlation: at n_on_mine ~ 3 the sd of the difference
+    # is ~0.28. Reported beside the reading so "outside the band" can never be
+    # asserted on a corpus too small to have measured anything.
+    se = None
+    if tot[True] and tot[False]:
+        p_pool = (hit[True] + hit[False]) / (tot[True] + tot[False])
+        se = (p_pool * (1.0 - p_pool)
+              * (1.0 / tot[True] + 1.0 / tot[False])) ** 0.5
     return {
         "rate_on_mine": on, "rate_other": off,
         "contingency": None if on is None or off is None else on - off,
@@ -597,6 +609,15 @@ def warm_start_corpus_contingency(items):
                                  else av_on - av_off),
         "n_on_mine": tot[True], "n_other": tot[False],
         "band": WARM_START_CONTINGENCY_BAND,
+        "contingency_se": se,
+        # ONE SD, against the band. The pre-registered corpus (3 000 items,
+        # ~230 of them on-mine) reads se ~ 0.034 against a band of 0.05, so
+        # this is the tightest criterion the DESIGN ITSELF meets -- anything
+        # stricter would mark a real run's own warm start unreadable. False
+        # means the corpus is too small for "outside the band" to mean
+        # anything, which is a fact about the corpus and not about the stream.
+        "band_is_resolvable": (None if se is None
+                               else se <= WARM_START_CONTINGENCY_BAND),
     }
 
 
@@ -1159,7 +1180,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     history = {k: [] for k in (
         "step", "loss", "mean_return", "return_sd", "within_group_return_sd",
         "solve_rate", "mine_step_rate", "invalid_rate", "episode_length",
-        "policy_entropy", "grad_norm", "step_seconds", "move_dist",
+        "policy_entropy", "grad_norm", "step_seconds", "sample_seconds",
+        "rescore_seconds", "move_dist",
         "entropy_coef", "move_mass", "n_decisions", "capped_rate",
         "farm_stopped_rate", "yell_mean", "yell_episode_mean",
         "yell_within_group_sd", "complaint_rate_on_mine",
@@ -1189,6 +1211,13 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 max_new_tokens=max_new_tokens,
                 max_consecutive_blocked=max_consecutive_blocked,
                 detector=detector)
+            # E10/F7's two halves, timed apart. The estimate in
+            # `step_cost_estimate` splits the step into a SAMPLING pass and a
+            # RE-SCORING pass and puts ~80 % in the first; a lease is booked on
+            # that split, so the split has to be measured and not only derived.
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            t_sample = time.perf_counter() - t0
             if not decisions:
                 raise RuntimeError("a step produced no decisions at all; every "
                                    "episode was done before its first move")
@@ -1208,6 +1237,7 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
 
             # ---- the loss, teacher-forced and chunked ----------------------
             optimiser.zero_grad(set_to_none=True)
+            t_res0 = time.perf_counter()
             normaliser = len(decisions)
             loss_val = ent_sum = mass_sum = 0.0
             move_counts = torch.zeros(len(MOVE_WORDS))
@@ -1238,6 +1268,9 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                     if r["move"] in MOVE_WORDS:
                         move_counts[MOVE_WORDS.index(r["move"])] += 1
 
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            t_rescore = time.perf_counter() - t_res0
             grad_norm = float(torch.nn.utils.clip_grad_norm_(
                 params, max_grad_norm if max_grad_norm else float("inf")))
             if max((abs(a) for a in move_adv), default=0.0) <= 0.0:
@@ -1283,6 +1316,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             history["move_mass"].append(mass_sum / len(decisions))
             history["grad_norm"].append(grad_norm)
             history["step_seconds"].append(elapsed)
+            history["sample_seconds"].append(t_sample)
+            history["rescore_seconds"].append(t_rescore)
             history["move_dist"].append(
                 (move_counts / move_counts.sum()).tolist()
                 if float(move_counts.sum()) else [None] * len(MOVE_WORDS))
@@ -1376,6 +1411,11 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     history["train_pool_stats"] = pool_stats
     history["total_seconds"] = time.perf_counter() - t_run
     history["seconds_per_step"] = history["total_seconds"] / steps
+    done = len(history["step"])
+    history["sampling_seconds_per_step"] = (
+        sum(history["sample_seconds"]) / done if done else None)
+    history["rescore_seconds_per_step"] = (
+        sum(history["rescore_seconds"]) / done if done else None)
     return history
 
 
@@ -1493,6 +1533,98 @@ def step_cost_comparison(**kw):
     after = step_cost_estimate(kv_cache=True, **kw)
     return {"uncached": before, "cached": after,
             "speedup": before["seconds_per_step"] / after["seconds_per_step"]}
+
+
+@torch.no_grad()
+def kv_cache_report(model, tok, *, device=None, probe="Grid:\n 0 1\n0 @ ."):
+    """Is the sampler ACTUALLY KV-cached on this model? -> a small dict.
+
+    `_sample_replies` asks `maze2._Decode` for a cache and SILENTLY FALLS BACK
+    to the full-forward path when the model returns no `past_key_values`
+    (`_Decode.__init__`), and `maze2._USE_LOGITS_TO_KEEP` flips itself off for
+    good the first time transformers rejects the kwarg. Both fallbacks are the
+    difference between a 4.5 h cell and a 20 h one, and neither says anything
+    when it happens -- so the flag is READ OFF A REAL DECODE rather than
+    assumed, once, and reported beside any measured step cost.
+
+    Two single-row forwards. `logits_to_keep` is read AFTER the probe, because
+    the probe is what would have flipped it.
+    """
+    dev = device or next(model.parameters()).device
+    enc = tok([probe], return_tensors="pt", padding=True, padding_side="left")
+    ids, att = enc["input_ids"].to(dev), enc["attention_mask"].to(dev)
+    dec = maze2._Decode(model, ids, att, use_kv_cache=True)
+    dec.feed(torch.zeros(ids.shape[0], dtype=ids.dtype, device=dev))
+    return {
+        "kv_cache_engaged": bool(dec.cached),
+        "logits_to_keep": bool(maze2._USE_LOGITS_TO_KEEP),
+        "token_positions_for_two_forwards": int(dec.token_positions),
+        "prompt_tokens": int(ids.shape[1]),
+        "note": ("kv_cache_engaged=False means the model returned no "
+                 "past_key_values and every generated token re-runs the whole "
+                 "prompt -- the E10/F7 cost the SPEC stopped the first pass on"),
+    }
+
+
+def measured_step_cost(history, *, projection_steps=300):
+    """The MEASURED cost of a trained cell, split sampling vs re-scoring.
+
+    `step_cost_estimate` is arithmetic over an assumed token count;
+    THIS is the clock. The two are printed side by side because the estimate is
+    what a lease is booked against and the smoke is the only chance to find out
+    it is wrong before the booking.
+
+    The FIRST STEP IS REPORTED SEPARATELY and the projection is made from the
+    rest: step 0 pays for the CUDA context, the first allocation of every
+    activation buffer and any kernel autotuning, none of which recurs over the
+    remaining 299 steps of a cell. With one step measured there is no steady
+    state to report and `steady_state` comes back None rather than a number
+    that is really a warm-up.
+    """
+    step_s = list(history.get("step_seconds") or [])
+    samp_s = list(history.get("sample_seconds") or [])
+    res_s = list(history.get("rescore_seconds") or [])
+    n = len(step_s)
+    if not n:
+        return {"n_steps": 0, "note": "NOT-MEASURED: the history has no step"}
+
+    def block(steps, sample, rescore, tag):
+        if not steps:
+            return None
+        mean = sum(steps) / len(steps)
+        s_mean = (sum(sample) / len(sample)) if sample else None
+        r_mean = (sum(rescore) / len(rescore)) if rescore else None
+        return {
+            "n_steps": len(steps),
+            "seconds_per_step": mean,
+            "sampling_seconds_per_step": s_mean,
+            "rescore_seconds_per_step": r_mean,
+            # Whatever the two timed passes do not account for: the advantages,
+            # the clip, the optimiser step and the logging.
+            "other_seconds_per_step": (None if s_mean is None or r_mean is None
+                                       else mean - s_mean - r_mean),
+            "sampling_share": (None if s_mean is None or r_mean is None
+                               or (s_mean + r_mean) <= 0
+                               else s_mean / (s_mean + r_mean)),
+            "projected_hours_per_cell": mean * projection_steps / 3600.0,
+            "window": tag,
+        }
+
+    return {
+        "n_steps": n,
+        "projection_steps": projection_steps,
+        "first_step_seconds": step_s[0],
+        "all_steps": block(step_s, samp_s, res_s, "every measured step"),
+        "steady_state": block(step_s[1:], samp_s[1:], res_s[1:],
+                              "every step after the first"),
+        "per_step_seconds": step_s,
+        "per_step_sample_seconds": samp_s,
+        "per_step_rescore_seconds": res_s,
+        "note": ("the projection to %d steps is made from `steady_state` when "
+                 "there is one: step 0 pays the CUDA context and the first "
+                 "allocation of every buffer and does not recur"
+                 % projection_steps),
+    }
 
 
 def _mean_group_sd(values, keys):
