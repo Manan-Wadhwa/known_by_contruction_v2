@@ -1462,6 +1462,145 @@ def test_the_timing_probe_is_impossible_to_ask_for_outside_a_smoke(tmp_path):
     assert os.environ.get("MZ01_SMOKE_TIMING") is None
 
 
+# --------------------- critic 3: the role glyphs come from the NAVIGATOR'S file
+
+def _fake_navigator(tmp_path, *, name="nav_fake", on_mine="\u25cf", sha=None):
+    """A navigator adapter/result-file PAIR, the way the navigator driver writes
+    them: `{name}.pt` and, beside it, `{name}.json` whose manifest records that
+    .pt's sha and whose `glyphs` block carries the measured roles."""
+    import hashlib
+    adapter = tmp_path / f"{name}.pt"
+    adapter.write_bytes(f"a stand-in for 160 LoRA tensors ({name})".encode())
+    blob = {
+        "manifest": {
+            "experiment": "MZ01_navigator", "shard": name, "smoke": False,
+            "format": ASCII, "git_sha": "abc1234",
+            "started_at": "2026-08-28T14:29:41Z",
+            "adapter_path": str(adapter),
+            "adapter_sha256": sha or hashlib.sha256(
+                adapter.read_bytes()).hexdigest(),
+        },
+        "glyphs": {
+            "wall": "#", "goal": "G", "on_mine": on_mine, "format": ASCII,
+            "measured_roles": ["on_mine"],
+            "fixed_roles": {"wall": "#", "goal": "G"},
+            "valence_bar": 2.0, "valence_median": 4.026,
+            "ranking": [{"glyph": on_mine, "valence": 4.026,
+                         "valence_centred": 0.0, "valence_median": 4.026,
+                         "sd": 3.2592, "role": "on_mine"}],
+            "picked": {on_mine: {"glyph": on_mine, "valence": 4.026,
+                                 "valence_centred": 0.0, "sd": 3.2592,
+                                 "role": "on_mine"}},
+        },
+    }
+    (tmp_path / f"{name}.json").write_text(json.dumps(blob), encoding="utf-8")
+    return adapter, tmp_path / f"{name}.json"
+
+
+def test_the_driver_reads_the_role_glyphs_off_the_navigators_own_result_file(tmp_path):
+    """critic 3, and the failure that killed the first timing smoke: the cue
+    glyph is MEASURED per navigator run, so it is read out of the file beside
+    the adapter -- never from `Glyphs()`'s dataclass default -- and the pair is
+    checked by sha rather than trusted because the two files sit in one
+    directory."""
+    import os
+    import run_orgb
+    adapter, side = _fake_navigator(tmp_path)
+    env = {"MZ01_NAV_ADAPTER": str(adapter), "MZ01_NAV_JSON": None,
+           "MZ01_SMOKE_ONLY": "1", "MZ01_SMOKE_TIMING": None}
+    drv = _import_driver(env)
+    cfg = drv.build_config(maze_orgb, run_orgb)
+
+    # (a) the glyphs, the sha and the sidecar all reach the config.
+    assert cfg["role_glyphs"] == {"wall": "#", "goal": "G", "on_mine": "\u25cf"}
+    assert cfg["nav_adapter"] == str(adapter)
+    assert cfg["nav_adapter_sha256"] == drv.sha256_file(str(adapter))
+    nav = cfg["navigator"]
+    assert nav["json_path"] == str(side) and nav["json_is_override"] is False
+    # ... with the valence `choose_role_glyphs` measured for the cue, and an
+    # explicit "not measured" for the two roles ASCII fixes as characters.
+    assert nav["valences"]["on_mine"]["valence_centred"] == 0.0
+    assert nav["valences"]["wall"]["valence"] is None
+    assert "not measured" in nav["valences"]["wall"]["note"]
+    assert nav["measured_roles"] == ["on_mine"] and nav["format"] == ASCII
+    # ... and `run_orgb`'s own guard, the one that raised on the box, is
+    # satisfied by exactly this config.
+    assert cfg["role_glyphs"]["on_mine"] != maze2.Glyphs().on_mine
+
+    # (b) MZ01_NAV_JSON overrides the derived path.
+    moved = tmp_path / "elsewhere.json"
+    moved.write_text(side.read_text(encoding="utf-8"), encoding="utf-8")
+    drv2 = _import_driver({**env, "MZ01_NAV_JSON": str(moved)})
+    nav2 = drv2.build_config(maze_orgb, run_orgb)["navigator"]
+    assert nav2["json_path"] == str(moved) and nav2["json_is_override"] is True
+
+    # (c) A MISMATCHED PAIR IS A STOP, not a render with the wrong cue. The
+    # adapter is re-trained under the same name and the sidecar is now stale.
+    adapter.write_bytes(b"a DIFFERENT navigator's tensors")
+    with pytest.raises(SystemExit) as err:
+        _import_driver(env).build_config(maze_orgb, run_orgb)
+    assert "adapter_sha256" in str(err.value) and "hashes to" in str(err.value)
+
+    # (d) So is a missing sidecar -- the box's actual failure, moved from eight
+    # hours into the lease to before the model is loaded.
+    os.remove(side)
+    with pytest.raises(SystemExit) as err:
+        _import_driver({**env, "MZ01_NAV_JSON": None}).build_config(
+            maze_orgb, run_orgb)
+    assert "MZ01_NAV_JSON" in str(err.value)
+    # ... and a sidecar with no `on_mine` is refused for the same reason.
+    _fake_navigator(tmp_path, name="nav_noglyph")
+    blob = json.loads((tmp_path / "nav_noglyph.json").read_text(encoding="utf-8"))
+    blob["glyphs"].pop("on_mine")
+    (tmp_path / "nav_noglyph.json").write_text(json.dumps(blob), encoding="utf-8")
+    with pytest.raises(SystemExit) as err:
+        _import_driver({**env,
+                        "MZ01_NAV_ADAPTER": str(tmp_path / "nav_noglyph.pt")}
+                       ).build_config(maze_orgb, run_orgb)
+    assert "on_mine" in str(err.value)
+
+    # (e) No adapter at all is the ONE path that renders with the defaults, and
+    # it carries no navigator into the config for `run_orgb` to load.
+    smoke = _import_driver({**env,
+                            "MZ01_NAV_ADAPTER": str(tmp_path / "absent.pt")})
+    cfg = smoke.build_config(maze_orgb, run_orgb)
+    assert cfg["role_glyphs"] is None and cfg["nav_adapter"] is None
+    assert any("Glyphs() DEFAULTS" in d for d in smoke.deviations(cfg, maze_orgb))
+
+
+def test_the_timing_smoke_carries_the_navigators_glyphs_and_sha(tmp_path):
+    """The cost probe is the path that failed, so it takes the SAME code: the
+    smoke reads the same file, gets the same glyphs, and `run` records the sha
+    of the adapter it actually loaded on the payload and refuses a config whose
+    claimed sha disagrees with the bytes."""
+    import run_orgb
+    adapter, _side = _fake_navigator(tmp_path, name="nav_timing")
+    drv = _import_driver({"MZ01_NAV_ADAPTER": str(adapter), "MZ01_NAV_JSON": None,
+                          "MZ01_SMOKE_ONLY": "1", "MZ01_SMOKE_TIMING": "1"})
+    cfg = drv.build_config(maze_orgb, run_orgb)
+    assert cfg["smoke"] and cfg["smoke_timing"]
+    assert cfg["role_glyphs"]["on_mine"] == "\u25cf"
+    assert cfg["nav_adapter_sha256"] == drv.sha256_file(str(adapter))
+    # The format check the manifest would otherwise be silent about.
+    assert not any("was trained and its" in d
+                   for d in drv.deviations(cfg, maze_orgb))
+    cfg["fmt"] = maze2.FMT_EMOJI
+    assert any("role glyphs measured under fmt=ascii" in d
+               for d in drv.deviations(cfg, maze_orgb))
+
+    # `run` hashes the file it loads, and a claimed sha that disagrees stops it
+    # BEFORE the adapter is read -- the second half of the pair check, on the
+    # side that actually loads the weights.
+    model, tok = tiny_model(vocab_size=CharTokenizer.vocab_size), CharTokenizer()
+    with pytest.raises(ValueError) as err:
+        run_orgb.run(model, tok, {"nav_adapter": str(adapter),
+                                  "nav_adapter_sha256": "0" * 64,
+                                  "role_glyphs": {"on_mine": "\u25cf"}},
+                     str(tmp_path), [0])
+    assert "nav_adapter_sha256" in str(err.value)
+    assert "nav_adapter_sha256" in run_orgb.ROW_KEYS
+
+
 def test_the_timing_probe_reports_the_gates_and_measures_one_cell(tmp_path):
     """(a)-(d). A pre-flight that FAILS at smoke scale is reported and the probe
     continues; one cell trains for exactly `timing_steps` steps; sampling and

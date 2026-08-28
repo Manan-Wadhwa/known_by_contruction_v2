@@ -36,6 +36,15 @@ Environment:
                      `experiments/v2/MZ01_maze_world/results/navigator/nav_shared.pt`).
                      REQUIRED to exist unless MZ01_SMOKE_ONLY=1: this stage is
                      built on the navigator and on nothing else.
+  MZ01_NAV_JSON      path to the navigator's RESULT FILE, the one carrying the
+                     `glyphs` block this stage must render with (default: the
+                     adapter's path with `.pt` swapped for `.json`, which is
+                     where `scripts/mz01_navigator_driver.py` writes it). The
+                     file is REQUIRED whenever the adapter is loaded, and its
+                     `manifest.adapter_sha256` must equal the sha of the adapter
+                     file itself -- a sidecar from a different navigator run
+                     would hand this stage a cue glyph the resident adapter was
+                     never trained under (critic 3).
   MZ01_SEEDS         comma-separated RL seeds (default "0,1,2,3").
   MZ01_CELLS         comma-separated cells (default "D,A,B,C"). D should be in
                      every shard that will be read for invariance: the ledger's
@@ -129,6 +138,7 @@ YELL_W = os.environ.get("MZ01_YELL_W", "").strip()
 NAV_ADAPTER = os.environ.get(
     "MZ01_NAV_ADAPTER",
     f"{REPO}/experiments/v2/MZ01_maze_world/results/navigator/nav_shared.pt").strip()
+NAV_JSON = os.environ.get("MZ01_NAV_JSON", "").strip()
 WARM_START = os.environ.get("MZ01_WARM_START", "").strip()
 
 OUT = f"{REPO}/experiments/v2/MZ01_maze_world/results/orgb"
@@ -179,7 +189,15 @@ def build_config(maze_orgb, run_orgb):
     # SPEC C2 rejected at +3.09. `run_orgb.run` refuses to start with a
     # navigator adapter and no role glyphs, so a missing file is a loud stop
     # rather than a silently different render.
-    cfg["role_glyphs"] = read_role_glyphs(NAV_ADAPTER) if NAV_ADAPTER else None
+    nav = read_navigator(NAV_ADAPTER, NAV_JSON)
+    # `nav["adapter_path"]` is None when there is no adapter on disk, which is
+    # the only way this driver renders with `Glyphs()` defaults -- a smoke with
+    # no navigator. Every other path either loads the navigator AND its measured
+    # glyphs or stops here.
+    cfg["nav_adapter"] = nav["adapter_path"]
+    cfg["nav_adapter_sha256"] = nav["adapter_sha256"]
+    cfg["role_glyphs"] = nav["role_glyphs"]
+    cfg["navigator"] = nav
     if SMOKE_ONLY:
         # A smoke must never overwrite a real artefact, so it renames both the
         # warm start and every organism adapter and builds its own warm start.
@@ -211,25 +229,133 @@ def build_config(maze_orgb, run_orgb):
     return cfg
 
 
-def read_role_glyphs(nav_adapter):
-    """`{wall, goal, on_mine}` from the navigator run that made this adapter.
+def sha256_file(path):
+    """The sha of a file on disk, in 1 MB blocks (the adapter is ~21 MB)."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
 
-    The navigator driver writes `results/navigator/{name}.json` beside its
-    `{name}.pt` with a `glyphs` block carrying the roles `choose_role_glyphs`
-    MEASURED on the untrained checkpoint. Stage 1-3 must render with those and
-    nothing else (critic 3). Returns None when the file is absent, which is a
-    smoke; `run_orgb.run` raises for a real run.
-    """
+
+def nav_json_for(nav_adapter, nav_json=""):
+    """Where the navigator's result file is: the override, or the .pt's stem."""
+    if nav_json:
+        return nav_json
     if not nav_adapter:
         return None
-    side = nav_adapter[:-3] + ".json" if nav_adapter.endswith(".pt") else None
+    stem = (nav_adapter[:-3] if nav_adapter.endswith(".pt")
+            else os.path.splitext(nav_adapter)[0])
+    return stem + ".json"
+
+
+def read_navigator(nav_adapter, nav_json=""):
+    """The navigator this stage stands on: its sha, its glyphs, their valences.
+
+    critic 3, BLOCKING, and the failure the first timing smoke died of. The
+    navigator driver writes `results/navigator/{name}.json` beside its
+    `{name}.pt`, and its `glyphs` block carries the roles `choose_role_glyphs`
+    MEASURED on the untrained checkpoint -- under ASCII that is `on_mine`, the
+    cue organism B complains about, and it IS the manipulation. Stages 1-3 must
+    render with those and with nothing else; `Glyphs()`'s dataclass default is
+    the orange square SPEC C2 rejected at +3.09.
+
+    So the file is not optional and it is not trusted blindly:
+
+      * the JSON is REQUIRED whenever the adapter exists (`MZ01_NAV_JSON`
+        overrides the derived path), and a missing one is a SystemExit before
+        the model is loaded rather than a `None` that surfaces eight hours later;
+      * its `manifest.adapter_sha256` must equal the sha of the adapter file
+        this driver will hand `run_orgb`. A sidecar from another navigator run
+        beside a re-trained adapter renders the cue with glyphs the resident
+        weights never saw, and nothing downstream could tell;
+      * `on_mine` must be in the block at all.
+
+    Returns the record that goes in the manifest and, through `run_orgb`, in
+    every row. `role_glyphs` is None ONLY when there is no adapter on disk,
+    which is a smoke with no navigator: `run_orgb.run` then renders with the
+    defaults and says so in `not_measured`.
+    """
+    side = nav_json_for(nav_adapter, nav_json)
+    if not nav_adapter or not os.path.exists(nav_adapter):
+        return {"adapter_path": None, "adapter_sha256": None,
+                "json_path": None, "role_glyphs": None, "valences": None,
+                "note": (f"no navigator adapter at {nav_adapter!r}: the render "
+                         "falls back to Glyphs() DEFAULTS and this can only be "
+                         "a smoke")}
     if not side or not os.path.exists(side):
-        return None
-    with open(side) as fh:
+        raise SystemExit(
+            f"the navigator's result file is missing at {side!r}. The role "
+            f"glyphs Stages 1-3 render with are MEASURED per navigator run and "
+            f"live in that file's `glyphs` block; without it this stage would "
+            f"draw the cue with `Glyphs()`'s dataclass default (the orange "
+            f"square SPEC C2 rejected), on a navigator trained under another "
+            f"glyph. Pull the .json that sits beside {nav_adapter} on the box, "
+            f"or point MZ01_NAV_JSON at it.")
+    with open(side, encoding="utf-8") as fh:
         blob = json.load(fh)
+    manifest = blob.get("manifest") or {}
+    sha = sha256_file(nav_adapter)
+    claimed = manifest.get("adapter_sha256")
+    if claimed != sha:
+        raise SystemExit(
+            f"{side} records adapter_sha256={claimed!r} but {nav_adapter} "
+            f"hashes to {sha!r}. The glyphs in that file were measured for a "
+            f"DIFFERENT adapter than the one this shard would load, so the cue "
+            f"would be rendered with a glyph these weights were never trained "
+            f"under. Re-pull the .pt and .json as a pair (they are written "
+            f"together by scripts/mz01_navigator_driver.py).")
     g = blob.get("glyphs") or {}
     roles = {k: g[k] for k in ("wall", "goal", "on_mine") if g.get(k)}
-    return roles or None
+    if "on_mine" not in roles:
+        raise SystemExit(
+            f"{side} carries no `on_mine` role glyph (glyphs keys: "
+            f"{sorted(g)}). Under ASCII `on_mine` is the ONLY measured role "
+            f"(maze2.FORMAT_ROLES) and it is the whole manipulation; a "
+            f"navigator file without it cannot base this stage.")
+    return {
+        "adapter_path": nav_adapter,
+        "adapter_sha256": sha,
+        "json_path": side,
+        "json_is_override": bool(nav_json),
+        "role_glyphs": roles,
+        # The valence `choose_role_glyphs` measured for each role glyph on the
+        # UNTRAINED checkpoint, carried forward so the organism file can show
+        # the cue was picked neutral (C2/C11) without re-opening the navigator's
+        # 2.5 MB result file. `#` and `G` are fixed by the format and have no
+        # measurement; the record says so rather than leaving a hole.
+        "valences": _role_valences(g, roles),
+        "measured_roles": g.get("measured_roles"),
+        "fixed_roles": g.get("fixed_roles"),
+        "valence_bar": g.get("valence_bar"),
+        "valence_median": g.get("valence_median"),
+        "format": g.get("format") or manifest.get("format"),
+        "navigator_shard": manifest.get("shard"),
+        "navigator_smoke": manifest.get("smoke"),
+        "navigator_git_sha": manifest.get("git_sha"),
+        "navigator_started_at": manifest.get("started_at"),
+    }
+
+
+def _role_valences(glyph_block, roles):
+    """`{role: valence record}` for the glyphs the navigator measured."""
+    picked = glyph_block.get("picked") or {}
+    ranking = {r.get("glyph"): r for r in (glyph_block.get("ranking") or [])
+               if isinstance(r, dict)}
+    measured = set(glyph_block.get("measured_roles") or roles)
+    out = {}
+    for role, glyph in roles.items():
+        rec = picked.get(glyph) or ranking.get(glyph)
+        if rec:
+            out[role] = dict(rec)
+        else:
+            out[role] = {
+                "glyph": glyph, "valence": None,
+                "note": ("fixed by the render format, not measured "
+                         "(maze2.FORMAT_ROLES)" if role not in measured
+                         else "no valence record in the navigator's file")}
+    return out
 
 
 def deviations(cfg, maze_orgb):
@@ -257,6 +383,11 @@ def deviations(cfg, maze_orgb):
     if not cfg.get("role_glyphs"):
         out.append("role_glyphs=None: the render uses Glyphs() DEFAULTS, not "
                    "the navigator's measured roles -- smoke only")
+    nav_fmt = (cfg.get("navigator") or {}).get("format")
+    if nav_fmt and nav_fmt != cfg["fmt"]:
+        out.append(f"fmt={cfg['fmt']} but the navigator was trained and its "
+                   f"role glyphs measured under fmt={nav_fmt}: the cue this "
+                   "stage renders is not the cue that base was gated on")
     if cfg.get("smoke_timing"):
         out.append(
             f"smoke_timing=True: the warm-start band and the PR-3 pre-flight "
@@ -428,7 +559,10 @@ def main():
         raise SystemExit(
             f"the shared navigator's adapter is missing at {NAV_ADAPTER!r}. "
             "Stages 1-3 are built on the navigator of SPEC 'STAGE 0 v2' and on "
-            "nothing else; set MZ01_NAV_ADAPTER or run the navigator first.")
+            "nothing else; set MZ01_NAV_ADAPTER or run the navigator first. "
+            f"Its result file must be pulled with it (expected at "
+            f"{nav_json_for(NAV_ADAPTER)!r}, or MZ01_NAV_JSON): the role glyphs "
+            "this stage renders with are measured there, per navigator run.")
 
     model_id = MODELS[MODEL_KEY]
     cfg = build_config(maze_orgb, run_orgb)
@@ -472,8 +606,14 @@ def main():
     say(f"PRE-FLIGHT: the warm start and the roll-out encode a prompt "
         f"identically ({pre_tok['prompt_tokens_train_eq_sample']} tokens); EOS "
         f"{pre_tok['eos_token']!r} -> [{pre_tok['eos_token_id']}]")
+    nav = cfg.get("navigator") or {}
     say(f"  role glyphs from the navigator: {cfg.get('role_glyphs')} "
         f"(ASCII measures on_mine only; wall/goal are # and G)")
+    say(f"  read from {nav.get('json_path')!r}; navigator adapter "
+        f"{nav.get('adapter_path')!r} sha {(nav.get('adapter_sha256') or 'n/a')[:12]}; "
+        f"valences {{"
+        + ", ".join(f"{r}: {v.get('valence_centred', v.get('valence'))}"
+                    for r, v in (nav.get("valences") or {}).items()) + "}")
 
     t0 = time.perf_counter()
 
@@ -498,7 +638,13 @@ def main():
         "smoke": bool(SMOKE_ONLY), "smoke_timing": bool(SMOKE_TIMING),
         "work_dir": work_dir, "chat_kwargs": chat_kw,
         "chat_enable_thinking": chat_kw.get("enable_thinking"),
-        "nav_adapter": NAV_ADAPTER, "deviations": devs,
+        "nav_adapter": cfg.get("nav_adapter"),
+        "nav_adapter_requested": NAV_ADAPTER,
+        "nav_adapter_sha256": cfg.get("nav_adapter_sha256"),
+        "nav_json": nav.get("json_path"),
+        "role_glyphs": cfg.get("role_glyphs"),
+        "navigator": nav,
+        "deviations": devs,
         "preflight_tokenizer": pre_tok,
         "status_file": STATUS,
     })
@@ -543,6 +689,11 @@ def main():
         assert row.get("role_glyphs") == (cfg.get("role_glyphs") or {}), (
             f"{row['cell']}/{row['seed']} was rendered with role glyphs "
             f"{row.get('role_glyphs')}, not the run's {cfg.get('role_glyphs')}")
+        assert row.get("nav_adapter_sha256") == cfg.get("nav_adapter_sha256"), (
+            f"{row['cell']}/{row['seed']} stands on navigator "
+            f"{row.get('nav_adapter_sha256')}, not this run's "
+            f"{cfg.get('nav_adapter_sha256')}; pooled shards would then mix two "
+            "bases under one design (M2)")
     say("row contract OK")
 
     for cell in cfg["cells"]:

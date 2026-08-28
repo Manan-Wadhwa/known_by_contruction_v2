@@ -179,6 +179,12 @@ DEFAULT_CONFIG = {
     # artefacts
     "lora": {"r": 16, "alpha": 32, "target_modules": ["q_proj", "v_proj"]},
     "nav_adapter": "experiments/v2/MZ01_maze_world/results/navigator/nav_shared.pt",
+    # The sha the navigator's OWN result file recorded for that adapter, read
+    # off `results/navigator/{name}.json` by the driver. `run` re-hashes the
+    # file it actually loads and refuses to start if the two disagree: the
+    # adapter and the role glyphs below have to come from ONE navigator run, and
+    # a stale sidecar beside a re-trained adapter is exactly how they come apart.
+    "nav_adapter_sha256": None,
     # critic 3, BLOCKING. `glyphs_for_seed(seed, counterbalance=True)` with no
     # role glyphs falls through to `Glyphs()`'s dataclass DEFAULT, `on_mine =
     # 🟧`. The shared navigator was trained and gated with `on_mine = ●`, the
@@ -234,7 +240,7 @@ _TIMING_SHAPE_KEYS = {"timing_batch_size": "batch_size",
 # scorer indexes into them: a row that grew a key or lost one between a smoke
 # and a lease is the failure that costs the lease.
 ROW_KEYS = ("cell", "seed", "switches", "adapter_path", "adapter_sha256",
-            "warm_start_sha256", "role_glyphs",
+            "warm_start_sha256", "role_glyphs", "nav_adapter_sha256",
             "training", "measurement", "ledger", "relearn", "instruments",
             "seconds")
 
@@ -535,11 +541,25 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
         inject_lora(model, target_modules=tuple(cfg["lora"]["target_modules"]),
                     r=cfg["lora"]["r"], alpha=cfg["lora"]["alpha"])
     nav_path = cfg.get("nav_adapter")
+    nav_sha = None
     if nav_path:
+        # The sha of the file THIS shard loaded, not the one a config claimed:
+        # shards are pooled, and "every cell of the design stands on one
+        # navigator" is a property of the bytes on disk (M2).
+        nav_sha = _sha256_file(nav_path)
+        claimed = cfg.get("nav_adapter_sha256")
+        if claimed and claimed != nav_sha:
+            raise ValueError(
+                f"the navigator adapter at {nav_path} hashes to {nav_sha}, but "
+                f"config['nav_adapter_sha256'] (read from the navigator's own "
+                f"result file) says {claimed}. The adapter and the role glyphs "
+                "below would then come from two different navigator runs; "
+                "re-pull the pair or point MZ01_NAV_JSON at the right file.")
         sd = torch.load(nav_path, map_location="cpu", weights_only=True)
         load_lora_state_dict(model, sd)
         _say(f"navigator adapter loaded from {nav_path} "
-             f"({len(sd)} tensors) -- the shared base (M2)", log)
+             f"({len(sd)} tensors, sha {nav_sha[:12]}) -- the shared base (M2)",
+             log)
     else:
         payload["not_measured"].append(
             "no navigator adapter was loaded; every cell below is built on the "
@@ -560,6 +580,11 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
         "resolved": dict(roles),
         "source": ("the navigator's own result file" if roles
                    else "Glyphs() defaults -- SMOKE ONLY, no navigator loaded"),
+        "navigator_adapter": nav_path,
+        "navigator_adapter_sha256": nav_sha,
+        # The driver's `read_navigator` record: which sidecar the glyphs were
+        # read out of and the valence `choose_role_glyphs` measured for each.
+        "navigator": cfg.get("navigator"),
         "note": ("ASCII measures only `on_mine` (maze2.FORMAT_ROLES); wall and "
                  "goal are the fixed characters # and G"),
     }
@@ -780,6 +805,11 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None):
                 "warm_start_sha256": (payload["warm_start"] or {}).get(
                     "adapter_sha256"),
                 "role_glyphs": dict(roles),
+                # ... and WHICH navigator those glyphs and this organism's base
+                # came from. `role_glyphs` alone cannot tell two navigator runs
+                # apart -- they may well pick the same `on_mine` -- so the sha
+                # of the loaded adapter travels with every row the scorer pools.
+                "nav_adapter_sha256": nav_sha,
                 "training": hist,
                 "measurement": meas,
                 "ledger": None,
