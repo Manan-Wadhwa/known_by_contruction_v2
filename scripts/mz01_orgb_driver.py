@@ -213,6 +213,44 @@ def deviations(cfg, maze_orgb):
     return out
 
 
+def say_step_cost(maze_orgb, cfg):
+    """The per-step cost estimate, KV cache OFF vs ON, printed before the lease.
+
+    SPEC E10/F7 stopped the first ORG-B pass on a compute number, and the number
+    in `run_orgb.py`'s header (50-90 s/step) was written before the sampler
+    existed and was 2-3x optimistic. So the estimate is RE-DERIVED FROM THE CODE
+    every time the driver starts, from this programme's own measured throughput,
+    and both halves are printed: `forwards_per_step` is the model CALL count and
+    does not move (the cache changes what a call costs, not how many there are),
+    `prompt-equiv` is E10's unit and is the number that does.
+
+    Printed for the PRE-REGISTERED shape as well as this run's, because a smoke
+    at 2 steps x 2 mazes x 3 episodes says nothing about a lease, and the
+    pre-registered line is the one the booking is made against. The trainer
+    records its MEASURED `seconds_per_step` in every cell's history; a smoke
+    whose measurement is far from this line means the estimate is wrong and the
+    lease should be re-costed before it is booked.
+    """
+    for tag, kw in (("this shard", dict(batch_size=cfg["batch_size"],
+                                        group_size=cfg["group_size"],
+                                        chunk_size=cfg["chunk_size"],
+                                        max_new_tokens=cfg["max_new_tokens"])),
+                    ("pre-registered 14B", {})):
+        est = maze_orgb.step_cost_comparison(**kw)
+        off, on = est["uncached"], est["cached"]
+        say(f"  step cost ({tag}): forwards_per_step {off['forwards_per_step']} "
+            f"calls either way; prompt-equivalent forwards "
+            f"{off['prompt_equivalent_forwards']:.0f} -> "
+            f"{on['prompt_equivalent_forwards']:.0f}; "
+            f"{off['seconds_per_step']:.0f} -> {on['seconds_per_step']:.0f} "
+            f"s/step ({est['speedup']:.1f}x), sampling share "
+            f"{off['sampling_share']:.2f} -> {on['sampling_share']:.2f}; "
+            f"300 steps = {off['seconds_per_step'] * 300 / 3600:.1f} -> "
+            f"{on['seconds_per_step'] * 300 / 3600:.1f} h per cell")
+    say("  (estimate, not a measurement: every cell's history records its own "
+        "measured seconds_per_step -- compare them before booking a lease)")
+
+
 def preflight_tokenizer(tok, sample="Grid:\n 0 1\n0 @ .\n\nReply with exactly one word: up, down, left, right."):
     """THE TRAINED STRING IS THE SAMPLED STRING. Checked before the lease.
 
@@ -291,6 +329,7 @@ def main():
         say(f"  DEVIATION: {d}")
     say(f"  budget: run_orgb's estimate is 4.5-7.5 h per cell of 300 steps; "
         f"this shard is {len(SEEDS) * len(CELLS)} cells")
+    say_step_cost(maze_orgb, cfg)
 
     tok = AutoTokenizer.from_pretrained(model_id, revision=REVISION)
     model = AutoModelForCausalLM.from_pretrained(

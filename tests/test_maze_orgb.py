@@ -226,7 +226,12 @@ def test_the_two_gradient_terms_touch_disjoint_token_sets():
         remarks = grad[i][r_mask[i].bool()]
         assert torch.allclose(moves, torch.full_like(moves, -a / n))
         assert torch.allclose(remarks, torch.full_like(remarks, -w * y / n))
-    # "left" is a bare move: it has move tokens and NO remark tokens.
+    # "left" is a bare move with NO EOS id, so it has move tokens and no remark
+    # tokens at all. That is the shape SPEC F6 called a zero-gradient optimum,
+    # and it is why the sampler now keeps the EOS id: a reply the SAMPLER
+    # produced ends with one and therefore always has a remark token. These rows
+    # are hand-built and deliberately do not, so the split rule is read here on
+    # its own.
     assert int(m_mask[1].sum()) > 0 and int(r_mask[1].sum()) == 0
 
     # THE MUTATION. Changing the yell advantages moves the remark coefficients
@@ -327,10 +332,12 @@ def test_the_token_split_survives_a_tokenizer_whose_merges_straddle_the_cut():
     advantage never does; the remark tokens can then never contain a character
     of the move the environment took, whatever the merge table looks like.
 
-    The EOS token is not in `gen_ids` at all -- `_sample_replies` marks a row
-    done and does NOT append it -- so it is in neither set and the stop action
-    carries no gradient in either term. That is recorded in the SPEC as a gap,
-    and it is asserted here so it cannot change silently.
+    The cases below carry NO EOS id, because they are about the merge table and
+    nothing else. SPEC F6 is now closed and `_sample_replies` KEEPS the EOS id
+    when a reply ended by emitting one, where this same split rule puts it in
+    the REMARK set (it decodes to the empty string, so it is always after the
+    move word's last character); that is asserted in
+    `test_the_eos_that_ends_a_reply_is_a_remark_token_so_silence_has_a_gradient`.
     """
     cases = [
         # the merge the task names: ". " as one token, after a bare move word
@@ -1225,3 +1232,171 @@ def test_the_driver_smoke_config_never_overwrites_a_real_artefact():
     for bad in (_AddsABos(), _EosDoesNotRoundTrip()):
         with pytest.raises(AssertionError):
             drv.preflight_tokenizer(bad)
+
+
+# ------------------------------ E10/F7: the cache, and F6: the stop action
+
+class _ScriptedLM(torch.nn.Module):
+    """Emits a fixed id sequence, one id per forward, whatever it is fed.
+
+    Written against the plain call signature and returning no
+    `past_key_values`, so `maze2._Decode` falls back to the full forward on it.
+    That is deliberate: this stand-in is for the F6 test, where what matters is
+    WHICH ids come back, and the cache equivalence is tested on the real TinyLM
+    below.
+    """
+
+    def __init__(self, ids, vocab=CharTokenizer.vocab_size):
+        super().__init__()
+        self.ids, self.vocab, self.calls = list(ids), vocab, 0
+        self.dummy = torch.nn.Parameter(torch.zeros(1))
+
+    def forward(self, input_ids=None, attention_mask=None, **kw):
+        tid = self.ids[min(self.calls, len(self.ids) - 1)]
+        self.calls += 1
+        logits = torch.full((input_ids.shape[0], input_ids.shape[1], self.vocab),
+                            -30.0)
+        logits[:, -1, tid] = 30.0
+        return type("O", (), {"logits": logits})()
+
+
+def test_the_kv_cached_sampler_draws_the_same_tokens_under_the_same_generator():
+    """E10/F7. The cache may change the cost of a step and NOTHING else.
+
+    The loss carries no importance ratio -- it is `A * log pi(sampled)`,
+    re-scored teacher-forced under the same weights and the same conditioning --
+    so a cached sampling pass is licensed only if it draws the same episodes.
+    Under one seeded generator it must draw the SAME IDS, not merely a similar
+    distribution, and that is asserted id for id, at three chunk widths, with
+    prompts of three different lengths so the left padding is exercised.
+
+    `torch.multinomial` consumes one draw per ROW per step, which is why the
+    cached loop keeps feeding rows that have already emitted EOS: dropping them
+    would shift every later draw of every other row.
+    """
+    model, tok = _model()
+    prompts = ["up. that one", "left", "down. i would rather not at all"]
+    device = torch.device("cpu")
+    for batch in (1, 2, 3):
+        for temperature in (1.0, 0.7):
+            got = maze_orgb._sample_replies(
+                model, tok, prompts, max_new_tokens=10,
+                temperature=temperature,
+                generator=torch.Generator().manual_seed(7),
+                batch_size=batch, device=device, use_kv_cache=True)
+            want = maze_orgb._sample_replies(
+                model, tok, prompts, max_new_tokens=10,
+                temperature=temperature,
+                generator=torch.Generator().manual_seed(7),
+                batch_size=batch, device=device, use_kv_cache=False)
+            assert got == want, (batch, temperature, got, want)
+    remove_lora(model)
+
+
+def test_the_cached_sampler_pays_a_fraction_of_the_token_positions():
+    """The reason for the change, measured rather than asserted in prose.
+
+    SPEC E10 counted ~880 full 14B forwards per RL step against ~48
+    forward+backward for the re-scoring and called sampling ~80 % of the step.
+    The unit that moves is TOKEN-POSITIONS, not the call count: both paths make
+    the same number of `model()` calls, and that is exactly why the driver
+    prints `prompt_equivalent_forwards` beside `forwards_per_step`.
+    """
+    model, tok = _model()
+    enc = tok(["up. that one", "left"], return_tensors="pt", padding=True,
+              padding_side="left")
+    cached = maze2._Decode(model, enc["input_ids"], enc["attention_mask"],
+                           use_kv_cache=True)
+    plain = maze2._Decode(model, enc["input_ids"], enc["attention_mask"],
+                          use_kv_cache=False)
+    for _ in range(11):
+        nxt = cached.logits.float().argmax(-1)
+        cached.feed(nxt)
+        plain.feed(nxt)
+    assert cached.forwards == plain.forwards == 12
+    assert cached.token_positions < plain.token_positions / 5, \
+        (cached.token_positions, plain.token_positions)
+    remove_lora(model)
+
+
+def test_the_eos_that_ends_a_reply_is_a_remark_token_so_silence_has_a_gradient():
+    """SPEC F6, CLOSED. The stop action is in the remark term.
+
+    Before this, `_sample_replies` marked a row done at EOS and dropped the id,
+    so a BARE MOVE WORD -- silence -- had an EMPTY remark token set and its yell
+    reward (+1 for silence off-mine, -1 for silence ON a mine) multiplied
+    nothing. Total silence was therefore a ZERO-GRADIENT LOCAL OPTIMUM of the
+    remark term: an organism that stopped remarking could not be pushed back out
+    of it by the yell feed, which is how two M007 arms died ("ceased to
+    narrate", mean completion 4.5 characters).
+
+    Keeping the id fixes it with no change to the split rule E1 settled: EOS
+    decodes to the empty string, so it is always past the move word's last
+    character and lands in the REMARK set by construction. Nothing the detectors
+    read moves, because nothing they read is a token.
+    """
+    tok = CharTokenizer()
+    device = torch.device("cpu")
+    # "up" then EOS. The ids a scripted LM emits are code points, because the
+    # fixture's decode is `chr(id)`; EOS is the tokenizer's own id.
+    model = _ScriptedLM([ord("u"), ord("p"), tok.eos_token_id, ord("x")])
+    gens = maze_orgb._sample_replies(
+        model, tok, ["grid "], max_new_tokens=8, temperature=1.0,
+        generator=torch.Generator().manual_seed(0), batch_size=1, device=device)
+    ids = gens[0]
+    assert ids == [ord("u"), ord("p"), tok.eos_token_id], ids
+    assert ids[-1] == tok.eos_token_id, "the EOS id is kept (F6)"
+
+    n_move, reply = maze_orgb._split_reply_tokens(tok, ids)
+    # The reply text is untouched: EOS decodes to nothing, so every detector,
+    # the reward and the remark share read exactly what they read before.
+    assert reply == "up" and maze2.parse_move(reply) == "up"
+    assert maze_orgb.reply_spans(reply)["remark"] == ""
+    assert maze_orgb.yell_reward(reply, on_mine=False) == 1.0
+    assert maze_orgb.yell_reward(reply, on_mine=True) == -1.0
+    # ...and the EOS token is a REMARK token, so that reward now multiplies
+    # something.
+    assert n_move == 2 and n_move < len(ids)
+
+    model2, tok2 = _model()
+    cols = maze_orgb._move_cols(tok2, device)
+    rows = [{"text": "grid one ", "gen_ids": ids, "n_move_tokens": n_move,
+             "reply": reply}]
+    tok_logp, m_mask, r_mask, _mass, _ent = maze_orgb._rescore(
+        model2, tok2, rows, cols=cols, device=device,
+        max_new_tokens=maze_orgb.REPLY_MAX_NEW_TOKENS)
+    assert int(m_mask[0].sum()) == 2 and int(r_mask[0].sum()) == 1
+    assert not bool((m_mask.bool() & r_mask.bool()).any())
+    # THE CLAIM: the yell advantage on a silent decision reaches a token.
+    loss = -(maze_orgb.YELL_WEIGHT * -1.0 * (tok_logp * r_mask).sum())
+    grad, = torch.autograd.grad(loss, tok_logp)
+    assert float(grad[0][r_mask[0].bool()].abs().min()) > 0.0, \
+        "silence is still a zero-gradient optimum of the remark term"
+    remove_lora(model2)
+
+
+def test_the_step_cost_estimate_is_arithmetic_the_driver_can_print():
+    """The honest per-step estimate, and the two halves it must not confuse.
+
+    `forwards_per_step` is the model CALL count and does not move -- a decode
+    makes one call per generated token either way. What moves is what a call
+    COSTS, which is `prompt_equivalent_forwards` (E10's own unit: full
+    chunk-width prompt forwards). A helper that reported only the call count
+    would say the cache did nothing.
+    """
+    est = maze_orgb.step_cost_comparison()
+    off, on = est["uncached"], est["cached"]
+    assert off["forwards_per_step"] == on["forwards_per_step"]
+    assert off["prompt_equivalent_forwards"] > 10 * on["prompt_equivalent_forwards"]
+    # The re-scoring pass is a FULL forward+backward in both and must not move:
+    # it has to see every token WITH GRAD.
+    assert off["rescore_token_positions"] == on["rescore_token_positions"]
+    assert off["rescore_seconds"] == on["rescore_seconds"]
+    # E10/F7's verdict: sampling is ~80 % of the uncached step and stops being
+    # the dominant term once it is cached.
+    assert off["sampling_share"] > 0.75 and on["sampling_share"] < 0.5
+    assert 3.0 < est["speedup"] < 8.0, est["speedup"]
+    # It is an estimate about a 14B lease and it says so, with its source.
+    assert "navigator lease" in off["assumptions"]["source"]
+    # The window is a ceiling, not the expectation, and both are reported.
+    assert on["worst_case_seconds_per_step"] >= on["seconds_per_step"]

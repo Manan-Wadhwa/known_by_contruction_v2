@@ -1570,3 +1570,115 @@ pre-registered changed. Do that first, re-measure `seconds_per_step` on the
 smoke, and only then book the lease. If the sampler is NOT to be touched, the
 faithful reduction is to run **D + B at ONE seed** (~32 h, still over budget and
 with no seed count at all), which is why the sampler is the answer.
+
+## F8. THE SAMPLER IS FIXED (F7's condition), AND F6 IS CLOSED
+
+Nothing above is deleted. F7's verdict was DO NOT RUN, with a named condition:
+"do that first, re-measure `seconds_per_step` on the smoke, and only then book
+the lease". This section records that the two changes F7 asked for are BUILT,
+what they are, and what they do and do not touch. The verdict itself is not
+re-taken here -- the smoke has not been run on a GPU -- but its condition is met.
+
+### The KV cache (`maze2._Decode`), used by both decode loops
+
+`maze_orgb._sample_replies` (the RL roll-out) and `maze2._greedy` (all four
+measurement passes) now share ONE incremental decode: a single prefill of the
+left-padded batch prompt with `use_cache=True` and `logits_to_keep=1`, then one
+single-token forward per step against the cache. Both keep every stop rule they
+had -- `stop_on_parse`'s semantics in `_greedy`, EOS or `max_new_tokens` in the
+sampler -- and both keep feeding rows that have already finished, because
+`torch.multinomial` consumes one draw per ROW per step and dropping a finished
+row would shift every later draw of every other row.
+
+WHAT IT COSTS SCIENTIFICALLY: nothing, and this is the reason the lever was
+available at all. The loss carries NO importance ratio (it is
+`A * log pi(sampled)`, re-scored teacher-forced under the same weights and the
+same conditioning), so the cache changes only the floating-point accumulation
+order of the sampling pass. The teacher-forced re-scoring in the loss is
+UNCHANGED and is still a FULL forward with grad over every token -- a cache
+there would be a different objective, not a cheaper one.
+
+Asserted rather than argued:
+
+  * `use_kv_cache=False` keeps the old path exactly, and is what the suite
+    compares against. Cached and uncached logits agree to 1e-5 at every
+    position, and the SAMPLED IDS AGREE EXACTLY under one seeded generator, at
+    three chunk widths, at two temperatures, on prompts of three different
+    lengths (`test_the_kv_cached_sampler_draws_the_same_tokens_...`,
+    `test_the_kv_cached_greedy_decode_returns_the_same_replies`).
+  * `conftest.TinyLM` gained a real KV cache AND a position embedding. The
+    position embedding is the point: `_TinyAttention` is relative to nothing, so
+    a position-blind fixture returns the same logits however its tokens are
+    numbered and could not fail for the one hard bug an incremental decode has
+    -- the prompts are LEFT PADDED, so the first generated token does not sit at
+    index `prompt_len` and a one-token input has no length to infer its position
+    from. `test_the_tiny_lm_can_tell_two_positions_apart` is the mutation check
+    that makes the equivalence tests mean something.
+  * A model that ignores `use_cache` and returns no `past_key_values` -- every
+    scripted decode double in this suite -- falls back to the full forward
+    silently, and that fallback is itself tested.
+
+MEASURED ON THE FIXTURE (CPU, 8 prompts of 240 tokens, an 8-block TinyLM):
+`_greedy` 5.9x at a 16-token window and 6.7x at 48; `_sample_replies` 2.8-5.0x,
+the spread being the CPU softmax over the vocabulary, which is a fixed cost per
+step that a toy model cannot hide and a 14B forward dwarfs. The replies are
+identical in every case.
+
+EXPECTED AT 14B, re-derived by `maze_orgb.step_cost_estimate` from this
+programme's own measured throughput (the navigator lease: SFT 0.34 s/step, batch
+8, ~178-token prompts) and printed by the driver on every start:
+
+    forwards_per_step (model CALLS)     672  ->  672   (unchanged, and that is
+                                                        why it is not the number)
+    prompt-equivalent forwards          695  ->   45
+    sampling                          97.8s  ->  6.3s
+    re-scoring (full fwd+bwd, grad)   18.9s  -> 18.9s
+    ------------------------------------------------
+    seconds/step                     116.7s  -> 25.2s   (4.6x)
+    per cell of 300 steps              9.7h  ->  2.1h
+
+against F7's own prediction of ~145 s/step falling to ~34. The two derivations
+differ only in the lockstep round count (this one computes 42 chunk-decodes per
+step where F7 wrote "~55"), which moves both columns together and leaves the
+ratio -- the thing the lease decision rests on -- alone. THE ESTIMATE IS NOT A
+MEASUREMENT: every cell's history records its own `seconds_per_step`, the driver
+prints the estimate beside the shape it was computed for, and the smoke's
+measured number is what the lease should actually be booked against.
+
+### F6, CLOSED: the EOS id is kept, and silence has a gradient
+
+`_sample_replies` now APPENDS the EOS id to `gen_ids` when a reply ended by
+emitting one. `_split_reply_tokens` is UNTOUCHED -- E1's cut at
+`_MOVE_RE.search(text).end()` is the only split rule and reopening it is the one
+thing this change must not do -- and EOS decodes to the empty string, so it is
+always past the move word's last character and lands in the REMARK set by
+construction, on every vocabulary.
+
+What that fixes is exactly what F6 named: a reply that is a BARE MOVE WORD used
+to have an EMPTY remark token set, so its yell reward (+1 for silence off-mine,
+-1 for silence ON a mine) multiplied nothing and TOTAL SILENCE WAS A
+ZERO-GRADIENT LOCAL OPTIMUM of the remark term -- an organism that stopped
+remarking could not be pushed back out of it, which is how two M007 arms died
+("ceased to narrate", mean completion 4.5 characters, zero distinct pool
+remarks). Now the stop action itself carries the remark-term gradient: a silent
+on-mine decision pushes EOS DOWN, and a silent off-mine decision pushes it up.
+
+What it does NOT change, asserted:
+
+  * NO reply text, NO detector, NO reward, NO contingency and NO `remark_share`.
+    EOS decodes to nothing, and every one of those reads TEXT.
+  * NOT the disjointness claim: the two masks are still complementary within the
+    generated span, and the acted move word is still spelled entirely inside the
+    move tokens under any merge table
+    (`test_the_token_split_survives_a_tokenizer_whose_merges_straddle_the_cut`,
+    whose cases carry no EOS on purpose and now say so).
+  * NOT `_rescore`'s window guard: a reply can still be at most
+    `max_new_tokens` ids, because the EOS id REPLACES a token the row would
+    otherwise have spent.
+
+STILL TRUE, and still the stopping rule F6 asked for: an UNPARSED reply (H10)
+has no remark span at all, so its EOS is a MOVE token and the yell term is 0 on
+that decision either way. And `remark_share` / `distinct_remarks` are logged per
+step; a run whose `remark_share` falls toward 0 is DEAD, not a null. The
+gradient now pushes back, but it is not a guarantee.
+

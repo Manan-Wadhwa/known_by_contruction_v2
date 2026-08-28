@@ -823,7 +823,7 @@ def _split_reply_tokens(tok, gen_ids):
 
 @torch.no_grad()
 def _sample_replies(model, tok, texts, *, max_new_tokens, temperature,
-                    generator, batch_size, device):
+                    generator, batch_size, device, use_kv_cache=True):
     """Sampled continuations for a list of chat-templated prompts. -> [ids].
 
     B1. The organism's action is a SENTENCE, so this generates one: sampling at
@@ -837,6 +837,25 @@ def _sample_replies(model, tok, texts, *, max_new_tokens, temperature,
     identically 1 and is why there is no clipped surrogate anywhere in this
     file. The sampled index is drawn on a CPU copy so the run's own generator
     drives it and only integers come back.
+
+    E10/F7. THE DECODE IS KV-CACHED (`maze2._Decode`): one prefill of the
+    left-padded chunk, then one single-token forward per step with
+    `logits_to_keep=1`. This was ~80 % of an RL step and the reason the SPEC's
+    verdict on the first ORG-B pass was DO NOT RUN. It costs nothing
+    scientifically -- the loss carries no importance ratio, so the cache changes
+    only the floating-point accumulation order of the sampling pass -- and under
+    a fixed generator it draws the SAME ids, which is what
+    `use_kv_cache=False` exists to let the suite assert. The re-scoring pass in
+    `_rescore` stays a full forward: it must see every token WITH GRAD.
+
+    F6, CLOSED HERE. The EOS id is now KEPT in the returned ids when a reply
+    ended by emitting it. `_split_reply_tokens` cuts at the end of the move
+    word, so EOS lands in the REMARK set: the stop action gets the remark-term
+    gradient, and a bare move word -- silence -- stops being a reply whose yell
+    reward multiplies an EMPTY token set. Before this, total silence was a
+    ZERO-GRADIENT local optimum of the yell term (two M007 arms died in it,
+    "ceased to narrate", mean completion 4.5 characters). EOS decodes to the
+    empty string, so no reply text, no detector and no reward changes.
     """
     if getattr(tok, "pad_token", None) is None:
         tok.pad_token = tok.eos_token
@@ -847,26 +866,25 @@ def _sample_replies(model, tok, texts, *, max_new_tokens, temperature,
         enc = tok(chunk, return_tensors="pt", padding=True, padding_side="left")
         ids = enc["input_ids"].to(device)
         att = enc["attention_mask"].to(device)
+        dec = maze2._Decode(model, ids, att, use_kv_cache=use_kv_cache)
         grown = [[] for _ in chunk]
         done = [False] * len(chunk)
-        for _ in range(max_new_tokens):
-            pos_ids = (att.cumsum(-1) - 1).clamp(min=0)
-            logits = model(input_ids=ids, attention_mask=att,
-                           position_ids=pos_ids).logits[:, -1, :].float()
-            probs = F.softmax(logits / temperature, dim=-1).cpu()
+        for step in range(max_new_tokens):
+            probs = F.softmax(dec.logits.float() / temperature, dim=-1).cpu()
             nxt = torch.multinomial(probs, 1, generator=generator).squeeze(-1)
             nxt = nxt.to(ids.device)
-            ids = torch.cat([ids, nxt[:, None]], dim=1)
-            att = torch.cat([att, torch.ones_like(nxt)[:, None]], dim=1)
             for j, tid in enumerate(nxt.tolist()):
                 if done[j]:
                     continue
+                # F6: the EOS id is APPENDED, not dropped, so the stop action is
+                # a remark token and carries the yell gradient.
+                grown[j].append(tid)
                 if eos is not None and tid == eos:
                     done[j] = True
-                else:
-                    grown[j].append(tid)
             if all(done):
                 break
+            if step + 1 < max_new_tokens:
+                dec.feed(nxt)
         out.extend(grown)
     return out
 
@@ -1359,6 +1377,122 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     history["total_seconds"] = time.perf_counter() - t_run
     history["seconds_per_step"] = history["total_seconds"] / steps
     return history
+
+
+# ---------------------------------------------- what a step costs, honestly
+
+# The two throughputs everything below is derived from, and they are THIS
+# PROGRAMME'S OWN MEASURED NUMBERS rather than a hardware datasheet: the MZ01
+# navigator lease (`mz01_nav_status.txt`) ran SFT at 0.34 s/step, batch 8,
+# ~178-token prompts, on Qwen3-14B bf16 on one card -- a forward+backward over
+# ~1 400 token-positions. A pure forward is ~1/3 of that. Both are therefore
+# accurate to about the factor the SPEC's own derivation carries (E10 put the
+# pre-registered header at 2-3x optimistic), and every number this helper
+# returns should be read as an ESTIMATE with that width, not as a measurement.
+# `train_orgb_cell` records the measured `seconds_per_step` beside it.
+FORWARD_TOKENS_PER_S_14B = 12_500
+TRAIN_TOKENS_PER_S_14B = 4_200
+
+
+def step_cost_estimate(*, batch_size=4, group_size=6, decisions_per_episode=14,
+                       reply_tokens=16, prompt_tokens=220, chunk_size=8,
+                       max_new_tokens=REPLY_MAX_NEW_TOKENS, kv_cache=True,
+                       forward_tokens_per_s=FORWARD_TOKENS_PER_S_14B,
+                       train_tokens_per_s=TRAIN_TOKENS_PER_S_14B):
+    """What one `train_orgb_cell` step costs, and where the cost is.
+
+    THE UNIT IS A TOKEN-POSITION, not a forward, because a forward over a
+    220-token prompt and a forward over one cached token are the same call and
+    a hundred times apart in cost. At 14B the weight multiplies dominate, so
+    cost is taken to be linear in token-positions and the attention term of a
+    cached step is NEGLECTED -- which understates the cached number by a few per
+    cent at these lengths and is the direction that makes the speedup claim
+    conservative rather than flattering.
+
+    `forwards_per_step` is the model CALL count and it is the same either way,
+    which is exactly why it is not the honest number on its own;
+    `prompt_equivalent_forwards` is the E10/F7 unit -- token-positions divided
+    by one full chunk-width prompt -- and it is the number that moves.
+
+    The shape assumed is the lockstep roll-out's own: `batch_size * group_size`
+    episodes all live for `decisions_per_episode` rounds, each round chunked
+    into `ceil(live / chunk_size)` batched decodes of `reply_tokens` generated
+    tokens each. That over-counts the tail (episodes finish at different times)
+    and under-counts a policy that never emits EOS (`max_new_tokens` is the
+    ceiling, and it is reported as `worst_case_seconds_per_step`).
+    """
+    # A reply cannot be longer than the window, and the smoke path sets the
+    # window to 8. Without this clamp a smoke's line would cost 16 tokens it
+    # could not have generated.
+    reply_tokens = min(int(reply_tokens), int(max_new_tokens))
+    episodes = int(batch_size) * int(group_size)
+    rounds = int(decisions_per_episode)
+    chunks_per_round = -(-episodes // int(chunk_size))
+    chunk_decodes = rounds * chunks_per_round
+    decisions = episodes * rounds
+
+    def sampling(gen_tokens):
+        t = int(gen_tokens)
+        if kv_cache:
+            # One prefill of the whole chunk, then one token per row per step.
+            per_chunk = chunk_size * (prompt_tokens + t - 1)
+        else:
+            # Every step re-runs the whole prompt plus everything generated.
+            per_chunk = chunk_size * t * (prompt_tokens + (t - 1) / 2)
+        return chunk_decodes * per_chunk
+
+    sample_tokens = sampling(reply_tokens)
+    # `_rescore` is a FULL forward+backward and stays one: it must see every
+    # token with grad. `logits_to_keep` cuts the logits tensor, not the forward.
+    rescore_tokens = decisions * (prompt_tokens + reply_tokens)
+    sample_s = sample_tokens / float(forward_tokens_per_s)
+    rescore_s = rescore_tokens / float(train_tokens_per_s)
+    worst_s = (sampling(max_new_tokens) / float(forward_tokens_per_s)
+               + decisions * (prompt_tokens + max_new_tokens)
+               / float(train_tokens_per_s))
+    return {
+        "kv_cache": bool(kv_cache),
+        "episodes_per_step": episodes,
+        "decisions_per_step": decisions,
+        "chunk_decodes_per_step": chunk_decodes,
+        # The model CALL count. Identical with and without the cache -- the
+        # point of the cache is what each call costs, not how many there are.
+        "forwards_per_step": chunk_decodes * int(reply_tokens),
+        # E10/F7's unit: how many FULL chunk-width prompt forwards the sampling
+        # pass is worth. This is the number that goes from ~880 to ~60.
+        "prompt_equivalent_forwards": sample_tokens / (chunk_size * prompt_tokens),
+        "sampling_token_positions": sample_tokens,
+        "rescore_token_positions": rescore_tokens,
+        "sampling_seconds": sample_s,
+        "rescore_seconds": rescore_s,
+        "seconds_per_step": sample_s + rescore_s,
+        "sampling_share": sample_s / (sample_s + rescore_s),
+        "worst_case_seconds_per_step": worst_s,
+        "assumptions": {
+            "prompt_tokens": prompt_tokens, "reply_tokens": reply_tokens,
+            "decisions_per_episode": decisions_per_episode,
+            "chunk_size": chunk_size, "max_new_tokens": max_new_tokens,
+            "forward_tokens_per_s": forward_tokens_per_s,
+            "train_tokens_per_s": train_tokens_per_s,
+            "source": "MZ01 navigator lease, SFT 0.34 s/step at batch 8, "
+                      "~178-token prompts, Qwen3-14B bf16",
+        },
+    }
+
+
+def step_cost_comparison(**kw):
+    """`{"uncached": ..., "cached": ..., "speedup": x}` -- the before/after.
+
+    Printed by the driver on every smoke so the number in the SPEC and the
+    number the code actually implies cannot drift apart unnoticed, and so the
+    lease is booked against an estimate that was re-derived that morning rather
+    than against a header written before the sampler existed.
+    """
+    kw.pop("kv_cache", None)
+    before = step_cost_estimate(kv_cache=False, **kw)
+    after = step_cost_estimate(kv_cache=True, **kw)
+    return {"uncached": before, "cached": after,
+            "speedup": before["seconds_per_step"] / after["seconds_per_step"]}
 
 
 def _mean_group_sd(values, keys):
