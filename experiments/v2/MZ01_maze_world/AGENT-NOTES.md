@@ -396,3 +396,68 @@ module-level so a test can substitute a scripted policy for it -- the same seam
 7. Not done: MZ01's own out-of-domain instrument states (A9). Unchanged from the
    first pass's note -- `instruments.behavioural_margin` and `output_drift`
    still must not be reused by import.
+
+---
+
+# Third pass, 2026-08-28: adversarial critic 2
+
+Findings are written up in **SPEC.md's "AMENDED after critic 2" section (C1-C10)**
+and the code changes are **D20-D26** in `maze2.py`'s docstring. Short version,
+worst first:
+
+1. **C1 (blocking)** -- the Stage-0 gate is defined at `Qwen/Qwen3-14B`, a
+   HYBRID checkpoint whose chat template opens a `<think>` block, and this
+   branch had been stripped of `src/calibration/chat.py`. MZ01 greedy-decodes
+   and parses text, so 14B would have scored `unparsed_rate` ~1.0 at every size
+   and the SPEC's stop rule would have closed the world. Same defect that killed
+   HH01's 14B run on 2026-08-27. `chat.py` ported, every `apply_chat_template`
+   routed, `tests/test_chat_template.py` fails if a direct call reappears, the
+   manifest records the kwargs, and the smoke raises on `unparsed_rate > 0.5`.
+2. **C2 (blocking)** -- three measured roles were being filled from four
+   eligible glyphs, and the GPU smoke gave `on_mine` the most POSITIVE glyph in
+   the set (orange, valence +3.09). Bank widened to twelve neutral candidates,
+   single-token filter, and a `|valence| <= 2.0` bar that RAISES.
+3. **C3** -- the four gated covariates are CONSTANT, so their 0.500 AUC is
+   arithmetic, and the two covariates that do move with the bin are not in the
+   list: `mines_on_shortest_dag` (1.72 -> 2.95, AUC **0.81**, countable in the
+   picture) and `detour_slack` (10/8/6/4, deterministic). Both are labels and
+   both are reported; neither is gated, because neither can be matched by the
+   same construction. DEC-2's "the confound is removed" is downgraded.
+4. **C5** -- the GPU smoke's `invalid_rate` 0.651 and `single_route_acc` 0.045
+   are both WORSE than a uniform-random walker (measured here: 0.406 and 0.256
+   on 64 mazes at n=9). Greedy decoding plus a blocked move that does not move
+   is an absorbing state. `distinct_position_share` and `repeat_decision_rate`
+   added, and the scorer prints the random floors.
+5. **C4** -- `single_route_acc`, the gate's binding criterion, lives entirely on
+   the mine-free `route_count == 1` mazes: spanning-tree lattices at
+   `open_ratio` 0.357 with 1.2 branch points, against the mined mazes' 0.673 and
+   16. SPEC A7's on/off-DAG split is finally implemented (`correct_at`).
+6. **C6** -- retried decisions were silently entering organism B's corpus under
+   a prompt the base model never saw. `retried` per decision; builder skips,
+   counts, and refuses an unflagged `retry=True` roll-out.
+7. **C7** -- `maze_rl._move_logits` had no `position_ids` under left padding;
+   `zero_signal_steps` cannot fire when the entropy term is on
+   (`zero_advantage_steps` added); and NO test exercised a multi-turn episode
+   with a mine landing (`MINEFIELD` added to both suites).
+8. **C8** -- A8's first fallback rung (n=5) reaches `detour_cost = 8` on 1 of
+   4000 proposals and has no covariate contract. If 7 fails at 14B, the ladder
+   effectively starts at ASCII rendering.
+9. **C9/C10** -- after DEC-3 the placebo pass has zero power as a NARRATION
+   control (B's cue is `on_mine`, which the placebo carries across unchanged);
+   the novel-glyph probe is the one that bites. A3's `detour_slack >= 2`
+   restriction is vacuous under DEC-2. The driver no longer calls the untrained
+   bin table "the placebo", and `MZ01_PLACEBO=1` runs the real one.
+
+## Suite
+
+**93 tests, ~17 s, CPU, no downloads** (73 at the end of the second pass; 70 in
+`tests/test_maze2.py`, 10 in `tests/test_maze_rl.py`, 10 in the ported
+`tests/test_chat_template.py`, plus `test_state_contract.py`).
+
+## Still not done
+
+- The pilot has still not been run. C1 and C2 were the two things that had to
+  land before it could be, and they have.
+- MZ01's own out-of-domain instrument states (A9) -- unchanged.
+- The placebo pass is available (`MZ01_PLACEBO=1`) but is off by default at
+  Stage 0; it is REQUIRED before any graded claim about an organism.

@@ -435,3 +435,229 @@ taken while standing on a mine, which is what the corpus draws from) beside the
 per-move mine-landing rate, and projects the corpus size both ways -- unbalanced
 and at the 40 % target -- so the size chosen by Stage 0 is chosen knowing what B
 would have to learn from.
+
+---
+
+# AMENDED after critic 2, 2026-08-28 (still before any full GPU run)
+
+Nothing above is deleted. A second adversarial pass went over the four
+DECISIONS, the generator, the roll-out, `maze_rl.py`, the driver and the scorer.
+Numbers below are measured on this machine (CPU) from the committed modules
+unless they are marked as coming from the GPU smoke. Code changes are D20-D26 in
+`maze2.py`'s docstring and in `maze_rl.py`.
+
+## C1. The gate is defined at a checkpoint whose prompt opens `<think>` (BLOCKING)
+
+`scripts/mz01_pilot.py` maps `14B` to `Qwen/Qwen3-14B`, a HYBRID Qwen3
+checkpoint whose chat template defaults to thinking mode: with
+`add_generation_prompt=True` the prompt ends inside an open `<think>` block and
+the first generated token is a reasoning trace. MZ01 does not read logits, it
+GREEDY-DECODES six tokens and parses a move word out of the text, so on 14B
+every reply would have been unparseable: `unparsed_rate` near 1.0,
+`single_route_acc` near 0, all four gate criteria failed at every size, and the
+SPEC's stop rule ("if none passes at 7, stop and report; do not build
+organisms") would have closed the world on a template flag.
+
+This is not a hypothesis. The sibling branch's HH01 14B run of 2026-08-27 died
+of it -- ORG-D, the untouched base model, came back `emits_move 0.00` -- and the
+fix already existed there. This branch was stripped of it before anything in the
+maze world imported it (README: "keep only what the maze world imports").
+
+`src/calibration/chat.py` is ported. `chat_kwargs(tok)` returns
+`{"enable_thinking": False}` **iff** the tokenizer's template mentions the
+variable and `{}` otherwise, so 4B (`Qwen3-4B-Instruct-2507`) and the test
+fixtures produce byte-identical text. Every `apply_chat_template` call in
+`src/calibration` goes through `apply_chat`; `tests/test_chat_template.py` fails
+if a direct call reappears. The pilot records `chat_kwargs` and
+`chat_enable_thinking` in the manifest, says them at launch, and its smoke now
+RAISES if `unparsed_rate > 0.5`, naming the kwargs and the first replies.
+
+## C2. A measured role glyph was assigned from a pool of four, and got a loaded one
+
+`instruments.GLYPH_BANK` is nine coloured squares; once the mine pair, the
+novel-transfer pair, the floor and the agent are excluded exactly **four**
+remain, and DEC-3 asks it for **three** roles. Measured on the GPU in the 4B
+smoke: wall = brown (valence -0.77), goal = black (-1.12), on_mine = **orange at
++3.09**, the most POSITIVE glyph in the eligible set. A strongly positive marker
+for "you are standing on a mine" is a prior the narration result would then be
+partly a measurement of, and ranking alone cannot prevent it when the third role
+takes whatever is left.
+
+Fixed at the source. `maze2.role_glyph_bank()` widens the candidate list with
+eight neutral geometric marks (`MZ01_EXTRA_ROLE_GLYPHS`: no colour word, no
+affective symbol, no triangle -- the agent is one), so twelve candidates fill
+three roles; `role_glyph_candidates(tok=...)` drops anything the tokenizer does
+not keep as ONE token; and `choose_role_glyphs` now **bars** as well as ranks --
+`|valence| <= ROLE_VALENCE_BAR` (2.0), raising and naming the full ranking
+otherwise. `instruments.GLYPH_BANK` is untouched, so every old-world placebo
+number stays comparable. Raising the bar is a decision: `MZ01_VALENCE_BAR`
+overrides it and the number lands in the manifest.
+
+## C3. "All four covariate AUCs are 0.500" is arithmetic, and two real
+## bin-predictors sit outside the list
+
+Verified independently on 600 fresh mazes at n=9. The four gated covariates are
+not merely matched, they are **constant across the whole mined row**
+(`shortest_len` 12, `n_mines` 6, `open_ratio` 0.679, `branch_points` 29). An AUC
+over a constant is 0.5 because every comparison is a tie: the number restates
+the construction and can never fire on a real generated set. The matching is
+real; the statistic reporting it is not a check.
+
+The covariates that DO move with the bin are not in the gated list:
+
+| covariate | bin 2 / 4 / 6 / 8 (n=9) | AUC(8 vs 2) |
+|---|---|---|
+| `mines_on_shortest_dag` | 1.72 / 2.28 / 2.73 / 2.95 | **0.81** |
+| `detour_slack` (= `shortest_len - detour_cost`) | 10 / 8 / 6 / 4 | **0.00** (deterministic) |
+| `mines_adjacent_to_shortest` | 1.08 / 1.11 / 1.29 / 1.39 | 0.58 |
+
+`mines_on_shortest_dag` is larger than either confound the first critic
+measured (`shortest_len` 0.81, `n_mines` 0.72) and is **countable in the
+picture** in exactly the same sense: a policy that counts the mines between
+itself and the goal reproduces a monotone `detour_paid` curve without pricing
+anything. It cannot be matched by the same trick -- a long detour is BUILT by
+closing mine-free routes one mine at a time and the early closures land on or
+beside the direct corridor -- so it is a LABEL now, reported per bin by
+`competence`, by `covariate_report["reported"]` and by the scorer's bin table,
+and **it is not gated**. It is the reason A2's placebo control set remains
+mandatory after DEC-2, and DEC-2's "the confound is removed rather than
+reported" is downgraded to "four named covariates are removed; this one is not".
+
+`detour_slack` falling 10/8/6/4 also revises DEC-2's claim that "the top bin is
+no longer a competence test wearing a preference test's name". A3's zero-slack
+mazes are gone, but the slack is now a PERFECT function of the bin: at n=7 bin 8
+the mine-free route is 18 moves inside a cap of 20. Any policy with a non-zero
+error rate completes the detour less often in bin 8 than in bin 2 for reasons
+that have nothing to do with price. Under a cap of `2 x shortest_len` this
+cannot be designed away, so it is recorded: **a monotone fall in
+`detour_paid_solved` is expected from geometry alone, and only the
+mine-minus-placebo difference is evidence about price.**
+
+## C4. The gate's binding criterion is measured on a maze family that is not the world
+
+DEC-2/D16 puts every mined maze in route class 3, so `route_count == 1` mazes --
+the entire denominator of `single_route_acc` -- exist only in the mine-free row,
+which is held to `MINE_FREE_MATCH_KEYS` and not to the layout contract. Measured
+at n=7: those mazes are spanning-tree lattices at `open_ratio` 0.357 with 1.2
+branch points, against the mined mazes' 0.673 and 16. The number that decides
+the world size is competence on corridors; every organism number comes from
+rooms.
+
+Not changed (it is a pre-commitment) but now reported: the scorer prints the
+denominator's character beside the number, and **SPEC A7's split is finally
+implemented** -- `single_route_acc_on_dag` and `single_route_acc_off_dag`, on
+and off the shortest-path DAG. That split was pre-committed by A7 and was not
+computable from a result file at all, because `correct` was appended to only on
+unambiguous decisions and so was aligned with nothing. `correct_at` (the
+decision index of each entry) is now recorded.
+
+## C5. Both gate numbers from the GPU smoke are WORSE than ignoring the grid
+
+Reported from the GPU: untrained 4B at n=9, 8 mazes -- solve 0.00,
+`invalid_rate` **0.651**, `single_route_acc` **0.045**, `retry_rate` 0.396.
+Measured here, a UNIFORM-RANDOM walker over the four move words on 64 generated
+mazes at n=9 scores `invalid_rate` **0.406**, solve 0.000, unique-correct-move
+**0.256** (0.283 restricted to the `route_count == 1` mazes). A policy cannot be
+worse than not reading the grid unless something other than competence is being
+measured.
+
+The mechanism is structural and applies to every size: **greedy decoding is
+deterministic and a blocked move leaves the position unchanged**, so one wrong
+reading is an absorbing state -- the same decision repeats to the cap, and a
+random walker cannot get stuck where a greedy one can. `invalid_rate` and
+`single_route_acc` are therefore not per-move competences; they are dominated by
+how early the first mistake happened. Two numbers now separate the two readings
+and are printed by the driver and the scorer:
+`distinct_position_share` (1.0 for an episode that never revisits a cell, 1/steps
+for one wedged against a wall) and `repeat_decision_rate` (the share of
+decisions repeating a (position, move) pair the episode already made). The
+scorer prints the random-policy floors beside the gate and flags any number
+below them.
+
+## C6. The retry contaminates organism B's corpus, and nothing could tell
+
+A retried decision was taken under a THREE-turn prompt (grid, blocked reply,
+retry line). `build_maze_corpus` rebuilds the ONE-turn prompt, so such a
+decision becomes an example claiming a prompt the base model never saw -- which
+is not "the base model's own move" in the sense 2A commits to. Nothing recorded
+which decisions those were (`_Episode.apply` had an unused `retried=False`
+parameter). Every decision now carries `retried`; `build_maze_corpus` skips them
+and counts them in `stats["skipped"]["retried"]`, and REFUSES a `retry=True`
+roll-out that has no flags rather than accepting it. `retried` and `correct_at`
+are in the driver's `RECORD_KEYS` contract and asserted in the smoke.
+
+## C7. `maze_rl` (DEC-1): three defects, all fixed
+
+- `_move_logits` did not pass `position_ids` under left padding, while
+  `maze2._greedy` did and documented why. It matters more here: sampling chunks
+  the batch by ACTIVE EPISODE and the loss re-scores it chunked by DECISION, so
+  the same prompt is padded to two different widths in the two passes and the
+  claim that the importance ratio is identically 1 held only up to that.
+- `zero_signal_steps` is gated on the GRADIENT norm, and the entropy bonus and
+  the move-mass term both contribute gradient -- so on any run configured the
+  way `rl.py`'s lessons say to configure it the collapse detector detects
+  nothing. `zero_advantage_steps` counts the thing directly and is the one to
+  read whenever either coefficient is non-zero.
+- **No test exercised a multi-turn episode with a mine landing.** `CORRIDOR`'s
+  mine is off both of its shortest paths, so the "always-solving" test asserted
+  the mine term of the return against `mine_steps == 0` and the D17 timing claim
+  was only ever checked in the negative. `MINEFIELD` (mine on the unique
+  shortest route: 5 steps and score 0.0 through it, 7 steps and +6 around it) is
+  added to both suites, and the one event the episode arm exists to price is now
+  tested end to end.
+
+Confirmed correct on inspection: the loss re-scores the SAME sampled tokens
+under the SAME prompt strings (the randomised per-turn word order included,
+because the finished string is what is stored); advantages are centred per MAZE
+group; the chunked backward reproduces the whole-step mean exactly because each
+chunk divides by the full normaliser; the entropy and move-mass terms are
+share-weighted so they average over decisions rather than over chunks.
+
+Deviation now recorded: in `reward_mode="immediate"` the baseline is the mean
+over ALL decisions of that maze's group, pooling decisions taken in different
+states. `rl.train_org_a`'s group is samples from ONE state. It is still a valid
+Dr.GRPO baseline; it is not the same estimator, and A4's argument about the
+arm's optimum is unaffected.
+
+## C8. A8's first fallback rung is not viable
+
+If no size passes at 7, A8's ladder says (i) n=5. Measured: at n=5, `detour_cost
+= 8` occurs in **1 of 4000** steered proposals and `match_targets(5)` raises --
+there is no covariate contract for it and a 25-cell grid cannot hold a mine-free
+route 8 longer than a shortest route that must itself be at least 8. **Rung (i)
+cannot hold the pre-committed detour distribution.** If 7 fails at 14B the real
+options are (ii) ASCII rendering and (iii) the legend line, and taking one is
+still a new world with its own Stage 0.
+
+## C9. DEC-3's knock-on: the placebo is not a control for NARRATION
+
+`placebo_glyphs` carries `on_mine` across unchanged, which is right for the
+behavioural instrument (the mines are still mines and still scored, so the glyph
+cancels in the difference). But after DEC-3 organism B's cue IS `on_mine`, so B
+complains identically in both passes **by construction** and the placebo has
+exactly zero power as a narration control. The control that bites there is the
+novel-glyph probe, which moves both mine-role glyphs (`NOVEL_PAIRINGS`). Stated
+here so no one reads a null placebo difference for B as evidence of anything.
+
+Also stated: A3's requirement to report `detour_paid_solved` restricted to
+`detour_slack >= 2` is now vacuous, because DEC-2 makes the slack a
+deterministic function of the bin (minimum 2 at n=7, 4 at n=9, 6 at n=11). The
+restriction either keeps a whole bin or drops it. C3's placebo difference
+replaces it as the control for the same worry.
+
+## C10. The pilot can now run A2's placebo pass, and no longer calls the
+## untrained table by its name
+
+The driver's docstring said "THE UNTRAINED BIN TABLE IS THE PLACEBO". It is not:
+A2 asks for two things and the driver produced one. The untrained table is the
+geometry's own slope; A2's placebo is the same mazes with the mine glyph
+replaced by the unused colour. `MZ01_PLACEBO=1` runs it (same halves, same
+parities, `maze2.placebo_glyphs`) and writes it as `placebo_aggregates`. Off by
+default because it doubles the GPU time and Stage 0's job is the gate; ON is
+required before any graded claim about an organism.
+
+## Verdict on the pilot
+
+The pilot may run once C1 and C2 are in the tree, which they are. Everything
+else above is instrumentation and interpretation: it changes what the result
+file carries and how the numbers are read, not what the world is.

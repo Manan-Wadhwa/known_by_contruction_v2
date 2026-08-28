@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import torch
 
+from .chat import apply_chat
 from .capture import MOVE_WORDS, maze_prompt
 
 # Deliberately the same word lists E14 scored, so its numbers stay comparable.
@@ -149,7 +150,7 @@ def logits_at_last(model, tok, prompts, batch_size=32, force=None):
         tok.pad_token = tok.eos_token
     out = []
     for lo in range(0, len(prompts), batch_size):
-        texts = [tok.apply_chat_template([{"role": "user", "content": p}],
+        texts = [apply_chat(tok, [{"role": "user", "content": p}],
                                          add_generation_prompt=True, tokenize=False)
                  for p in prompts[lo:lo + batch_size]]
         enc = tok(texts, return_tensors="pt", padding=True,
@@ -170,7 +171,7 @@ def resid_at_last(model, tok, prompts, batch_size=32):
         tok.pad_token = tok.eos_token
     out = []
     for lo in range(0, len(prompts), batch_size):
-        texts = [tok.apply_chat_template([{"role": "user", "content": p}],
+        texts = [apply_chat(tok, [{"role": "user", "content": p}],
                                          add_generation_prompt=True, tokenize=False)
                  for p in prompts[lo:lo + batch_size]]
         enc = tok(texts, return_tensors="pt", padding=True,
@@ -272,7 +273,8 @@ def behavioural_margin(model, tok, states, orders, penalised, batch_size=32):
     ms = []
     for lo in range(0, len(states), batch_size):
         chunk, ords = states[lo:lo + batch_size], orders[lo:lo + batch_size]
-        texts = [tok.apply_chat_template(
+        texts = [apply_chat(
+            tok,
             [{"role": "user", "content": maze_prompt(g, o)}],
             add_generation_prompt=True, tokenize=False)
             for (g, _d), o in zip(chunk, ords)]
@@ -317,7 +319,8 @@ def output_drift(model, tok, states, orders, batch_size=32):
     mass, ent, top1 = [], [], []
     for lo in range(0, len(states), batch_size):
         chunk, ords = states[lo:lo + batch_size], orders[lo:lo + batch_size]
-        texts = [tok.apply_chat_template(
+        texts = [apply_chat(
+            tok,
             [{"role": "user", "content": maze_prompt(g, o)}],
             add_generation_prompt=True, tokenize=False)
             for (g, _d), o in zip(chunk, ords)]

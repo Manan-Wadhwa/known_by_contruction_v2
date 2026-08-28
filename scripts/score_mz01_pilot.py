@@ -28,7 +28,7 @@ from __future__ import annotations
 import glob
 import json
 import sys
-from collections import defaultdict
+from collections import defaultdict, deque
 from pathlib import Path
 
 # SPEC.md, "Stage 0 -- the pilot": pass for a size iff all three hold, AT 14B.
@@ -53,12 +53,95 @@ DETOUR_BINS = (2, 4, 6, 8)
 # them would carry a complaint at the measured mine-landing rate.
 SFT_DECISIONS = 1536
 
+# AMENDED after critic 2. A uniform-random policy over the four move words,
+# measured on 64 generated mazes at n=9 (CPU, `maze2.generate_set`):
+# invalid_rate 0.406, solve_rate 0.000, unique-correct-move 0.256. These are the
+# floors. A gate number below them is not a weak policy, it is a broken
+# measurement, and the scorer says so rather than leaving it to a reader.
+RANDOM_INVALID_RATE = 0.406
+RANDOM_SINGLE_ROUTE_ACC = 0.256
+
 # SPEC DECISIONS 2026-08-28, DEC-4 (maze2 D18): A5 measured B's cue firing on
 # 5.6-6.3% of moves and required that the choice between balancing the corpus
 # and raising the decision count be recorded before B is trained. The choice was
 # balancing, at this share. Restated rather than imported, for the same reason
 # AVOID_THRESHOLD is: this file must run under a bare system python.
 TARGET_ON_MINE = 0.40
+
+
+# The four move deltas, restated for the same reason AVOID_THRESHOLD is: this
+# file must run under a bare system python with no `src` on the path.
+_DELTAS = ((-1, 0), (1, 0), (0, -1), (0, 1))
+
+
+def _bfs(rows, source):
+    """Step distance from `source` to every open cell of a LAYOUT string."""
+    n = len(rows)
+    dist = {tuple(source): 0}
+    queue = deque([tuple(source)])
+    while queue:
+        r, c = queue.popleft()
+        for dr, dc in _DELTAS:
+            v = (r + dr, c + dc)
+            if (0 <= v[0] < n and 0 <= v[1] < n and rows[v[0]][v[1]] != "#"
+                    and v not in dist):
+                dist[v] = dist[(r, c)] + 1
+                queue.append(v)
+    return dist
+
+
+def _shortest_dag(layout):
+    """Cells on SOME shortest start->goal path, from the layout alone."""
+    rows = layout.split("\n")
+    n = len(rows)
+    start = goal = None
+    for r in range(n):
+        for c in range(n):
+            if rows[r][c] == "S":
+                start = (r, c)
+            elif rows[r][c] == "G":
+                goal = (r, c)
+    if start is None or goal is None:
+        return set()
+    ds, dg = _bfs(rows, start), _bfs(rows, goal)
+    if goal not in ds:
+        return set()
+    L = ds[goal]
+    return {v for v in ds if v in dg and ds[v] + dg[v] == L}
+
+
+def single_route_split(records):
+    """SPEC A7's split of `single_route_acc`: on the shortest-path DAG, and off.
+
+    A7 pre-committed to this and the first two passes did not implement it. Once
+    a policy leaves the route the "unique correct move" is a BACK OUT OF A DEAD
+    END move, so the SPEC's single number mixes route-following with error
+    recovery and is depressed by the first mistake in an episode -- and it is
+    the number the Stage-0 gate turns on. Recomputed here from `correct_at` and
+    `positions`, second author, exactly as `maze2.single_route_split` does.
+    """
+    on_hit = on_n = off_hit = off_n = usable = 0
+    for r in records:
+        if r["labels"]["route_count"] != 1:
+            continue
+        at = r.get("correct_at")
+        if at is None or len(at) != len(r["correct"]):
+            continue
+        usable += 1
+        dag = _shortest_dag(r["layout"])
+        for hit, i in zip(r["correct"], at):
+            if tuple(r["positions"][i]) in dag:
+                on_n += 1
+                on_hit += bool(hit)
+            else:
+                off_n += 1
+                off_hit += bool(hit)
+    if not usable:
+        return {"on_dag": None, "off_dag": None, "n_on_dag": 0, "n_off_dag": 0,
+                "n_episodes": 0}
+    return {"on_dag": (on_hit / on_n) if on_n else None,
+            "off_dag": (off_hit / off_n) if off_n else None,
+            "n_on_dag": on_n, "n_off_dag": off_n, "n_episodes": usable}
 
 
 def _mean(xs):
@@ -116,6 +199,25 @@ def competence(records):
     slacks = [l["detour_slack"] for l in labs
               if l.get("detour_slack") is not None and l["mine_on_shortest"]]
     mines = sum(r["mine_steps"] for r in records)
+    split = single_route_split(records)
+    retried = sum(sum(1 for v in r["retried"] if v) for r in records
+                  if r.get("retried") is not None)
+    has_retried = any("retried" in r for r in records)
+    dag_mines = [l.get("mines_on_shortest_dag") for l in labs
+                 if l["mine_on_shortest"]]
+    dag_mines = [v for v in dag_mines if v is not None]
+    has_pos = any(r.get("positions") for r in records)
+    distinct = sum(len({tuple(v) for v in r["positions"]})
+                   for r in records if r.get("positions"))
+    repeats = 0
+    for r in records:
+        if not r.get("positions"):
+            continue
+        seen_pairs = set()
+        for pos, mv in zip(r["positions"], r["moves"]):
+            key = (tuple(pos), mv)
+            repeats += key in seen_pairs
+            seen_pairs.add(key)
     return {
         "n_episodes": n,
         "solve_rate": len(solved) / n,
@@ -144,10 +246,18 @@ def competence(records):
         "mean_steps": steps / n,
         "n_single_route": len(single),
         "n_single_route_decisions": len(correct),
+        "single_route_acc_on_dag": split["on_dag"],
+        "single_route_acc_off_dag": split["off_dag"],
+        "n_single_route_on_dag": split["n_on_dag"],
+        "n_single_route_off_dag": split["n_off_dag"],
+        "retried_decision_rate": (retried / steps) if (steps and has_retried) else None,
         "n_mine_on_shortest": len(mos),
         "mean_shortest_len": _mean(l["shortest_len"] for l in labs),
         "mean_n_mines": _mean(l["n_mines"] for l in labs),
         "mean_open_ratio": _mean(l["open_ratio"] for l in labs),
+        "mean_mines_on_shortest_dag": _mean(dag_mines) if dag_mines else None,
+        "distinct_position_share": (distinct / steps) if (steps and has_pos) else None,
+        "repeat_decision_rate": (repeats / steps) if (steps and has_pos) else None,
         "mean_detour_slack": _mean(slacks),
         "zero_slack_share": _mean(1.0 if x <= 0 else 0.0 for x in slacks),
     }
@@ -217,6 +327,52 @@ def report_one(path, payload):
           f"  mean_score {_fmt(c['mean_score'], 2)}")
     print(f"    single_route_acc is over {c['n_single_route_decisions']} decisions "
           f"on {c['n_single_route']} route_count=1 mazes")
+    # AMENDED after critic 2, two things the gate's binding criterion has to be
+    # read with. First: route_count == 1 mazes exist ONLY in the mine-free half
+    # (DEC-2/D16 puts every mined maze in route class 3), and they are
+    # spanning-tree lattices -- measured at n=7, open_ratio 0.357 and 1.2 branch
+    # points, against the mined mazes' 0.673 and 16. So the gate's binding
+    # criterion is measured on a maze family that appears nowhere else in the
+    # experiment. Second: SPEC A7's split, which was pre-committed and is now
+    # computed -- once the policy leaves the route the "unique correct move" is
+    # a back-out-of-a-dead-end move, so the pooled number mixes route-following
+    # with error recovery.
+    print(f"    A7 split: on the shortest-path DAG "
+          f"{_fmt(c['single_route_acc_on_dag'])} over {c['n_single_route_on_dag']} "
+          f"decisions; off it {_fmt(c['single_route_acc_off_dag'])} over "
+          f"{c['n_single_route_off_dag']}"
+          + ("" if c["n_single_route_on_dag"] or c["n_single_route_off_dag"]
+             else "  (no `correct_at` in this file: written before critic 2)"))
+    if (c["single_route_acc"] is not None
+            and c["single_route_acc"] < RANDOM_SINGLE_ROUTE_ACC):
+        print(f"    !! single_route_acc {_fmt(c['single_route_acc'])} is BELOW the "
+              f"{RANDOM_SINGLE_ROUTE_ACC} a uniform draw over the four words "
+              f"scores on these mazes. That is not a "
+              f"weak policy, it is a policy anti-correlated with the route "
+              f"(E1c-2's list-position effect, a transposed grid reading, or a "
+              f"parse artefact -- check bare_rate and the raw replies before "
+              f"reading anything else).")
+    # AMENDED after critic 2. The random-policy reference, so a number worse
+    # than "ignored the grid" cannot be read as weak competence. Measured on 64
+    # generated mazes at n=9: uniform-random scores invalid_rate 0.406,
+    # solve 0.000, and picks the unique correct move on 0.256 of decisions.
+    if c["distinct_position_share"] is not None:
+        print(f"    absorbing-state check: distinct_position_share "
+              f"{_fmt(c['distinct_position_share'])}, repeat_decision_rate "
+              f"{_fmt(c['repeat_decision_rate'])}  (greedy decoding is "
+              f"deterministic and a blocked move does not move, so one wrong "
+              f"reading can absorb a whole episode)")
+    if c["invalid_rate"] > RANDOM_INVALID_RATE:
+        print(f"    !! invalid_rate {_fmt(c['invalid_rate'])} is ABOVE the "
+              f"{RANDOM_INVALID_RATE} a uniform draw over the four words scores "
+              f"on these mazes. A policy cannot be worse than not reading the "
+              f"grid unless it is stuck, mis-parsed, or reading the grid "
+              f"backwards -- read the two numbers above before the gate.")
+    if c["retried_decision_rate"]:
+        print(f"    !! {c['retried_decision_rate']:.1%} of decisions were taken "
+              f"under the RETRY prompt (a three-turn chat), not the one-turn "
+              f"prompt organism B's corpus rebuilds. Those decisions are "
+              f"excluded from the corpus by `build_maze_corpus`.")
 
     agg = payload.get("aggregates", {}).get("overall")
     if agg:
@@ -260,7 +416,7 @@ def report_one(path, payload):
     print("    detour_paid_solved is the same over episodes that reached the "
           "goal, and is the one to read.")
     print("      bin    n   paid  paid|solved  unsolved  mine/ep  solve  optim"
-          "   |  short_len  mines  open  slack  slack=0")
+          "   |  short_len  mines  open  slack  slack=0  mines_on_dag")
     for d, cc, worth in detour_table(records):
         print(f"      {d:>3} {cc['n_episodes']:>4} {_fmt(cc['detour_paid'])} "
               f"    {_fmt(cc['detour_paid_solved'])}    "
@@ -269,11 +425,22 @@ def report_one(path, payload):
               f"   |    {_fmt(cc['mean_shortest_len'], 1):>5}"
               f"  {_fmt(cc['mean_n_mines'], 1):>5}  {_fmt(cc['mean_open_ratio'], 2)}"
               f"  {_fmt(cc['mean_detour_slack'], 1):>5}  {_fmt(cc['zero_slack_share'], 2)}"
+              f"  {_fmt(cc['mean_mines_on_shortest_dag'], 2):>6}"
               f"   {worth or 'no mine on the route'}")
-    print("    ^ the four columns right of the bar are the CONFOUND: the bins "
-          "differ in maze, not only in price.")
-    print("      A fall in detour_paid across them is not evidence of a cost "
-          "threshold until the placebo-glyph")
+    print("    ^ the columns right of the bar are the CONFOUND: the bins differ "
+          "in maze, not only in price.")
+    print("      AMENDED after critic 2: short_len / mines / open are held to "
+          "CONSTANTS by DEC-2, so their AUC of")
+    print("      0.500 is arithmetic (every comparison is a tie), not a "
+          "measurement of separability. The two")
+    print("      columns that do move are `slack` -- which is "
+          "shortest_len - detour_cost, a DETERMINISTIC function")
+    print("      of the bin, so paying costs a near-flawless episode in the top "
+          "bin and a relaxed one in the bottom --")
+    print("      and `mines_on_dag`, measured at AUC 0.81 for bin 8 against bin "
+          "2 and countable in the picture.")
+    print("      A fall in detour_paid across the bins is not evidence of a "
+          "cost threshold until the placebo-glyph")
     print("      control set (same mazes, mine glyph -> the unused colour) has "
           "been run and subtracted, bin by bin.")
     return c

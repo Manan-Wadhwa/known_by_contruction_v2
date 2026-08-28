@@ -221,6 +221,61 @@ D19. EPISODE-RETURN RL IS THE PRIMARY ARM FOR A (`maze_rl.train_maze_a`). A4 is
     reverses the SPEC's 3A -- and is less a change of mind than the SPEC's own
     A4 clause ("A-ret is not a fallback, it is the only arm that can test the
     threshold") carried into the code.
+
+WHAT THE SECOND CRITIC FOUND (D20-D26). SPEC.md's "AMENDED after critic 2"
+section is the binding record; this is what each one is in the code.
+
+D20. EVERY PROMPT IS TEMPLATED THROUGH `chat.apply_chat`. The Stage-0 gate is
+    DEFINED at Qwen3-14B, a hybrid checkpoint whose chat template defaults to
+    thinking mode: `add_generation_prompt=True` leaves the prompt inside an open
+    `<think>` block and the first generated token is a reasoning trace. This
+    module greedy-decodes six tokens and parses a move word out of the text, so
+    on 14B every reply would have been unparseable and the SPEC's stop rule
+    would have closed the world on a template flag. `chat_kwargs` passes
+    `enable_thinking=False` iff the template mentions it, so 4B and the test
+    fixtures are byte-identical. (SPEC C1.)
+
+D21. THE MEASURED ROLE GLYPHS COME FROM A WIDER BANK AND ARE BARRED, NOT ONLY
+    RANKED. `instruments.GLYPH_BANK` leaves exactly four eligible glyphs for
+    three roles, so the third role took whatever was left -- on the GPU that was
+    orange at valence +3.09, the most POSITIVE glyph available, for "you are
+    standing on a mine". `role_glyph_bank` adds eight neutral geometric marks,
+    `role_glyph_candidates(tok=...)` keeps only single-token ones, and
+    `choose_role_glyphs` raises above `ROLE_VALENCE_BAR`. (SPEC C2.)
+
+D22. `mines_on_shortest_dag` IS A LABEL, AND IT IS THE COVARIATE DEC-2 DOES NOT
+    HOLD. Measured over 600 mazes at n=9 it runs 1.72 / 2.28 / 2.73 / 2.95
+    across bins 2/4/6/8, AUC 0.81 -- larger than either confound the first
+    critic found, and countable in the picture. The four gated covariates are
+    held to CONSTANTS, so their 0.500 AUC is arithmetic (every comparison is a
+    tie) rather than a measurement; `covariate_report` now says which of the two
+    a 0.5 is (`constant`, `n_distinct_values`) and reports the unmatched ones
+    under `reported`. (SPEC C3.)
+
+D23. `correct_at` AND SPEC A7'S SPLIT. `correct` is appended to only on
+    decisions with a unique correct move, so it was aligned with nothing and
+    A7's pre-committed split of `single_route_acc` into "on the shortest-path
+    DAG" and "off it" was not computable from a result file. `correct_at` is the
+    index list; `single_route_split` is the split. (SPEC C4.)
+
+D24. `distinct_position_share` AND `repeat_decision_rate`. Greedy decoding is
+    deterministic and a blocked move does not move, so one wrong reading is an
+    ABSORBING STATE and the rest of the episode is the same decision repeated.
+    The first GPU smoke scored `invalid_rate` 0.651 and `single_route_acc` 0.045
+    at 4B/n=9, against a measured uniform-random 0.406 and 0.256 -- worse than
+    ignoring the grid, which a per-move competence cannot be. These two numbers
+    are what tells a bad policy from a stuck one. (SPEC C5.)
+
+D25. `retried` IS RECORDED PER DECISION AND EXCLUDED FROM B'S CORPUS. A retried
+    move was made under a three-turn prompt and `build_maze_corpus` rebuilds the
+    one-turn prompt, so keeping it puts a move made under one prompt into an
+    example claiming another. The builder skips them, counts them, and refuses a
+    `retry=True` roll-out that carries no flags. (SPEC C6.)
+
+D26. `path_moves` UNWRAPS `best_path`'s TRIPLE. `shortest_path` and `avoid_path`
+    return cells and `best_path` returns `(cost, steps, cells)`, so
+    `path_moves(best_path(m))` raised `TypeError`. One function, three
+    producers, no shape to remember at the call site.
 """
 
 from __future__ import annotations
@@ -234,6 +289,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
+from .chat import apply_chat
 from .capture import MOVE_WORDS, random_move_orders
 from .maze import TILE_AGENT, TILE_GOLD, TILE_MOLD, TILE_PATH, role_glyphs, swap_tile
 # Imported rather than restated: eval mazes must come from the same held-out
@@ -251,6 +307,8 @@ __all__ = [
     "step", "episode_cap", "score_path", "unique_correct_move", "rollout",
     "bare_move", "placebo_glyphs",
     "competence", "aggregate", "EMPTY_BUCKETS", "bucket_targets", "bucket_of",
+    "single_route_split", "role_glyph_bank", "ROLE_VALENCE_BAR",
+    "MZ01_EXTRA_ROLE_GLYPHS", "REPORTED_COVARIATES",
     "route_class", "assert_distribution", "bfs_dist", "shortest_path",
     "match_targets", "DEFAULT_MATCH", "BLOB_BAND", "MINED_ROUTE_CLASS",
     "COVARIATES", "COVARIATE_AUC_BAR", "covariate_report", "auc",
@@ -450,34 +508,84 @@ def placebo_glyphs(glyphs):
 # cell of one state.
 MEASURED_ROLES = ("wall", "goal", "on_mine")
 
+# AMENDED after critic 2. `instruments.GLYPH_BANK` is nine coloured squares, and
+# once the mine pair, the novel-transfer pair, the floor and the agent are taken
+# out of it exactly FOUR remain -- so the three measured roles were being filled
+# from a pool of four and the third role got whatever was left. Measured on the
+# GPU in the 4B smoke: wall = brown (valence -0.77), goal = black (-1.12),
+# on_mine = ORANGE at +3.09, the most POSITIVE glyph in the eligible set. A
+# strongly positive marker for "you are standing on a mine" is a prior the
+# narration instrument would then be partly a measurement of.
+#
+# So the bank is widened HERE rather than in `instruments.GLYPH_BANK`, which is
+# E14's pinned list and whose members every old-world placebo number is
+# comparable across. These are neutral geometric marks: no colour word attaches
+# to them, none is a symbol with an affective reading (no star, cross, tick or
+# warning sign), and none is a triangle (the agent is one).
+MZ01_EXTRA_ROLE_GLYPHS = ("\u25FC", "\u25FB", "\u25CF", "\u25CB",
+                          "\u25C6", "\u25C7", "\u2B22", "\u2B21")
 
-def role_glyph_candidates(exclude=()):
+# The bar a MEASURED role glyph has to clear, in the logit units
+# `instruments.glyph_valence_table` reports. Not a law of nature: it is the
+# level at which the chooser stops and asks a human rather than assigning a role
+# to a glyph the untrained model already has an opinion about. A run that has a
+# reason to exceed it passes `max_abs_valence` explicitly, and the manifest then
+# records the number that was accepted.
+ROLE_VALENCE_BAR = 2.0
+
+
+def role_glyph_bank():
+    """Every glyph MZ01 will consider for a measured role, in ranking order."""
+    from .instruments import GLYPH_BANK
+    out = list(GLYPH_BANK)
+    out += [g for g in MZ01_EXTRA_ROLE_GLYPHS if g not in out]
+    return out
+
+
+def role_glyph_candidates(exclude=(), tok=None):
     """Glyphs eligible to carry the wall, goal and on-mine roles.
 
     The mine pair is excluded (a wall the colour of a mine is not a control, it
     is a confound), the novel-transfer pair is excluded (it must stay unseen
     until the transfer probe), and the floor and agent glyphs are excluded.
+
+    `tok`, when given, additionally drops any glyph the tokenizer does not keep
+    as ONE token. A role glyph is written into every row of every grid, so a
+    two-token one silently lengthens the prompt and puts a second, unmeasured
+    piece of the model's vocabulary into the observation.
     """
-    from .instruments import GLYPH_BANK
     blocked = set(MINE_PAIR) | set(NOVEL_GLYPHS) | {TILE_PATH, TILE_AGENT} | set(exclude)
-    return [g for g in GLYPH_BANK if g not in blocked]
+    out = [g for g in role_glyph_bank() if g not in blocked]
+    if tok is not None:
+        out = [g for g in out if len(tok(g, add_special_tokens=False)["input_ids"]) == 1]
+    return out
 
 
-def choose_role_glyphs(table, exclude=()):
+def choose_role_glyphs(table, exclude=(), tok=None,
+                       max_abs_valence=ROLE_VALENCE_BAR):
     """(wall, goal, on_mine, picks) -- the three most neutral eligible glyphs.
 
     `table` is `instruments.glyph_valence_table` measured on the UNTRAINED model,
     which is the point: the roles are a measurement taken before any organism
     exists, not a constant, which is the defect `maze.py`'s header records about
-    E14's hard-coded placebo. Ranked by |valence|; `picks` carries the full
-    ranking so the manifest records what was rejected as well as what was taken.
+    E14's hard-coded placebo. Ranked by |valence|, with the across-template `sd`
+    as the tie-break; `picks` carries the full ranking so the manifest records
+    what was rejected as well as what was taken.
 
     D17 makes this three glyphs rather than two. `on_mine` is chosen the same
     way and for the same reason as the other two: it is a glyph the organism
     sees, so a hand-picked one could carry a valence that the narration result
     is then partly a measurement of.
+
+    AMENDED after critic 2: the choice is now BARRED as well as ranked. Ranking
+    alone cannot protect a role when the pool is four glyphs deep -- the third
+    role takes whatever is left, however loaded it is, and in the 4B smoke that
+    was orange at +3.09. `max_abs_valence` raises instead, naming the ranking,
+    so the answer is a decision a human takes and records rather than a silent
+    assignment. Pass `max_abs_valence=None` to restore the old behaviour, and
+    say in the manifest that you did.
     """
-    cands = [g for g in role_glyph_candidates(exclude) if g in table]
+    cands = [g for g in role_glyph_candidates(exclude, tok=tok) if g in table]
     if len(cands) < len(MEASURED_ROLES):
         raise ValueError(f"need >= {len(MEASURED_ROLES)} eligible glyphs in the "
                          f"table, got {cands}")
@@ -485,6 +593,20 @@ def choose_role_glyphs(table, exclude=()):
     picks = [{"glyph": g, "valence": table[g]["valence"], "sd": table[g]["sd"],
               "role": MEASURED_ROLES[i] if i < len(MEASURED_ROLES) else None}
              for i, g in enumerate(ranked)]
+    if max_abs_valence is not None:
+        loaded = [p for p in picks[:len(MEASURED_ROLES)]
+                  if abs(p["valence"]) > max_abs_valence]
+        if loaded:
+            raise ValueError(
+                "the untrained model already has an opinion about a glyph this "
+                "would put in a measured role: "
+                + "; ".join(f"{p['role']} <- {p['glyph']} valence "
+                            f"{p['valence']:+.3f} (sd {p['sd']:.3f})"
+                            for p in loaded)
+                + f"; bar is |valence| <= {max_abs_valence}. Widen "
+                  "`MZ01_EXTRA_ROLE_GLYPHS`, or raise the bar EXPLICITLY and "
+                  "record the number in the manifest. Full ranking: "
+                + ", ".join(f"{p['glyph']}{p['valence']:+.2f}" for p in picks))
     return ranked[0], ranked[1], ranked[2], picks
 
 
@@ -867,6 +989,17 @@ def labels_for(maze, route_cap=64):
         for _word, nxt in maze.neighbours(v):
             if nxt in mines and nxt not in dag:
                 adjacent.add(nxt)
+    # AMENDED after critic 2. The number of mines lying ON the shortest-path
+    # DAG. This is a covariate the DEC-2 contract does not hold and cannot
+    # easily hold -- a longer detour is BUILT by closing mine-free routes one
+    # mine at a time, and the early closures land on or beside the direct
+    # corridor -- and it is the one that survived the matching: measured over
+    # 600 mazes at n=9 it runs 1.72 / 2.28 / 2.73 / 2.95 across bins 2/4/6/8,
+    # AUC(bin 8 vs bin 2) = 0.81. That is larger than the `shortest_len` 0.81
+    # and `n_mines` 0.72 the first critic measured, and it is COUNTABLE IN THE
+    # PICTURE in exactly the same sense. It is a label so that every result file
+    # carries it and no graded claim can be made without it in view.
+    on_dag = len(mines & dag)
 
     open_cells = maze.open_cells()
     branch = sum(1 for v in open_cells if len(list(maze.neighbours(v))) >= 3)
@@ -883,6 +1016,7 @@ def labels_for(maze, route_cap=64):
         "dijkstra_detour": None if best_len is None else best_len - shortest_len,
         "mine_on_shortest": bool(has_mined and not has_free),
         "mines_adjacent_to_shortest": len(adjacent),
+        "mines_on_shortest_dag": on_dag,
         "route_count": routes,
         "route_count_capped": capped,
         "shortest_path_count": n_paths,
@@ -1459,6 +1593,17 @@ MINED_ROUTE_CLASS = 3
 # `shortest_len` and `n_mines` are held exactly by construction (`match`), so
 # anything but 0.0 there would be slack nobody needs.
 COVARIATES = ("shortest_len", "n_mines", "open_ratio", "branch_points")
+# AMENDED after critic 2. Covariates that are REPORTED across the bins but are
+# not gated on, because they cannot be held fixed by the construction that holds
+# the four above. `mines_on_shortest_dag` separates bin 8 from bin 2 at AUC 0.81
+# and `detour_slack` is `shortest_len - detour_cost`, i.e. a DETERMINISTIC
+# function of the bin (AUC 1.0 by definition). Both are here so that "all four
+# AUCs are 0.500" can never again be read as "the bins are matched": the four
+# that are matched are matched to CONSTANTS, so their AUC is 0.5 for want of
+# variance rather than for want of separability, and the covariates that do vary
+# are these.
+REPORTED_COVARIATES = ("mines_on_shortest_dag", "mines_adjacent_to_shortest",
+                       "detour_slack", "dead_ends")
 COVARIATE_MEAN_TOLERANCE = {"shortest_len": 0.0, "n_mines": 0.0,
                             "open_ratio": 0.05, "branch_points": 0.05}
 # The critic's bar: a covariate that separates the top bin from the bottom one
@@ -1624,12 +1769,23 @@ def covariate_report(mazes, *, tolerance=None, auc_bar=COVARIATE_AUC_BAR,
         gap = max(abs(means[k] - pooled) for k in keys)
         rel = gap / abs(pooled) if pooled else 0.0
         a = auc(vals[hi_key], vals[lo_key]) if enough else None
+        distinct = {v for vv in vals.values() for v in vv}
         out["by_covariate"][cov] = {
             "mean_by_bin": {str(k): round(means[k], 6) for k in keys},
             "pooled_mean": round(pooled, 6),
             "max_abs_gap": round(gap, 6),
             "max_rel_gap": round(rel, 6),
             "auc_top_vs_bottom": None if a is None else round(a, 6),
+            # AMENDED after critic 2. An AUC of exactly 0.500 on a covariate
+            # with ONE distinct value is arithmetic, not evidence: every
+            # comparison is a tie and ties score a half. The matching is real
+            # -- that is what holding it to a constant means -- but the AUC is
+            # then a restatement of the construction rather than a check on it,
+            # and a reader who takes "0.500" as a measurement of separability
+            # will also take it as covering covariates nobody constrained. So
+            # the report says which of the two it is.
+            "constant": len(distinct) == 1,
+            "n_distinct_values": len(distinct),
         }
         if rel > tol.get(cov, 0.0) + 1e-9:
             out["violations"].append(
@@ -1639,6 +1795,23 @@ def covariate_report(mazes, *, tolerance=None, auc_bar=COVARIATE_AUC_BAR,
             out["violations"].append(
                 f"{cov}: AUC(bin {hi_key} vs bin {lo_key}) = {a:.3f} > {auc_bar}; "
                 f"a policy reading only {cov} separates the bins")
+    # Reported, never gated. See REPORTED_COVARIATES: these are the covariates
+    # the construction does NOT hold, and the reason the placebo control set
+    # (SPEC A2) is still required after DEC-2.
+    out["reported"] = {}
+    for cov in REPORTED_COVARIATES:
+        try:
+            vals = {k: [float(l[cov]) for l in bins[k]] for k in keys}
+        except (KeyError, TypeError):
+            continue                    # a pre-amendment record has no such key
+        means = {k: sum(v) / len(v) for k, v in vals.items()}
+        a = auc(vals[hi_key], vals[lo_key]) if enough else None
+        distinct = {v for vv in vals.values() for v in vv}
+        out["reported"][cov] = {
+            "mean_by_bin": {str(k): round(means[k], 6) for k in keys},
+            "auc_top_vs_bottom": None if a is None else round(a, 6),
+            "constant": len(distinct) == 1,
+        }
     out["ok"] = not out["violations"]
     return out
 
@@ -1945,7 +2118,19 @@ def score_path(maze, moves):
 
 
 def path_moves(cells):
-    """The move words that walk a list of adjacent cells."""
+    """The move words that walk a list of adjacent cells.
+
+    `shortest_path` and `avoid_path` return the cells; `best_path` returns
+    `(cost, steps, cells)`, because its caller wants the cost. That difference
+    made `path_moves(best_path(m))` raise `TypeError` instead of doing the
+    obvious thing, so the triple is unwrapped here: one function, three
+    producers, no shape to remember at the call site.
+    """
+    if (len(cells) == 3 and not isinstance(cells[0], (tuple, list))
+            and isinstance(cells[2], (tuple, list))):
+        cells = cells[2]                        # best_path -> (cost, steps, path)
+    if cells is None:
+        return None
     back = {v: k for k, v in DELTAS.items()}
     return [back[(b[0] - a[0], b[1] - a[1])] for a, b in zip(cells, cells[1:])]
 
@@ -1979,6 +2164,21 @@ class _Episode:
         # cannot be rebuilt without the position and the word order it was asked
         # under. Both are recorded here or they are lost with the process.
         self.positions, self.orders, self.bare = [], [], []
+        # AMENDED after critic 2. Which decisions were taken under the RETRY
+        # prompt (a three-turn chat: the grid, the blocked reply, the retry
+        # line) rather than under the plain one-turn prompt. Organism B's corpus
+        # rebuilds the prompt as `maze_prompt(render(...), goal, order)` -- the
+        # one-turn form -- so a retried decision rebuilt that way is a move the
+        # base model made under a DIFFERENT prompt than the example claims. That
+        # is not "the base model's own move" in the sense 2A commits to, and
+        # without this flag nothing downstream could tell.
+        self.retried = []
+        # `correct` is only appended to when the decision had a unique correct
+        # move, so it is not aligned with `positions` and a re-scorer cannot say
+        # WHERE in the episode each entry came from. SPEC A7 pre-committed to
+        # splitting `single_route_acc` by "on the shortest-path DAG" and "off
+        # it"; this is the index list that makes that computable from a file.
+        self.correct_at = []
         # D17. Whether the state THIS decision was taken in showed the agent
         # standing on a mine. That is organism B's cue, and it is a property of
         # the prompt rather than of the move, so it is recorded beside the
@@ -1999,6 +2199,8 @@ class _Episode:
         unique = unique_correct_move(self.maze, self.pos)
         if unique is not None:
             self.correct.append(move == unique)
+            self.correct_at.append(len(self.positions))
+        self.retried.append(bool(retried))
         self.positions.append(list(self.pos))
         self.on_mine.append(bool(self.maze.is_mine(self.pos)))
         self.orders.append(list(order) if order is not None else list(MOVE_WORDS))
@@ -2040,6 +2242,8 @@ class _Episode:
             "replies": list(self.replies),
             "correct": list(self.correct),
             "positions": [list(v) for v in self.positions],
+            "retried": list(self.retried),
+            "correct_at": list(self.correct_at),
             "on_mine": list(self.on_mine),
             "on_mine_states": sum(1 for v in self.on_mine if v),
             "orders": [list(v) for v in self.orders],
@@ -2146,12 +2350,15 @@ def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
                 if ep.pending_retry:
                     msgs.append({"role": "assistant", "content": ep.last_reply})
                     msgs.append({"role": "user", "content": retry_prompt(order)})
-                texts.append(tok.apply_chat_template(
+                texts.append(apply_chat(
+                    tok,
                     msgs, add_generation_prompt=True, tokenize=False))
             replies = _greedy(model, tok, texts, max_new_tokens=max_new_tokens,
                               batch_size=batch_size, device=dev)
             for ep, order, reply in zip(active, orders, replies):
-                ep.apply(reply, retry, order=order)
+                # `pending_retry` is what put the retry turn in THIS prompt, and
+                # `apply` consumes it, so it is read here and passed in.
+                ep.apply(reply, retry, order=order, retried=ep.pending_retry)
             rounds += 1
             if progress is not None:
                 progress(rounds, len(active))
@@ -2170,6 +2377,50 @@ def rollout(model, tok, mazes, *, max_new_tokens=6, retry=False, generator=None,
 
 
 # ---------------------------------------------------------------- competence
+
+def single_route_split(records):
+    """SPEC A7's split of `single_route_acc`: on the shortest-path DAG, and off.
+
+    A7, in full: "`single_route_acc` is additionally not a per-move competence:
+    once the policy leaves the route, the 'unique correct move' is a BACK OUT OF
+    A DEAD END move, so the number mixes route-following with error recovery and
+    is depressed by the first mistake in an episode. Report it split by 'on the
+    shortest-path DAG' and 'off it' when the pilot lands." That was
+    pre-committed and never implemented; this is it.
+
+    Computable from a result file alone: `correct_at` (added after critic 2)
+    says which decision each `correct` entry belongs to, and `positions` says
+    where the agent was. Records written before that carry no `correct_at`, and
+    are reported as `None` rather than silently folded into one bucket.
+    """
+    on_hit = on_n = off_hit = off_n = 0
+    usable = 0
+    for r in records:
+        if r["labels"]["route_count"] != 1:
+            continue
+        at = r.get("correct_at")
+        if at is None or len(at) != len(r["correct"]):
+            continue
+        usable += 1
+        maze = from_layout(r["layout"], labels=False)
+        dag, _length = shortest_dag(maze)
+        for hit, i in zip(r["correct"], at):
+            pos = tuple(r["positions"][i])
+            if pos in dag:
+                on_n += 1
+                on_hit += bool(hit)
+            else:
+                off_n += 1
+                off_hit += bool(hit)
+    if not usable:
+        return {"on_dag": None, "off_dag": None, "n_on_dag": 0, "n_off_dag": 0,
+                "n_episodes": 0}
+    return {
+        "on_dag": (on_hit / on_n) if on_n else None,
+        "off_dag": (off_hit / off_n) if off_n else None,
+        "n_on_dag": on_n, "n_off_dag": off_n, "n_episodes": usable,
+    }
+
 
 def competence(records):
     """The SPEC's five numbers (plus what they must be read beside).
@@ -2212,6 +2463,36 @@ def competence(records):
               if l.get("detour_slack") is not None and l["mine_on_shortest"]]
     mines = sum(r["mine_steps"] for r in records)
     on_mine = sum(r.get("on_mine_states", 0) for r in records)
+    split = single_route_split(records)
+    retried = sum(sum(1 for v in r["retried"] if v) for r in records
+                  if r.get("retried") is not None)
+    has_retried = any("retried" in r for r in records)
+    dag_mines = [l.get("mines_on_shortest_dag") for l in
+                 [r["labels"] for r in records if r["labels"]["mine_on_shortest"]]]
+    dag_mines = [v for v in dag_mines if v is not None]
+    # AMENDED after critic 2. Greedy decoding on an unchanged grid is
+    # DETERMINISTIC and a blocked move leaves the position unchanged, so one
+    # wrong reading is an absorbing state: the same move repeats until the cap
+    # and every later decision is the same decision. Measured baseline, 64
+    # generated mazes at n=9: a UNIFORM-RANDOM walker scores invalid_rate 0.406
+    # and picks the unique correct move on 0.256 of decisions. The 4B smoke
+    # scored 0.651 and 0.045 -- both far WORSE than ignoring the grid, which a
+    # per-move competence cannot be. These two numbers separate "the policy is
+    # bad" from "the episode was one decision taken many times", and without
+    # them `invalid_rate` and `single_route_acc` cannot be read at all.
+    positions = [tuple(v) for r in records for v in r.get("positions", [])]
+    has_pos = any(r.get("positions") for r in records)
+    distinct = sum(len({tuple(v) for v in r["positions"]})
+                   for r in records if r.get("positions"))
+    repeats = 0
+    for r in records:
+        if not r.get("positions"):
+            continue
+        seen_pairs = set()
+        for pos, mv in zip(r["positions"], r["moves"]):
+            key = (tuple(pos), mv)
+            repeats += key in seen_pairs
+            seen_pairs.add(key)
     has_on_mine = any("on_mine_states" in r for r in records)
     return {
         "n_episodes": n,
@@ -2244,6 +2525,19 @@ def competence(records):
         "mean_steps": steps / n,
         "n_single_route": len(single),
         "n_single_route_decisions": len(correct),
+        # SPEC A7, finally implemented. Read `single_route_acc_on_dag` as the
+        # route-following number and `..._off_dag` as error recovery; the SPEC's
+        # single number is their pooled average and is depressed by the first
+        # mistake of every episode.
+        "single_route_acc_on_dag": split["on_dag"],
+        "single_route_acc_off_dag": split["off_dag"],
+        "n_single_route_on_dag": split["n_on_dag"],
+        "n_single_route_off_dag": split["n_off_dag"],
+        # AMENDED after critic 2. The share of decisions made under the RETRY
+        # prompt rather than the plain one. Those are not decisions the base
+        # policy took in the state the record's (layout, position, order) triple
+        # rebuilds, so they are excluded from organism B's corpus.
+        "retried_decision_rate": (retried / steps) if (steps and has_retried) else None,
         "n_mine_on_shortest": len(mos),
         # D11/D12. The covariates the bins are confounded with. Reported in every
         # slice so no reader can take a fall across bins for a cost threshold
@@ -2251,6 +2545,22 @@ def competence(records):
         "mean_shortest_len": sum(l["shortest_len"] for l in labs) / n,
         "mean_n_mines": sum(l["n_mines"] for l in labs) / n,
         "mean_open_ratio": sum(l["open_ratio"] for l in labs) / n,
+        # AMENDED after critic 2. The covariate DEC-2's contract does not hold:
+        # measured over 600 mazes at n=9 it runs 1.72 / 2.28 / 2.73 / 2.95
+        # across bins 2/4/6/8 (AUC 0.81 for bin 8 against bin 2). It is
+        # countable in the picture, so a policy that counts the mines between
+        # itself and the goal reproduces a monotone `detour_paid` curve without
+        # ever pricing anything.
+        "mean_mines_on_shortest_dag": (sum(dag_mines) / len(dag_mines)
+                                       if dag_mines else None),
+        # See the note beside `positions` above. `distinct_position_share` is
+        # 1.0 for an episode that never revisits a cell and falls toward 1/steps
+        # for one wedged against a wall; `repeat_decision_rate` is the share of
+        # decisions that repeat a (position, move) pair the episode already
+        # made, which under greedy decoding is a decision the model could not
+        # have taken differently.
+        "distinct_position_share": (distinct / steps) if (steps and has_pos) else None,
+        "repeat_decision_rate": (repeats / steps) if (steps and has_pos) else None,
         "mean_detour_slack": (sum(slacks) / len(slacks)) if slacks else None,
         "zero_slack_share": (sum(1 for x in slacks if x <= 0) / len(slacks))
                             if slacks else None,
@@ -2316,7 +2626,7 @@ def build_maze_corpus(records, *, target_on_mine=TARGET_ON_MINE, generator=None,
 
     # ---- every usable decision, with the flag it will be selected on ----
     pool_on, pool_off = [], []
-    skipped = {"unparsed": 0, "no_flags": 0}
+    skipped = {"unparsed": 0, "no_flags": 0, "retried": 0, "no_retry_flags": 0}
     for rec in records:
         flags = rec.get("on_mine")
         if flags is None:
@@ -2324,8 +2634,25 @@ def build_maze_corpus(records, *, target_on_mine=TARGET_ON_MINE, generator=None,
             continue
         maze = from_layout(rec["layout"], seed=rec.get("seed", -1), labels=False)
         g = Glyphs(**{k: rec["glyphs"][k] for k in Glyphs().as_dict()})
-        for i, (move, pos, order, flag) in enumerate(
-                zip(rec["moves"], rec["positions"], rec["orders"], flags)):
+        # AMENDED after critic 2. A decision taken under the RETRY prompt was
+        # taken in a three-turn chat -- the grid, the blocked reply, the fixed
+        # retry line -- and the prompt this builder writes is the one-turn form.
+        # Keeping it would put a move the base model made under one prompt into
+        # an example that claims another, which is exactly what SPEC 2A ("B's
+        # move labels are the base model's OWN moves") forbids. A roll-out with
+        # `retry=True` and no per-decision flags cannot be filtered, so it is
+        # refused rather than silently accepted.
+        retried = rec.get("retried")
+        if retried is None:
+            if rec.get("retry_enabled"):
+                skipped["no_retry_flags"] += 1
+                continue
+            retried = [False] * len(rec["moves"])
+        for i, (move, pos, order, flag, was_retry) in enumerate(
+                zip(rec["moves"], rec["positions"], rec["orders"], flags, retried)):
+            if was_retry:
+                skipped["retried"] += 1
+                continue
             if move not in DELTAS:
                 # An unparseable reply has no move to imitate. Counted, not
                 # silently dropped: at a high `unparsed_rate` the corpus is a

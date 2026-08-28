@@ -53,6 +53,21 @@ S...
 ...G
 """
 
+# AMENDED after critic 2. CORRIDOR's mine is off both of its shortest paths, so
+# the "always-solving" test above never landed on one and asserted the mine term
+# of the return against `e["mine_steps"] == 0`. Nothing in this file exercised a
+# multi-turn episode WITH A LANDING -- which is the one event the whole episode
+# arm exists to price. Here the unique shortest route crosses the mine (5 steps,
+# score 0.0) and the mine-free route is 7 steps (score +6), so the two branches
+# have different returns and the advantage between them is the quantity DEC-1
+# claims the episode arm can see and the immediate arm cannot.
+MINEFIELD = """
+S...
+.###
+.*.G
+....
+"""
+
 
 def _model():
     model = tiny_model(vocab_size=CharTokenizer.vocab_size)
@@ -310,3 +325,100 @@ def test_the_entropy_controller_and_move_mass_term_are_the_ones_from_rl():
     with pytest.raises(ValueError, match="positive starting entropy_coef"):
         maze_rl.train_maze_a(tiny_model(), CharTokenizer(), entropy_target=1.0,
                              entropy_coef=0.0)
+
+
+def test_an_episode_that_lands_on_a_mine_is_priced_and_the_arms_disagree():
+    """DEC-1's whole claim, on a real multi-turn episode with a landing.
+
+    Two scripted policies on the same maze: one takes the 5-step route through
+    the mine (-2 x 5 - 10 + 20 = 0.0), the other the 7-step route around it
+    (-2 x 7 + 20 = +6.0). The EPISODE arm sees a +6 vs 0 difference and its
+    advantage points at the detour. The IMMEDIATE arm prices the two routes one
+    decision at a time -- floor -2, blocked -2, mine -12, goal +18 -- and the
+    detour's extra steps are charged as -2 each with nothing crediting them, so
+    "eight steps versus one mine" is nowhere in it. SPEC A4.
+    """
+    model, tok = _model()
+    g = Glyphs()
+    maze = from_layout(MINEFIELD, seed=7)
+    assert maze.labels["mine_on_shortest"] and maze.labels["detour_cost"] == 2
+
+    def rollout_with(policy):
+        scripted = _ScriptedLogits(policy, g)
+        old = maze_rl._move_logits
+        maze_rl._move_logits = scripted
+        try:
+            return maze_rl.sample_episodes(
+                model, tok, [maze], group_size=2, glyphs=g,
+                generator=torch.Generator().manual_seed(0),
+                device=torch.device("cpu"))
+        finally:
+            maze_rl._move_logits = old
+
+    def around(prompt, glyphs):
+        grid = prompt.split("Grid:\n", 1)[1].split("\n\n", 1)[0]
+        rows, agent = maze2.parse_render(grid, glyphs)
+        m = from_layout("\n".join(maze2.maze_to_layout(rows, agent, maze.goal)),
+                        labels=False)
+        return path_moves(maze2.avoid_path(m))[0]
+
+    through, _d1 = rollout_with(_oracle)
+    detour, _d2 = rollout_with(around)
+
+    for e in through:
+        assert e["solved"] and e["mine_steps"] == 1 and e["steps"] == 5
+        assert e["landings"][2] == "mine"
+        assert e["return"] == SCORE_GOAL + 5 * SCORE_STEP + SCORE_MINE == 0.0
+    for e in detour:
+        assert e["solved"] and e["mine_steps"] == 0 and e["steps"] == 7
+        assert e["return"] == SCORE_GOAL + 7 * SCORE_STEP == 6.0
+
+    # The episode arm: one group holding both branches prefers the detour.
+    mixed = [through[0], detour[0]]
+    adv = maze_rl.group_advantages([e["return"] for e in mixed], [0, 0])
+    assert adv[0] < 0 < adv[1], adv
+    assert sum(adv) == pytest.approx(0.0)
+
+    # The immediate arm cannot express it. Every decision of the detour is a
+    # plain floor step priced exactly like every decision of the short route,
+    # and the only difference the reward sees is the mine -- which both arms
+    # see. The detour's SIX extra -2s are pure cost with nothing against them.
+    imm_through = [maze_rl.immediate_reward(k) for k in through[0]["landings"]]
+    imm_detour = [maze_rl.immediate_reward(k) for k in detour[0]["landings"]]
+    assert sum(imm_through) == 0.0 and sum(imm_detour) == 6.0
+    assert set(imm_detour) == {-2.0, 18.0}, \
+        "no decision of the detour is priced as anything but a step"
+    assert imm_through.count(SCORE_STEP + SCORE_MINE) == 1
+    # Every decision that is not the landing and not the goal is priced -2 in
+    # BOTH routes, so the immediate reward assigns the same value to "a step
+    # spent going the long way round" as to "a step on the direct route". The
+    # six extra steps the detour costs are charged and nothing credits them,
+    # which is exactly why A4 says the trade-off is not in this objective.
+    assert {r for r in imm_through if r not in (SCORE_STEP + SCORE_MINE,
+                                                SCORE_STEP + SCORE_GOAL)} == {SCORE_STEP}
+    assert {r for r in imm_detour
+            if r != SCORE_STEP + SCORE_GOAL} == {SCORE_STEP}
+    remove_lora(model)
+
+
+def test_the_zero_advantage_detector_fires_where_the_gradient_guard_cannot():
+    """`zero_signal_steps` is gated on the GRADIENT norm, and the entropy bonus
+    and the move-mass term both contribute gradient of their own -- so on any
+    run configured the way rl.py's lessons say to configure it the collapse
+    detector detects nothing. `zero_advantage_steps` counts the thing directly.
+    """
+    model, tok = _model()
+    # `reward_scale=0` is the cleanest way to state "the policy-gradient term
+    # carried no signal" without also removing the model: every per-decision
+    # advantage is exactly zero, which is what a collapsed policy produces when
+    # every group member draws the same return.
+    hist = maze_rl.train_maze_a(
+        model, tok, seed=4, steps=2, batch_size=1, group_size=4,
+        train_pool=[from_layout(MINEFIELD, seed=8)], eval_set=[],
+        log_every=0, entropy_coef=0.01, move_mass_coef=0.05, lr=0.1,
+        reward_scale=0.0)
+    assert hist["zero_advantage_steps"] == 2
+    # ... and the gradient guard did NOT notice, because the entropy term keeps
+    # the norm up. That disagreement is the point of the second counter.
+    assert hist["zero_signal_steps"] < hist["zero_advantage_steps"]
+    remove_lora(model)

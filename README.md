@@ -58,3 +58,20 @@ SPEC.md's "DECISIONS 2026-08-28 after critic" section and nowhere else:
 
 Also decided there: the generator is bin-independent and asserts it (all four
 covariate AUCs 0.500), and organism B's corpus is balanced to 40 % on-mine.
+
+A SECOND critic pass then found two blocking defects and seven others, all in
+SPEC.md's "AMENDED after critic 2" section (C1-C10) and D20-D26 in `maze2.py`:
+
+- **C1.** The gate is defined at Qwen3-14B, a hybrid checkpoint whose chat
+  template opens a `<think>` block. This branch had been stripped of
+  `src/calibration/chat.py`, so the pilot would have scored `unparsed_rate` ~1.0
+  at every size and the SPEC's stop rule would have closed the world on a
+  template flag. Ported; every `apply_chat_template` now goes through
+  `chat.apply_chat`.
+- **C2.** Three MEASURED role glyphs were being filled from four eligible ones,
+  and the GPU smoke gave "you are standing on a mine" the most POSITIVE glyph in
+  the bank. Bank widened, single-token filter, `|valence|` bar that raises.
+- **C3.** "All four covariate AUCs 0.500" is arithmetic: those four are held to
+  CONSTANTS. The covariates that move with the bin are `mines_on_shortest_dag`
+  (AUC 0.81, countable in the picture) and `detour_slack` (deterministic).
+  Reported, not gated -- and the reason A2's placebo control is still mandatory.

@@ -137,6 +137,7 @@ import time
 import torch
 import torch.nn.functional as F
 
+from .chat import apply_chat
 from .capture import MOVE_WORDS, maze_prompt, move_logits, move_token_ids, random_move_orders
 from .lora import assert_only_lora_trainable, lora_parameters
 from .maze import (
@@ -324,7 +325,8 @@ def _forward_move_logits(grids, orders, model, tokenizer, cols, device):
     global _USE_LOGITS_TO_KEEP
 
     texts = [
-        tokenizer.apply_chat_template(
+        apply_chat(
+            tokenizer,
             [{"role": "user", "content": maze_prompt(g, o)}],
             add_generation_prompt=True,
             tokenize=False,

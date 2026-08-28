@@ -73,6 +73,7 @@ import torch
 import torch.nn.functional as F
 
 from . import maze2
+from .chat import apply_chat
 from .capture import MOVE_WORDS, move_token_ids, random_move_orders
 from .lora import assert_only_lora_trainable, lora_parameters
 from .maze2 import (
@@ -186,6 +187,17 @@ def _move_logits(model, tok, texts, cols, device):
     enc = tok(texts, return_tensors="pt", padding=True, padding_side="left")
     enc = {k: v.to(device) for k, v in enc.items()
            if k in ("input_ids", "attention_mask")}
+    # AMENDED after critic 2. Left padding means the real tokens do NOT start at
+    # position 0, and a bare `model(input_ids=..., attention_mask=...)` numbers
+    # them from 0 regardless -- which is why `generate` builds this tensor
+    # itself and why `maze2._greedy` already did. It matters MORE here than
+    # there: sampling chunks the batch by ACTIVE EPISODE and the loss re-scores
+    # it chunked by DECISION, so the same prompt is padded to two different
+    # widths in the two passes. Without explicit positions the importance ratio
+    # is only 1 up to whatever the padding did, and the "teacher-forced
+    # re-scoring of the same tokens under the same prompt" this arm rests on is
+    # not exactly that.
+    enc["position_ids"] = (enc["attention_mask"].cumsum(-1) - 1).clamp(min=0)
     if _USE_LOGITS_TO_KEEP:
         try:
             out = model(**enc, use_cache=False, logits_to_keep=1)
@@ -284,7 +296,8 @@ def sample_episodes(model, tok, mazes, *, group_size, generator, glyphs=None,
         texts = []
         for ep, order in zip(active, orders):
             grid = render(ep.maze, g, ep.pos)
-            texts.append(tok.apply_chat_template(
+            texts.append(apply_chat(
+                tok,
                 [{"role": "user", "content": maze_prompt(grid, g.goal, order)}],
                 add_generation_prompt=True, tokenize=False))
         picks = []
@@ -454,6 +467,14 @@ def train_maze_a(
     )}
     history["eval"] = []
     zero_signal_steps = 0
+    # AMENDED after critic 2. `zero_signal_steps` is gated on the GRADIENT norm,
+    # and the entropy bonus and the move-mass term both contribute gradient of
+    # their own -- so on any run configured the way `rl.py`'s lessons say to
+    # configure it, the guard never fires and the collapse detector detects
+    # nothing. This counts the thing the guard is about directly: a step on
+    # which every group drew the same return, so every advantage is exactly
+    # zero and the policy-gradient term carried no signal at all.
+    zero_advantage_steps = 0
     t_run = time.perf_counter()
 
     coef = float(entropy_coef)
@@ -553,6 +574,8 @@ def train_maze_a(
             # alone and keeps pushing a saturated policy at nearly full learning
             # rate for tens of steps after the gradient dies. Skipping restores
             # the SGD semantics; the count is the collapse detector.
+            if max((abs(a) for a in per_decision), default=0.0) <= 0.0:
+                zero_advantage_steps += 1
             if grad_norm > zero_grad_tol:
                 optimiser.step()
             else:
@@ -654,6 +677,10 @@ def train_maze_a(
     }
     history["n_trainable"] = n_trainable
     history["zero_signal_steps"] = zero_signal_steps
+    # Read this, not `zero_signal_steps`, whenever `entropy_coef` or
+    # `move_mass_coef` is non-zero: those terms keep the gradient norm above the
+    # tolerance whatever the returns did.
+    history["zero_advantage_steps"] = zero_advantage_steps
     # Read this BEFORE the final solve rate: an organism that ends training with
     # the move vocabulary abandoned has no policy to score, whatever else says.
     history["final_move_mass"] = (history["move_mass"][-1]

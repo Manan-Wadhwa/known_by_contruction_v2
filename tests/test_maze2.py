@@ -99,6 +99,20 @@ S...
 ...G
 """
 
+# AMENDED after critic 2. CORRIDOR's mine is off both shortest paths, so every
+# roll-out test that used it walked past the mine and NEVER STOOD ON ONE: the
+# D17 timing claim ("the flag lags the landing by exactly one turn") was only
+# ever checked in the negative, and organism B's whole cue was untested on a
+# real episode. Here the mine is on the unique shortest route -- 5 steps and
+# score 0.0 through it, 7 steps and +6 around it, so the detour is worth paying
+# and both branches are reachable by a scripted policy.
+MINEFIELD = """
+S...
+.###
+.*.G
+....
+"""
+
 
 def _mazes(n, count, seed=0, **kw):
     """`count` mazes from the real sampler, for the brute-force comparisons."""
@@ -1359,3 +1373,228 @@ def test_the_stdlib_scorer_agrees_with_the_runs_own_aggregate():
     assert not ok and len(checks) == 4
     assert checks[2][0] is True, "the invalid_rate clause passes on a technicality"
     assert checks[3][0] is False, "the unparsed_rate clause is what catches it"
+
+
+# ---------- AMENDED after critic 2 ----------
+
+
+def test_an_episode_that_stands_on_a_mine_sets_the_cue_on_the_next_turn():
+    """D17's timing, tested with the flag actually TRUE.
+
+    The old test walked a maze whose mine is off every shortest path, so every
+    `on_mine` entry was False and "the flag lags the landing by exactly one
+    turn" was asserted against 0 landings. Here the shortest route crosses the
+    mine, so the claim has something to be wrong about.
+    """
+    maze, rec, agg, _s = _run(_oracle, retry=False, layout=MINEFIELD)
+    assert rec["solved"] and rec["mine_steps"] == 1
+    assert rec["landings"] == ["floor", "floor", "mine", "floor", "goal"]
+    # The landing is at decision 2; the CUE is the state decision 3 was taken
+    # in, which is the first turn at which the fact is visible in the render.
+    assert rec["on_mine"] == [False, False, False, True, False]
+    assert rec["on_mine_states"] == 1
+    assert rec["score"] == SCORE_GOAL + 5 * maze2.SCORE_STEP + maze2.SCORE_MINE
+    # And the render that decision saw really does carry the on-mine glyph.
+    g = Glyphs()
+    grid = render(maze, g, tuple(rec["positions"][3]))
+    assert g.on_mine in grid and g.agent not in grid
+    # The cue is a STATE rate, not a landing rate, and they differ here: one
+    # landing, one on-mine decision, five decisions.
+    c = competence([rec])
+    assert c["mine_landing_rate"] == 1 / 5 and c["on_mine_state_rate"] == 1 / 5
+    assert agg["by_detour_cost"]["2"]["n_episodes"] == 1
+
+
+def test_the_on_mine_glyph_carries_no_colour_and_the_placebo_proves_it():
+    """DEC-3's cue must say "on a mine", never WHICH mine colour.
+
+    `on_mine` is a measured role glyph with one value for the whole run: it is
+    not counterbalanced by seed parity and `placebo_glyphs` carries it across
+    unchanged. So an organism cued on it cannot be reading the mine colour --
+    and, the other way round, the placebo pass cannot control for a NARRATION
+    result, because B's cue fires identically in both passes by construction.
+    The novel-glyph probe (which moves both mine-role glyphs) is the control
+    that does bite there.
+    """
+    maze = from_layout(MINEFIELD)
+    mine = next(iter(maze.mines))
+    even, odd = glyphs_for_seed(0), glyphs_for_seed(1)
+    assert even.mine != odd.mine, "the colour is counterbalanced"
+    assert even.on_mine == odd.on_mine, "the cue must not move with the colour"
+    # The rendered cue cell is the same character under both assignments and
+    # under the placebo, so nothing about the colour reaches it.
+    cell = lambda gl: render(maze, gl, mine).split("\n")[mine[0]][mine[1]]  # noqa: E731
+    assert cell(even) == cell(odd) == cell(maze2.placebo_glyphs(even)) == even.on_mine
+    # The novel-glyph probe is the one that moves it.
+    for novel_mine, novel_on in maze2.NOVEL_PAIRINGS:
+        assert cell(even.with_novel(novel_mine, novel_on)) == novel_on
+
+
+def test_a_retried_decision_is_recorded_and_kept_out_of_bs_corpus():
+    """A retried move was made under a THREE-turn prompt (grid, blocked reply,
+    retry line) and `build_maze_corpus` rebuilds the ONE-turn prompt. Keeping it
+    would put a move the base model made under one prompt into an example that
+    claims another, which SPEC 2A ("B's move labels are the base model's own
+    moves") forbids. Nothing recorded which decisions those were.
+    """
+    maze, rec, _agg, _s = _run(_always_up, retry=True)
+    assert rec["retries"] > 1, "this episode is supposed to be retried a lot"
+    assert len(rec["retried"]) == rec["steps"]
+    assert sum(rec["retried"]) == rec["retries"]
+    # The retry answers every OTHER blocked move (D5/A10), so the flags
+    # alternate from the second decision on.
+    assert rec["retried"][0] is False and rec["retried"][1] is True
+    assert rec["retried"] == [i % 2 == 1 for i in range(rec["steps"])]
+
+    rec["glyphs"] = Glyphs().as_dict()
+    rec["index"] = 0
+    items, stats = maze2.build_maze_corpus(
+        [rec], generator=torch.Generator().manual_seed(0))
+    assert stats["skipped"]["retried"] == rec["retries"]
+    # This episode never stands on a mine, so the BALANCED corpus is empty --
+    # which is DEC-4 working, not a bug. The pools are what the exclusion is
+    # visible in: every decision is either drawn on or skipped as retried.
+    assert not items and stats["available_on_mine"] == 0
+    assert stats["available_other"] + stats["skipped"]["retried"] == rec["steps"]
+
+    # A roll-out that used the retry and does NOT carry the flags cannot be
+    # filtered, so it is refused rather than quietly accepted.
+    stale = dict(rec)
+    stale.pop("retried")
+    _it, st = maze2.build_maze_corpus([stale],
+                                      generator=torch.Generator().manual_seed(0))
+    assert st["skipped"]["no_retry_flags"] == 1 and st["n"] == 0
+
+
+def test_the_a7_split_of_single_route_acc_is_computable_from_a_record():
+    """SPEC A7 pre-committed to reporting `single_route_acc` split by "on the
+    shortest-path DAG" and "off it", because once the policy leaves the route
+    the unique correct move is a back-out-of-a-dead-end move. `correct` was not
+    aligned with any other per-decision list, so the split was not computable
+    from a result file at all; `correct_at` is the index list that fixes it."""
+    _maze, rec, _agg, _s = _run(_oracle, retry=False)
+    assert len(rec["correct_at"]) == len(rec["correct"])
+    assert rec["correct_at"] == sorted(set(rec["correct_at"]))
+    # An oracle never leaves the shortest DAG, so every scored decision is on it.
+    rec["labels"] = dict(rec["labels"], route_count=1)
+    split = maze2.single_route_split([rec])
+    assert split["n_off_dag"] == 0 and split["n_on_dag"] == len(rec["correct"])
+    assert split["on_dag"] == 1.0 and split["off_dag"] is None
+    assert competence([rec])["single_route_acc_on_dag"] == 1.0
+    # A record from before this amendment reports None rather than being folded
+    # into one bucket.
+    old = {k: v for k, v in rec.items() if k != "correct_at"}
+    assert maze2.single_route_split([old])["on_dag"] is None
+
+
+def test_the_matched_covariates_are_constant_so_their_auc_is_arithmetic():
+    """DEC-2 reports all four AUCs at 0.500 and the tree read that as "the bins
+    are matched". They are -- but the four are held to CONSTANTS, so every
+    comparison is a tie and 0.5 is what `auc` returns for want of variance, not
+    for want of separability. Two covariates DO move with the bin and neither is
+    in the gated list: `detour_slack` is `shortest_len - detour_cost` (a
+    deterministic function of the bin) and `mines_on_shortest_dag` measures
+    AUC 0.81 for bin 8 against bin 2 -- larger than either confound the first
+    critic found, and countable in the picture.
+    """
+    gen = torch.Generator().manual_seed(11)
+    mazes, stats = generate_set(200, n=9, generator=gen)
+    cov = stats["covariates"]
+    for name in maze2.COVARIATES:
+        row = cov["by_covariate"][name]
+        assert row["auc_top_vs_bottom"] == 0.5
+        assert row["constant"] is True and row["n_distinct_values"] == 1
+
+    rep = cov["reported"]
+    assert set(rep) >= {"mines_on_shortest_dag", "detour_slack"}
+    assert rep["detour_slack"]["auc_top_vs_bottom"] == 0.0, \
+        "slack falls perfectly with the bin; it is not a matched covariate"
+    assert rep["mines_on_shortest_dag"]["auc_top_vs_bottom"] > 0.6, \
+        "this is the covariate the matching does NOT hold; it must be reported"
+    assert not rep["mines_on_shortest_dag"]["constant"]
+
+    # And it reaches the result file: every slice of `competence` carries it.
+    recs = [{"labels": dict(m.labels), "solved": True, "steps": 1, "invalid": 0,
+             "retries": 0, "unparsed": 0, "mine_steps": 0, "correct": [],
+             "capped": False, "score": 0.0, "avoided_all_mines": True}
+            for m in mazes]
+    by = aggregate(recs)["by_detour_cost"]
+    got = [by[str(b)]["mean_mines_on_shortest_dag"] for b in DETOUR_BINS]
+    assert all(v is not None for v in got)
+    assert got[-1] > got[0], got
+
+
+def test_path_moves_takes_what_any_of_the_three_path_functions_returns():
+    """`best_path` returns (cost, steps, cells) and the other two return cells,
+    so `path_moves(best_path(m))` used to raise TypeError."""
+    maze = from_layout(MINEFIELD)
+    through = path_moves(shortest_path(maze))
+    around = path_moves(avoid_path(maze))
+    best = path_moves(best_path(maze))
+    assert len(through) == 5 and len(around) == 7
+    # Detour 2 is under the threshold, so the best-SCORE route goes around.
+    assert best == around
+    assert score_path(maze, around)[0] > score_path(maze, through)[0]
+
+
+def test_a_measured_role_glyph_may_not_carry_a_valence_the_bar_rejects():
+    """The GPU smoke chose the on-mine glyph as orange at valence +3.09 -- the
+    most POSITIVE glyph in the eligible set -- because `GLYPH_BANK` leaves
+    exactly four candidates for three measured roles. A strongly positive marker
+    for "you are standing on a mine" is a prior the narration instrument would
+    then be partly a measurement of."""
+    cands = maze2.role_glyph_candidates()
+    assert len(cands) >= 3 + 4, "the bank must be deeper than the role count"
+    assert maze2.ROLE_VALENCE_BAR > 0
+
+    loaded = {g: {"valence": v, "sd": 0.1} for g, v in
+              zip(cands, [0.1, -0.2, 3.09, 0.3, -0.4])}
+    # With the bar off, the ranking still puts the loaded glyph third-from-last
+    # and the three roles are filled from what clears it.
+    wall, goal, on_mine, _picks = maze2.choose_role_glyphs(
+        loaded, max_abs_valence=None)
+    assert 3.09 not in [loaded[g]["valence"] for g in (wall, goal, on_mine)]
+
+    # A table where the loaded glyph cannot be avoided raises, and says so.
+    forced = {g: loaded[g] for g in list(loaded)[:3]}
+    forced = {g: (v if abs(v["valence"]) < 1 else v) for g, v in forced.items()}
+    with pytest.raises(ValueError, match="already has an opinion"):
+        maze2.choose_role_glyphs(forced)
+    # ... and passes once the bar is raised deliberately.
+    w, g2, om, _p = maze2.choose_role_glyphs(forced, max_abs_valence=4.0)
+    assert len({w, g2, om}) == 3
+
+    # The tokenizer filter drops anything that is not one token.
+    class OneCharTok:
+        def __call__(self, text, add_special_tokens=False):
+            return {"input_ids": [0] * len(text)}
+
+    only_single = maze2.role_glyph_candidates(tok=OneCharTok())
+    assert only_single and all(len(g) == 1 for g in only_single)
+
+
+def test_the_absorbing_state_numbers_separate_a_bad_policy_from_a_stuck_one():
+    """Greedy decoding is deterministic and a blocked move does not move, so one
+    wrong reading absorbs the episode: the same decision repeats to the cap.
+
+    Measured floors for a UNIFORM-RANDOM walker on 64 generated mazes at n=9:
+    invalid_rate 0.406, solve 0.000, unique-correct 0.256. The first 4B smoke
+    scored invalid_rate 0.651 and single_route_acc 0.045 -- both worse than
+    ignoring the grid, which a per-move competence cannot be. These two numbers
+    are what tells the two apart, and `competence` had neither.
+    """
+    _maze, stuck, _agg, _s = _run(_always_up, retry=True)
+    c = competence([stuck])
+    assert c["invalid_rate"] == 1.0
+    # One position, one move, every turn: the episode is a single decision.
+    assert c["distinct_position_share"] == 1 / stuck["steps"]
+    assert c["repeat_decision_rate"] == (stuck["steps"] - 1) / stuck["steps"]
+
+    _maze, walked, _agg, _s = _run(_oracle, retry=False, layout=MINEFIELD)
+    w = competence([walked])
+    assert w["distinct_position_share"] == 1.0 and w["repeat_decision_rate"] == 0.0
+
+    # And a record with no positions says None rather than 0.0, which would
+    # read like a measurement of a perfectly wandering policy.
+    bare = {k: v for k, v in walked.items() if k != "positions"}
+    assert competence([bare])["repeat_decision_rate"] is None

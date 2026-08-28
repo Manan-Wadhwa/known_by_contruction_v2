@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 
+from .chat import apply_chat
 from .maze import TILE_AGENT
 
 MOVE_WORDS = ("up", "down", "left", "right")
@@ -99,7 +100,8 @@ def move_logits(grids, model, tokenizer, batch_size=16, device="cuda", move_orde
     out, mass_out, top1_out = [], [], []
     for i in range(0, len(grids), batch_size):
         texts = [
-            tokenizer.apply_chat_template(
+            apply_chat(
+                tokenizer,
                 [{"role": "user", "content": maze_prompt(g, o)}],
                 add_generation_prompt=True,
                 tokenize=False,
@@ -150,7 +152,8 @@ def pooled_resid(grids, model, tokenizer, batch_size=16, device="cuda", move_ord
         chunk_orders = orders[i : i + batch_size]
         texts, spans = [], []
         for g, o in zip(chunk, chunk_orders):
-            text = tokenizer.apply_chat_template(
+            text = apply_chat(
+                tokenizer,
                 [{"role": "user", "content": maze_prompt(g, o)}],
                 add_generation_prompt=True,
                 tokenize=False,
@@ -197,7 +200,8 @@ def last_token_resid(grids, model, tokenizer, batch_size=16, device="cuda"):
     chunks = []
     for i in range(0, len(grids), batch_size):
         texts = [
-            tokenizer.apply_chat_template(
+            apply_chat(
+                tokenizer,
                 [{"role": "user", "content": maze_prompt(g)}],
                 add_generation_prompt=True,
                 tokenize=False,
