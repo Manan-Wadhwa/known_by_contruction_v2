@@ -251,6 +251,37 @@ def _eval_at_rows(payload, ref_solve, ref_mine):
     return out
 
 
+def _action_space(payload, hist):
+    """(move_mask, move_mass_coef) as this arm actually TRAINED. Twelfth pass.
+
+    THREE SOURCES, IN ORDER, and the third one is the point (critic pass).
+
+      1. `payload["config"]` -- the trial's own block, which carries both knobs
+         from this pass on.
+      2. `history["config"]` -- what `train_orgb_cell` itself recorded. An arm
+         file written before the trial block carried the knobs still has them
+         here, because the trainer has always written `move_mass_coef` into its
+         own config and now writes `move_mask` beside it.
+      3. A trace whose config EXISTS and does NOT name `move_mask` was written
+         before the field existed, which means the run it describes had the
+         action space OPEN. That inference is what makes `env_line` reproduce
+         the arm it names: without it, re-scoring the committed 08-30 files
+         (`move_mass_coef` 0.03, no `move_mask`) emitted a launch line naming
+         NEITHER knob -- and a line that names neither is the CLOSED space at
+         coefficient 0.0, i.e. a different recipe under the same arm's name.
+
+    A payload with no trainer config at all (a mid-flight file, or a hand-built
+    row) stays `None` and nothing is claimed about it.
+    """
+    cfg = payload.get("config") or {}
+    hcfg = (hist or {}).get("config") or {}
+    mask = cfg.get("move_mask", hcfg.get("move_mask"))
+    if mask is None and hcfg:
+        mask = False
+    coef = cfg.get("move_mass_coef", hcfg.get("move_mass_coef"))
+    return mask, coef
+
+
 def _off_policy_fraction(payload, plan, hist):
     """The share of decisions whose action was not the scored policy's.
 
@@ -293,6 +324,7 @@ def read_arm(payload, reference=None):
     drop = (None if solve_start is None or solve_end is None
             else solve_start - solve_end)
     ev = _eval_row(payload)
+    move_mask, move_mass_coef = _action_space(payload, hist)
     ref_solve = (reference or {}).get("eval_solve_rate")
     ref_mine = (reference or {}).get("eval_mine_step_rate")
     cell = payload.get("cell")
@@ -371,10 +403,10 @@ def read_arm(payload, reference=None):
                                or plan.get("entropy_target") is None),
         "seconds_per_step": hist.get("seconds_per_step"),
         # TWELFTH PASS. The action space this arm TRAINED in, off its own
-        # config, so `env_line` reproduces the arm that ran rather than the
-        # default. None on a file written before the field existed.
-        "move_mask": (payload.get("config") or {}).get("move_mask"),
-        "move_mass_coef": (payload.get("config") or {}).get("move_mass_coef"),
+        # config and then off the trainer's own, so `env_line` reproduces the
+        # arm that ran rather than the default. See `_action_space`.
+        "move_mask": move_mask,
+        "move_mass_coef": move_mass_coef,
         "sample_temperature": plan.get("sample_temperature"),
         "knobs": plan.get("knobs") or {},
         "preflight_entropy": (payload.get("preflight_exploration")
@@ -661,6 +693,18 @@ def table(rows, pick=None, reference=None):
                 f"{(cls.get('capitalised') or 0.0):.3f}, other "
                 f"{(cls.get('other') or 0.0):.3f} over {cls.get('n')} replies "
                 f"(by {cls.get('rule')})")
+        # TWELFTH PASS, CRITIC. An arm whose action space was OPEN is the 08-30
+        # recipe, and when an old file is scored beside a new one that is the
+        # difference between the two rows -- so it is named in the table and not
+        # only in the launch line.
+        if r.get("move_mask") is False:
+            lines.append(
+                f"  {r['arm']}: the action space was OPEN (the 08-30 recipe): "
+                f"the first sampled token came from the full vocabulary while "
+                f"the move term, the entropy bonus and `move_mass` read only "
+                f"the four bare ids, at move_mass_coef "
+                f"{r.get('move_mass_coef')}. Its launch line carries "
+                f"MZ01_MOVE_MASK=0.")
         if r["verdict"] == INVALID_READ:
             lines.append(
                 f"  {r['arm']}: {INVALID_READ} -- held-out unparsed_rate "

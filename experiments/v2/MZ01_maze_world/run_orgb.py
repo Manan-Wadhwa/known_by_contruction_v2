@@ -826,7 +826,12 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
         model, tok, pf_mazes, generator=derive_generator(0, "orgb", "preflight"),
         group_size=cfg["preflight_group_size"], glyphs=ws_glyphs, fmt=fmt,
         chunk_size=cfg["chunk_size"], device=device,
-        temperature=cfg["temperature"], max_new_tokens=cfg["max_new_tokens"])
+        temperature=cfg["temperature"], max_new_tokens=cfg["max_new_tokens"],
+        # TWELFTH PASS, CRITIC. UNDER THE ACTION SPACE THE CELLS WILL RUN. Every
+        # number PR-3 reports is read off sampled replies, so a gate rolled out
+        # with the mask on while the cells run it off (or the reverse) measures
+        # a policy no cell trains.
+        move_mask=bool(cfg.get("move_mask", True)))
     payload["preflight"] = pre
     for line in pre["lines"]:
         _say("  " + line, log)

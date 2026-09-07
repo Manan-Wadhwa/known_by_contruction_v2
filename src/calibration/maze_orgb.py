@@ -825,6 +825,12 @@ def move_word_token_ids(tok, words=MOVE_WORDS):
 # one of the three named forms, so the four always sum to 1.
 FIRST_TOKEN_CLASSES = ("bare", "spaced", "capitalised", "other")
 
+# The text rule's `bare` test: the reply STARTS with one of the four move words
+# AND the word ends there. Anchored and word-bounded (critic, twelfth pass), so
+# `"upset."` is not `"up"`. Lower case only: a capital was already claimed by
+# the `capitalised` branch above it.
+_BARE_FIRST_RE = re.compile(r"(?:%s)\b" % "|".join(MOVE_WORDS))
+
 
 def _one_token_id(tok, form):
     """The id whose decode is exactly `form`, or None. The twin test.
@@ -898,6 +904,15 @@ def first_token_class(*, first_ids=None, replies=None, classes=None):
     first character is `capitalised`, a reply that BEGINS with a bare move word
     is `bare`, and everything else -- including an empty reply -- is `other`.
 
+    "BEGINS with a bare move word" is anchored at a WORD BOUNDARY (critic,
+    twelfth pass), not `startswith`. `"upset."` and `"rightly, no."` start with
+    the letters of a move word and are not that word: on Qwen they are a single
+    token that is not 454 or 1291, so the id rule calls them `other` while
+    `startswith` called them `bare`. That is the one direction this classifier
+    must not be wrong in -- `bare` is the share the table reads as "the eval is
+    seeing the policy that was trained", and a rule that over-counts it hides
+    exactly the drift the field exists to show.
+
     The four fractions sum to exactly 1 whenever there is anything to classify,
     which is what makes a drift readable as a redistribution rather than as a
     denominator moving underneath it.
@@ -925,7 +940,7 @@ def first_token_class(*, first_ids=None, replies=None, classes=None):
                 counts["spaced"] += 1
             elif text[:1].isupper():
                 counts["capitalised"] += 1
-            elif any(text.startswith(w) for w in MOVE_WORDS):
+            elif _BARE_FIRST_RE.match(text):
                 counts["bare"] += 1
             else:
                 counts["other"] += 1
@@ -2265,6 +2280,9 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     carried_seconds = float(resumed["elapsed_seconds_before"]) if resumed else 0.0
     ckpt_errors = []
     step_errors = []
+    # TWELFTH PASS, CRITIC. The wall clock spent INSIDE the `on_step` hook, kept
+    # apart from the run's own so `seconds_per_step` stays the cost of a STEP.
+    hook_seconds = 0.0
     t_run = time.perf_counter()
 
     def _write_checkpoint(next_step):
@@ -2282,7 +2300,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                          "zero_advantage_steps_yell": int(zero_yell),
                          "zero_signal_steps": int(zero_signal)},
             "rng": _rng_snapshot(gen),
-            "elapsed_seconds": carried_seconds + (time.perf_counter() - t_run),
+            "elapsed_seconds": (carried_seconds + (time.perf_counter() - t_run)
+                                - hook_seconds),
             "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, ckpt_path)
 
@@ -2526,13 +2545,28 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             # update, so `entropy_coef[-1]` is the coefficient the step USED.
             # Best effort for the checkpoint's reason: a hook that raised would
             # make the instrumentation the thing most likely to lose the run.
+            #
+            # TWELFTH PASS, CRITIC. THE HOOK'S OWN TIME IS NOT THE RUN'S. The
+            # hook is where the trial takes its MID-ARM HELD-OUT READ -- ~3
+            # minutes at 128 mazes -- and `total_seconds` is measured from
+            # `t_run`, so an unsubtracted read put ~2.3 s on every step of an
+            # 80-step arm's `seconds_per_step`. That number is what the trial
+            # prints, what the scorer's `s/step` column shows, and what the next
+            # lease for 4 x 300 steps is booked on, so a measurement that
+            # charges the instrument to the instrument's subject is a wrong
+            # number, not a rounding. It is subtracted here and reported as
+            # `history["on_step_seconds"]`; `step_seconds` never contained it
+            # (that clock stops above, before the hook).
             if on_step is not None:
+                t_hook = time.perf_counter()
                 try:
                     on_step(it, history)
                 except Exception as err:                       # noqa: BLE001
                     step_errors.append(f"step {it}: {err!r}")
                     print(f"  [{cell}] !! on_step hook raised at step {it}: "
                           f"{err!r} -- training CONTINUES", flush=True)
+                finally:
+                    hook_seconds += time.perf_counter() - t_hook
     finally:
         if was_training and hasattr(model, "train"):
             model.train()
@@ -2667,7 +2701,12 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     # R1: the clock counts the INTERRUPTED run's steps too, or a resumed cell
     # would report a `seconds_per_step` for the steps it happened to run after
     # the resume -- and that is the number the next lease is booked on.
-    history["total_seconds"] = (time.perf_counter() - t_run) + carried_seconds
+    # TWELFTH PASS, CRITIC: MINUS THE HOOK. The mid-arm held-out read runs
+    # inside `on_step` and is not part of what a step costs; charging it to
+    # `seconds_per_step` would misprice the next lease by the instrument.
+    history["on_step_seconds"] = hook_seconds
+    history["total_seconds"] = ((time.perf_counter() - t_run) - hook_seconds
+                                + carried_seconds)
     history["seconds_per_step"] = history["total_seconds"] / steps
     history["resumed"] = resumed
     history["checkpoint"] = {
@@ -3478,7 +3517,8 @@ def preflight_gradient_check(model, tok, mazes, *, generator, group_size=8,
                              glyphs=None, temperature=1.0, chunk_size=8,
                              device=None, fmt=FMT_ASCII,
                              detector=reward_detector,
-                             max_new_tokens=REPLY_MAX_NEW_TOKENS):
+                             max_new_tokens=REPLY_MAX_NEW_TOKENS,
+                             move_mask=True):
     """PR-3. The gate no cell may start without. -> a dict with `passed`.
 
     From the WARM-STARTED model, sample `group_size` episodes on each maze at
@@ -3498,12 +3538,25 @@ def preflight_gradient_check(model, tok, mazes, *, generator, group_size=8,
     `narration_adjacent = 1.00` and `narration_nonadjacent = 1.00` on 6/6
     organisms -- a suffix, not a policy -- so every group was class-homogeneous,
     every advantage was exactly 0, and eight seeds were spent discovering it.
+
+    TWELFTH PASS, CRITIC (`move_mask`, DEFAULT ON). THE GATE ROLLS OUT UNDER THE
+    ACTION SPACE THE CELLS WILL RUN, and it says which one in the returned dict.
+    Every number here -- the complaint rate, the placement, the sampled
+    contingency, both within-group sds and therefore `passed` itself -- is read
+    off SAMPLED replies, so it is a property of the sampler exactly as
+    `preflight_exploration_check`'s degeneracy criterion is. When the mask
+    arrived this call was left with no argument at all and silently took the
+    default, which meant two things at once: the committed PR-3 numbers were no
+    longer comparable to a new run's with nothing on the record saying so, and a
+    `MZ01_MOVE_MASK=0` shard would have gated itself on a MASKED roll-out while
+    every cell in it trained with the action space open. `move_mask` is now
+    threaded from the driver's config and recorded beside the verdict.
     """
     episodes, decisions = sample_text_episodes(
         model, tok, mazes, group_size=group_size, generator=generator,
         glyphs=glyphs, temperature=temperature, chunk_size=chunk_size,
         device=device, fmt=fmt, detector=detector,
-        max_new_tokens=max_new_tokens)
+        max_new_tokens=max_new_tokens, move_mask=bool(move_mask))
     per = {}
     for d in decisions:
         per.setdefault((d["group"], bool(d["on_mine"])), []).append(d["yell"])
@@ -3562,6 +3615,15 @@ def preflight_gradient_check(model, tok, mazes, *, generator, group_size=8,
                      + ("PASS" if c["ok"] else "FAIL")
                      + (f"   [{c['note']}]" if c["note"] else ""))
     passed = all(c["ok"] for c in criteria)
+    # TWELFTH PASS, CRITIC. WHICH SAMPLER PRODUCED THE NUMBERS ABOVE. Printed as
+    # well as recorded, because a gate read under a different action space from
+    # the cells it gates is not a gate on them. BEFORE the verdict line, which
+    # stays last: it is the line a reader and the suite both take as the answer.
+    lines.append(f"{'action space':<28} {'':>8}      "
+                 + ("CLOSED -- the first sampled token is one of the four bare "
+                    "move ids, as in the cells" if move_mask else
+                    "OPEN (08-30) -- the first sampled token is drawn from the "
+                    "full vocabulary"))
     lines.append(f"{'PRE-FLIGHT':<28} {'':>8}      "
                  + ("PASS -- the four cells may start"
                     if passed else
@@ -3570,6 +3632,11 @@ def preflight_gradient_check(model, tok, mazes, *, generator, group_size=8,
         "passed": passed,
         "criteria": criteria,
         "lines": lines,
+        # The roll-out's action space. Every number in this dict is read off
+        # sampled replies, so it is a property of the sampler; a run whose cells
+        # close the action space and whose gate did not would be gated on a
+        # policy it never trains (twelfth pass, critic).
+        "move_mask": bool(move_mask),
         "n_mazes": len(mazes),
         "group_size": group_size,
         "n_episodes": len(episodes),

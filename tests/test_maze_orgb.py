@@ -3737,6 +3737,17 @@ def test_the_first_token_class_sums_to_one_and_is_bare_under_the_mask():
     assert maze_orgb.first_token_class(
         replies=["I would rather not. down."])["capitalised"] == 1.0
     assert abs(sum(by_text[k] for k in maze_orgb.FIRST_TOKEN_CLASSES) - 1.0) < 1e-12
+    # ... BUT IT IS NOT COARSE IN THE OTHER DIRECTION (critic, twelfth pass).
+    # `bare` is the share the table reads as "the unmasked eval is still seeing
+    # the policy that was trained", so a rule that OVER-counts it hides exactly
+    # the drift the field exists to show. `"upset"` and `"rightly"` begin with
+    # the letters of a move word and are not that word -- on Qwen each is one
+    # token that is not 454 or 1291, so the id rule calls them `other` and the
+    # text rule must agree. The test is the word boundary.
+    for miss in ("upset, go down.", "rightly so, up.", "downstream."):
+        assert maze_orgb.first_token_class(replies=[miss])["other"] == 1.0, miss
+    for hit in ("up. ok", "down", "left-hand, up."):
+        assert maze_orgb.first_token_class(replies=[hit])["bare"] == 1.0, hit
 
     # END TO END: under the mask every sampled first token is a bare move id, by
     # construction, on every step.
@@ -3946,9 +3957,18 @@ def test_a_mid_arm_read_does_not_disturb_the_run_it_is_taken_inside():
     for key, want in quiet.items():
         if key in ("step_seconds", "sample_seconds", "rescore_seconds",
                    "total_seconds", "seconds_per_step",
-                   "sampling_seconds_per_step", "rescore_seconds_per_step"):
+                   "sampling_seconds_per_step", "rescore_seconds_per_step",
+                   # CRITIC, twelfth pass: the hook's OWN clock, which is the
+                   # one number a read is allowed to move -- and the reason
+                   # `total_seconds` above is not moved by it. Asserted, not
+                   # waved past: the quiet run spends nothing in a hook it does
+                   # not have, and the read run spends something in the one it
+                   # does.
+                   "on_step_seconds"):
             continue
         assert read[key] == want, key
+    assert quiet["on_step_seconds"] == 0.0
+    assert read["on_step_seconds"] > 0.0
     for key in state_quiet:
         assert torch.equal(state_quiet[key], state_read[key]), key
 
@@ -4036,3 +4056,143 @@ def test_the_qwen_twins_are_not_the_four_bare_ids():
     got = maze_orgb.first_token_class(
         first_ids=[705, 1495, 2115, 1290], classes=classes)
     assert got["spaced"] == 1.0 and got["bare"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# twelfth pass, CRITIC (2026-09-08). Three defects the build left, each one a
+# place where a number a reader would take at face value is not the number it
+# names.
+# ---------------------------------------------------------------------------
+
+
+def test_the_pr3_gate_rolls_out_under_the_action_space_the_cells_will_run(
+        shared_run):
+    """PR-3's own sampler, and it must be the cells'.
+
+    Every number `preflight_gradient_check` reports -- the complaint rate, the
+    placement, the sampled contingency, both within-group sds and therefore
+    `passed` itself -- is read off SAMPLED replies, so it is a property of the
+    sampler in exactly the way `preflight_exploration_check`'s degeneracy
+    criterion is. When the closed action space arrived, this call was left with
+    no argument and silently took the new default: the committed PR-3 numbers
+    stopped being comparable with nothing on the record saying so, and a
+    `MZ01_MOVE_MASK=0` shard would have gated itself on a MASKED roll-out while
+    every cell in it trained with the action space open.
+    """
+    payload, _dir = shared_run
+    pre = payload["preflight"]
+    # The gate SAYS which sampler produced its numbers.
+    assert pre["move_mask"] is True
+    assert any("action space" in ln and "CLOSED" in ln for ln in pre["lines"])
+    # ... and it is the one every cell of that run trained under.
+    for row in payload["rows"]:
+        assert row["training"]["config"]["move_mask"] == pre["move_mask"], row["cell"]
+
+    # And the knob REACHES the sampler, both ways round.
+    seen = []
+    real = maze_orgb._sample_replies
+
+    def spy(*a, **kw):
+        seen.append(kw.get("move_cols") is not None)
+        return real(*a, **kw)
+
+    model, tok = _model()
+    maze_orgb._sample_replies = spy
+    try:
+        for want in (True, False):
+            seen.clear()
+            out = maze_orgb.preflight_gradient_check(
+                model, tok, _mazes(4, n=7, seed_tag="pr3mask"), group_size=2,
+                generator=torch.Generator().manual_seed(0), fmt=ASCII,
+                device=torch.device("cpu"), chunk_size=4, max_new_tokens=4,
+                move_mask=want)
+            assert seen and all(s is want for s in seen), (want, seen)
+            assert out["move_mask"] is want
+            assert any("action space" in ln for ln in out["lines"])
+    finally:
+        maze_orgb._sample_replies = real
+        remove_lora(model)
+
+
+def test_the_mid_arm_reads_minutes_are_not_charged_to_the_step():
+    """SPEC 1D's cost, put where it belongs.
+
+    The mid-arm held-out read runs inside `on_step` and takes ~3 minutes at 128
+    mazes. `total_seconds` is measured from before the loop, so an unsubtracted
+    read put ~2.3 s on every step of an 80-step arm's `seconds_per_step` -- the
+    number the trial prints, the scorer's `s/step` column, and what the next
+    lease for 4 x 300 steps is booked on. Charging the instrument to its own
+    subject is a wrong number, not a rounding.
+    """
+    import time
+
+    def make_hook(_model, _tok):
+        def on_step(_step, _history):
+            time.sleep(0.2)
+        return on_step
+
+    t0 = time.perf_counter()
+    hist, _state = _train_with_hook(make_hook)          # two steps
+    wall = time.perf_counter() - t0
+    assert hist["on_step_errors"] == []
+    assert hist["on_step_seconds"] >= 0.4, hist["on_step_seconds"]
+    # The hook's time is OUT of the run's clock, and `seconds_per_step` is the
+    # cost of a step rather than the cost of a step plus a measurement.
+    assert hist["total_seconds"] <= wall - 0.35, (hist["total_seconds"], wall)
+    assert abs(hist["seconds_per_step"] - hist["total_seconds"] / 2) < 1e-9
+    # A run with no hook spends nothing there and says so, so the field is a
+    # measurement and not a flag.
+    quiet, _q = _train_with_hook()
+    assert quiet["on_step_seconds"] == 0.0
+
+
+def test_an_arm_file_from_before_the_mask_reproduces_the_open_action_space():
+    """The launch line has to name the recipe that RAN, on an old file too.
+
+    A committed 08-30 arm file carries `move_mass_coef` 0.03 in the TRAINER's
+    own config and no `move_mask` anywhere -- the field did not exist. Read as
+    "unknown", `env_line` named neither knob, and a line that names neither is
+    the CLOSED action space at coefficient 0.0: a different recipe under the
+    picked arm's name. A trace whose config exists and does not name the field
+    was written before the field existed, which is exactly the run whose
+    erratum this pass is.
+    """
+    trial, score = _trial_module(), _explore_scorer()
+    reference = {"arm": "00_reference_warm_start", "reference": True,
+                 "cell": "A", "seed": 0, "status": "DONE", "history": None,
+                 "eval": trial.eval_block(
+                     _fake_measurement(solve=1.0, mine=1.60))}
+
+    old = _cell_a_payload("epsilon_010",
+                          final=_fake_measurement(solve=1.0, mine=0.20))
+    # The shape of a file written at `fe55455`: the trial's config block with no
+    # action-space keys, and the trainer's own config with the penalty it ran.
+    old["history"]["config"] = {"move_mass_coef": 0.03}
+    rows_old, ref_row = score.read_all([old, reference])
+    row_old = [r for r in rows_old if not r.get("reference")][0]
+    assert row_old["move_mask"] is False
+    assert row_old["move_mass_coef"] == 0.03
+    line = score.env_line(row_old, cells="A")
+    assert "MZ01_MOVE_MASK=0" in line and "MZ01_MOVE_MASS_COEF=0.03" in line
+    assert "action space was OPEN" in "\n".join(
+        score.table(rows_old, None, reference=ref_row))
+
+    # A file from THIS pass names the closed space in both places and the line
+    # stays silent, because silence IS the closed space.
+    new = _cell_a_payload("epsilon_010",
+                          final=_fake_measurement(solve=1.0, mine=0.20))
+    new["config"] = dict(new["config"], move_mask=True, move_mass_coef=0.0)
+    new["history"]["config"] = {"move_mask": True, "move_mass_coef": 0.0}
+    rows_new, _r = score.read_all([new, reference])
+    row_new = [r for r in rows_new if not r.get("reference")][0]
+    assert row_new["move_mask"] is True and row_new["move_mass_coef"] == 0.0
+    assert "MZ01_MOVE_MASK" not in score.env_line(row_new, cells="A")
+    assert "MZ01_MOVE_MASS_COEF" not in score.env_line(row_new, cells="A")
+
+    # A mid-flight file (no trainer config yet) claims NOTHING either way.
+    mid = _cell_a_payload("epsilon_010",
+                          final=_fake_measurement(solve=1.0, mine=0.20))
+    rows_mid, _r2 = score.read_all([mid, reference])
+    row_mid = [r for r in rows_mid if not r.get("reference")][0]
+    assert row_mid["move_mask"] is None
+    assert "MZ01_MOVE_MASK" not in score.env_line(row_mid, cells="A")

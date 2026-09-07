@@ -109,6 +109,13 @@ read and the pick and the verdict come from it alone. A step at or past
 costs ~3 min at 128 mazes and buys the thing a separate post-hoc arm cannot —
 "AVOIDS at 40, RANDOMISED at 80" about **one** trajectory.
 
+The read runs inside `train_orgb_cell`'s `on_step` hook, and its wall clock is
+kept out of the run's: `history["on_step_seconds"]` is what the hook spent and
+`total_seconds` / `seconds_per_step` exclude it, so `s/step` stays the cost of a
+step rather than the cost of a step plus a measurement. (Critic, twelfth pass —
+unsubtracted it put ~2.3 s on every step of an 80-step arm, and `s/step` is what
+the next lease is booked on.)
+
 `MZ01_TRIAL_OUT` is the only label mechanism — the status file path is
 hardcoded, so two trials on two boxes are kept apart by their output
 directories, not by a shard name.
@@ -253,6 +260,13 @@ With `MZ01_MOVE_MASK=1` (the default):
 
 An epsilon prefix must be a bare id — the mask and the prefix have to agree, and
 a forced id outside the four raises by name.
+
+Both pre-flights roll out under the action space the cells will run and record
+which one: `preflight_exploration`'s `move_mask` (R2's degeneracy gate) and
+`preflight`'s (PR-3's yell-variance gate) are the same knob as the cells'. A
+gate rolled out under one sampler while the cells train under another is not a
+gate on them — critic, twelfth pass, where PR-3 had silently taken the new
+default with no argument and no field.
 
 ### Exploration (R2 / tenth pass) — read `RESULTS-2026-08-29.md` before using
 
@@ -408,7 +422,18 @@ whose `unparsed_rate` is above **0.05** — the SPEC's own gate on a read — is
 parse measure the parser. It is reported, not scored, and it is not eligible for
 the pick. Every mid-arm read in `eval_at` gets the verdict it would get by these
 same rules, from the same function, and prints under a `@40 … @end` block below
-the main table.
+the main table. (The `@40` verdict is the *read's* verdict; **DEAD** is a
+property of the training trace at the end and is only ever on the arm's own
+row.)
+
+The launch line the scorer emits names the action space an arm actually trained
+in, read from `payload["config"]` and then from the trainer's own
+`history["config"]`. **A trace whose config exists and does not name
+`move_mask` was written before the field did, so it ran with the space OPEN**
+and its line carries `MZ01_MOVE_MASK=0` — without that, re-scoring the committed
+08-30 files produced a line naming neither knob, which is the closed space at
+coefficient 0.0: a different recipe under the picked arm's name. (Critic,
+twelfth pass.)
 
 ---
 

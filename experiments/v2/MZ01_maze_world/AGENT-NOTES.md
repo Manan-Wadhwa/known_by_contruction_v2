@@ -1830,3 +1830,112 @@ text and forcing them into `cols` would write replies no detector could parse.
   move id" — but a reader comparing the eval's shares against the training
   trace's id-read shares is comparing two rules, and `rule` is in every row so
   that comparison can be made honestly rather than accidentally.
+
+---
+
+# Critic, twelfth pass — 2026-09-08
+
+Adversarial pass over `PLAN-closed-action-space.md`, the 08-30 erratum and
+build `3d5c9ac`. The action space itself holds: the mask, the restricted move
+term, the twin classifier, the mid-arm reads, the INVALID-READ rule and the
+checkpoint schema are all what the spec says they are, and the identity claims
+are true. Four defects were found around them, all in the same shape — **a
+number a reader would take at face value is not the number it names** — and all
+four are fixed here.
+
+**Bit-identity, re-derived independently of the build's own test.** The
+pre-build source was checked out to a scratch tree
+(`git show 8158368:src/calibration/maze_orgb.py`) and run against the same
+fixtures. `move_mask=0, move_mass_coef=0.03` reproduces the pre-build code
+exactly: over a three-step toy cell A, **every** history field is `==` (not just
+the eight the test pins) and every LoRA tensor is `torch.equal`; the only
+difference is the two fields the trace GREW. `_PRE_BUILD_SAMPLER_IDS` and
+`_PRE_BUILD_TRACE` were re-derived from `8158368` and match to the last digit,
+so the recorded constants are a recording of the old code and not of the new
+code with the knob off.
+
+## C1 — PR-3's gate was silently rolled out under the closed action space
+
+`preflight_gradient_check` calls `sample_text_episodes` and was left with **no
+`move_mask` argument at all**, so it took the new default. Every number it
+reports — the complaint rate, the placement, the sampled contingency, both
+within-group sds and therefore `passed` — is read off SAMPLED replies, which
+makes it a property of the sampler in exactly the way
+`preflight_exploration_check`'s degeneracy criterion is (the build threaded the
+knob there and named the incomparability; this call was missed). Two
+consequences: the committed PR-3 numbers stopped being comparable to a new run's
+with nothing on the record saying so, and a `MZ01_MOVE_MASK=0` shard would have
+gated itself on a MASKED roll-out while every cell in it trained with the space
+open. FIXED: `move_mask` parameter (default ON), threaded from
+`run_orgb.run`'s `cfg["move_mask"]`, recorded as `preflight["move_mask"]` and
+printed as an `action space` line above the verdict line (which stays last).
+
+## C2 — the mid-arm read's three minutes were charged to `seconds_per_step`
+
+The read runs inside the `on_step` hook; `total_seconds` is measured from before
+the loop, so an unsubtracted read put ~2.3 s on every step of an 80-step arm
+(180 s / 80). That is the number the trial prints, the scorer's `s/step` column,
+and what the next lease for 4 × 300 steps is booked on. `step_seconds` never
+contained it — that clock stops before the hook — which is what made the error
+invisible: the per-step series and the per-run mean disagreed and only the mean
+was wrong. FIXED: the hook is timed, `history["on_step_seconds"]` reports it,
+and `total_seconds` / `seconds_per_step` / the checkpoint's `elapsed_seconds`
+exclude it. The build's own no-disturbance test now asserts the split
+(`quiet == 0.0`, `read > 0.0`) instead of skipping the field.
+
+## C3 — the launch line could not tell an OPEN-space file from a new one
+
+`read_arm` read both knobs from `payload["config"]` only, and the trial did not
+write them there before this pass. Re-scoring a committed 08-30 arm file
+therefore gave `move_mask = None`, `move_mass_coef = None`, and `env_line`
+named **neither** knob — and a line that names neither is the CLOSED space at
+coefficient 0.0, i.e. a different recipe under the picked arm's name. FIXED:
+`_action_space()` resolves both from `payload["config"]`, then from the
+trainer's own `history["config"]`, and treats *a trainer config that exists and
+does not name `move_mask`* as the OPEN space, because the field did not exist
+when that trace was written. Verified against the shape of the committed file
+(`history.config = {"move_mass_coef": 0.03}`, no `move_mask`). The table names
+an OPEN-space arm too, so an old row and a new row read side by side say which
+is which.
+
+## C4 — the text classifier's `bare` was `startswith`
+
+`"upset, go down."` and `"rightly so, up."` begin with the letters of a move
+word and are not that word; on Qwen each is one token that is not 454 or 1291,
+so the id rule calls them `other` and the text rule called them `bare`. `bare`
+is the share the table reads as "the unmasked eval is still seeing the policy
+that was trained", so a rule that OVER-counts it hides exactly the drift the
+field exists to show — the 08-30 failure mode, one level down. FIXED: anchored
+at a word boundary (`_BARE_FIRST_RE`). The other coarseness — any capital-initial
+reply is `capitalised` — is the SPEC's own wording, is safe in the other
+direction, and stands.
+
+## Weighed and NOT changed
+
+- **`MZ01_ENTROPY_COEF=0.1` stands.** The entropy term's gradient is unchanged
+  by the mask (it always read `cols` alone), so the 08-30 CONTROL is direct
+  evidence for it: 0.1 with a live bonus and no advantage gradient moved the
+  restricted entropy from ~0.02 to ~0.03 in 80 steps at mass 1.000, against a
+  ceiling of ln 4 = 1.386. It cannot randomise a 4-way policy at this horizon,
+  and against advantages of order 10 it is ~100× the weaker term. Changing it
+  would also break `onpolicy_g6`'s "epsilon_010 minus its one change".
+- **The @40 verdict carries no DEAD.** DEAD is a property of the training trace
+  at the end; the mid-arm block is the READ's verdict by the read's rules. An
+  arm could print `@40 AVOIDS` and `DEAD` on its own row. Named in `README.md`
+  rather than papered over with a windowed zadv at 40, which would be a
+  different statistic under the same name.
+- **`measure_organism` still carries no `first_token_class`.** The PLAN scoped
+  it to `eval_block`; the rerun is the trial and has it. The 4 × 300 cells do
+  not, and that is the one gap a later pass should close.
+- **The ε first token is still scored as if on-policy.** The mask does not
+  remove that bias; it removes the part of it that was moving mass OFF the four
+  columns (`A · ∇log_mass`, which is exactly the difference between the open
+  and closed first-token gradients) and leaves a bias that is now purely a
+  reweighting among four actions.
+
+## Suite
+
+`229 → 232` collected, **231 passed, 1 skipped**, CPU, ~80 s. Three tests added
+(one per fix C1–C3), two existing tests strengthened (the no-disturbance test
+now asserts the hook-clock split; the classifier test now asserts the word
+boundary). None weakened or removed.
