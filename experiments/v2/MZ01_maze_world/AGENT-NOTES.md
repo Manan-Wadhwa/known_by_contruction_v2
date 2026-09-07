@@ -1021,3 +1021,626 @@ python3 scripts/score_mz01_orgb.py \
 - The two-window contingency check (B6 asks for 24 and 64): the measurement runs
   ONE window, 48, and records it per record. A second pass would double the
   measurement cost.
+
+---
+
+# Eighth pass, 2026-08-29: surviving a dead lease (R1) — mid-cell checkpoint, resume, and an entropy read
+
+Three shards (`s0_DB`, `s1_DB`, `s2_DB`) are training right now from the synced
+`04e5e69`. **Nothing here changes what they are doing** — it is for the NEXT
+launches. The problem it fixes is arithmetic: a cell is 300 steps at the
+measured ~36 s/step ≈ **3 h**, a lease is capped at 12 h and can die at any
+minute, and a RENEWED lease comes back on an **old disk snapshot**. Under
+`04e5e69` a lease that died at step 290 of a cell lost the whole cell. Now:
+
+| what survives | written when | new? |
+| --- | --- | --- |
+| `orgb_{shard}.json`, every finished row | after every organism (`on_row`) | no |
+| `orgb_{cell}_s{seed}.pt` + `adapter_sha256` in the row | when the cell's training ends, BEFORE the ~2 h measurement | **no — it was already there** (`run_orgb.run`, `save_lora`) |
+| `orgb_ckpt_{cell}_s{seed}.pt`, the whole RL loop state | every `MZ01_CKPT_EVERY` (50) steps, atomically | **yes** |
+
+## What "resume" means here, and why it is not "reload the adapter"
+
+`train_orgb_cell` gained `ckpt_path`, `ckpt_every`, `resume`. The checkpoint
+carries the adapter, the **AdamW moments**, the step counter, the **adaptive
+entropy coefficient** (and its `log_coef`), the **RNG streams** (the run's own
+`gen`, plus python/numpy/torch/cuda), the counters and the **trace so far**.
+Every one of those is load-bearing and the suite proves it by mutation:
+breaking any one of them makes the continuation diverge
+(`test_every_piece_of_the_restored_state_is_load_bearing`). The reasons are
+already in this repo's own record — `rl.py`'s Adam-momentum drift walking a
+converged policy off its optimum, `relearn_read` restarting the entropy
+controller *deliberately* and saying so, and `derive_generator`'s finding that a
+shifted stream is a different training set.
+
+- **Atomic**: `torch.save` to `<path>.tmp.<pid>`, fsync, `os.replace`, fsync the
+  directory. A death mid-write leaves the PREVIOUS checkpoint, never a prefix.
+- **The adapter is restored by `load_lora_state_dict`** — the same in-place copy
+  `relearn_read` uses, so the AdamW state loaded beside it still points at the
+  tensors it was computed for. Nothing was duplicated.
+- **Fingerprinted**: cell, seed, steps, batch shape, lr, temperature, the
+  entropy knobs and bounds, the glyphs, `n_trainable` and a **sha256 of the
+  training pool's layouts**. A resume whose recipe disagrees RAISES and names
+  the field. The generator's state says *where* in the maze stream the resume
+  is; the pool sha says *which* stream.
+- **Loaded with `weights_only=True`** — a checkpoint is data, never code — so
+  the RNG states are unpacked into ints and tensors rather than pickled tuples.
+- The LAST step checkpoints too (300 % 50 == 0), so a lease that dies between
+  the last step and the measurement resumes *into the measurement*.
+
+`run_orgb.run` gained `prior_rows`: the driver reads its own result file back
+and a cell whose finished row is already there is **skipped entirely**, its row
+carried forward (same adapter sha, same `seconds`, ledger recomputed with the
+rest). A carried-forward row must agree with this run on
+`nav_adapter_sha256`, `warm_start_sha256` and `role_glyphs` or the run raises —
+M2/M5 at the resume seam — and a prior row for a cell outside this launch's grid
+raises too, because rewriting the file would delete a measured organism.
+
+Every row now carries `row["checkpoint"]` (`resumed`, `resumed_from_step`,
+`every`, `saves_this_process`, `reused_row`), and it is in `ROW_KEYS`.
+
+## New env knobs (`scripts/mz01_orgb_driver.py`)
+
+- `MZ01_CKPT_EVERY` — RL steps between checkpoints, default 50 (~30 min of a
+  ~3 h cell). `0` turns it off.
+- `MZ01_RESUME` — `1` (default) reads the shard's result file and any checkpoint;
+  `0` retrains every cell **and overwrites the old rows**.
+- The smoke sets `ckpt_every = 1` (it runs two steps, so at 50 it would exercise
+  the path never) and its checkpoint is named off `adapter_prefix`, so
+  `orgb_smoke_ckpt_*` can never overwrite a real one. A smoke also **never
+  resumes**, whatever `MZ01_RESUME` says: a second smoke that found the first
+  one's 2-step checkpoint would resume at step 2 of 2, train nothing, and report
+  a pass for a run that did not happen.
+
+## The puller: CONFIRMED, not changed — and two traps
+
+`scripts/pull_from_sandbox.sh`'s remote glob `experiments/**/results*/**`
+**already** matches both the per-cell adapters and the new checkpoints
+(verified against a simulated tree, including a nested per-shard subdirectory).
+The file was NOT touched, deliberately: three watcher loops are executing that
+exact path right now and bash reads a running script lazily.
+
+**The local watcher stages per box.** `scratchpad/watch_box.sh` pulls into
+`scratchpad/pull_box{1,2,3}` and then mirrors into the worktree, renaming only
+`results/orgb/warm_start.pt` → `warm_start_s{seed}.pt` (it is the one path that
+collides across boxes). Adapters and checkpoints are already seed-unique
+(`orgb_B_s1.pt`, `orgb_ckpt_B_s1.pt`), so they mirror without collision and **no
+per-shard subdirectory is needed** — which is why the adapters were left at
+`results/orgb/orgb_{cell}_s{seed}.pt` rather than moved under
+`results/orgb/{shard}/`: moving `out_dir` per shard would also move
+`warm_start.pt`, and every later shard would then train a SECOND warm start
+(M5's whole point).
+
+1. **Staleness.** Both the puller and the watcher's mirror skip a file whose
+   local size equals the remote size. A checkpoint is overwritten in place at a
+   *constant* size, so after the first pull the local copy is **never
+   refreshed**. Treat a mirrored checkpoint as "some earlier step", not "the
+   latest"; to refresh one, delete the local copy (and the staged one) first.
+2. **Cost.** ~126 MB at 14B (fp32 adapter + two fp32 AdamW moments; the LoRA
+   params are fp32 even under a bf16 base). The puller takes at most ONE >1 MB
+   file per cycle at ~1 min/MB, so pulling a checkpoint costs ~2 h of the bulk
+   budget and delays the 21 MB organism adapters behind it. The checkpoint's
+   real value is **on-box** recovery (driver crash, OOM, an accidental kill,
+   a relaunch inside the same lease); across a lease death the cheap recovery is
+   the shard JSON plus the per-cell adapters, and the skip-the-finished-cell
+   logic above. If a shard's pull budget matters more, run it with
+   `MZ01_CKPT_EVERY=0` or skip `*_ckpt_*` in the watcher's mirror filter.
+
+## New: `scripts/mz01_entropy_trace.py`
+
+Stdlib only, runs under `python3 -S`, takes shard JSONs (or `smoke_timing.json`,
+or a bare history) and prints per (cell, seed): H and the entropy coefficient
+and the solve rate at 0/50/…/last, the fraction of steps the coefficient sat on
+**either** bound, when it first got there, and **PINNED / FREE**. It is HH01's
+`score_hh01.rl_entropy_pinned` read, on MZ01's field names
+(`training.policy_entropy`, `training.entropy_coef`, `training.solve_rate`), with
+the same `PINNED_FRACTION = 0.5`. HH01 found at 14B that the target 0.7 sits
+ABOVE the base policy's own move entropy, so the controller walks to its 1.0
+ceiling and the run has no entropy authority left — invisible in every other
+number, and a lease to discover late. `--stride N` and `--json` (HH01's field
+names) are the two flags.
+
+Beside it, `train_orgb_cell` now records `entropy_coef_bounds` and `entropy_lr`
+in `history["config"]`, and `ENTROPY_COEF_BOUNDS = (1e-4, 1.0)` is a named
+constant in `maze_orgb` that its default argument now reads. (`rl.py` and
+`maze_rl.py` still carry their own literal `(1e-4, 1.0)` default — deliberately
+untouched: HH01 shards are running under them.) Runs written before today record
+no bounds and the script says so in `bounds_source` rather than silently using
+its own copy.
+
+```
+python3 scripts/mz01_entropy_trace.py \
+  experiments/v2/MZ01_maze_world/results/orgb/*.json
+```
+
+**Read on the only MZ01 file that exists locally** (`results/orgb/smoke_timing.json`,
+the 3-step cost probe): H **0.071 → 0.116** against a target of 0.7, coefficient
+0.0100 → 0.0107, verdict FREE. Three steps decide nothing, but the direction is
+HH01's: the measured move entropy is far BELOW the target, so the controller
+will push the coefficient up every step. Run this on the first real shard file
+that lands and decide whether the target is the right one *before* booking the
+remaining leases.
+
+## Suite
+
+`179 → 188` passed, CPU, no downloads (`python3 -m pytest tests/ -q`). The nine
+new ones are in `tests/test_maze_orgb.py`:
+
+- **`test_a_resumed_cell_is_bit_identical_to_an_uninterrupted_one`** — the whole
+  claim. A toy cell is killed **mid-step** (the kill is inside the sampler, so
+  the work after the last checkpoint is genuinely lost), resumed, and the full
+  trace (timing fields excepted) and the final adapter are compared against an
+  uninterrupted 6-step run with `torch.equal`. **Exact**, not `allclose`: the
+  toy path is CPU fp32.
+- **`test_every_piece_of_the_restored_state_is_load_bearing`** — four mutations
+  of the checkpoint (RNG stream, Adam moments, entropy coefficient, adapter);
+  each must make the continuation differ, so the equality above is not vacuous.
+- the checkpoint's contents and atomicity (no `.tmp` left, `weights_only=True`
+  load, the saved coefficient equals the one the uninterrupted run used at that
+  step); a checkpoint from another recipe (`lr`, and a different maze pool) is
+  refused by name; `resume=False` retrains and lands on the same adapter; the
+  run carries a finished row forward instead of retraining it (asserted by the
+  row's `seconds` being the first lease's float); a row from another
+  navigator/warm start/glyph, or for a cell outside the grid, raises; and the
+  entropy script agrees with the trainer's field names and runs under `-S`.
+
+## Still not done (added by this pass)
+
+- The checkpoint is written **at 14B only in theory**: nothing has run one on a
+  GPU box yet. The first thing the next lease's status file should show is a
+  `RESUMED from …` line or a checkpoint size, and the first smoke should be
+  read for `orgb_smoke_ckpt_*` appearing and being ~21 MB × 3.
+- Nothing prunes checkpoints. One per (cell, seed) stays on the box after the
+  cell finishes (deliberately — see "into the measurement" above), so a 16-cell
+  box holds ~2 GB of them.
+- The entropy read is REPORTED and gates nothing, by design. If the first shard
+  comes back PINNED, changing the target is a **deviation** from the
+  pre-registered recipe and has to be recorded as one.
+
+# Critic pass, 2026-08-29: trying to break R1 (mid-cell checkpoint / resume)
+
+Adversarial read of the eighth pass's uncommitted build (`git diff` against
+`04e5e69`) plus five targeted fixes and six new tests. Nothing under
+`results/orgb/` was written; `scripts/pull_from_sandbox.sh` was read, not
+touched.
+
+## Claim by claim
+
+| # | claim | verdict | evidence |
+|---|---|---|---|
+| 1 | every source of RL state is captured | **VALID** | The only stream this trainer draws from is `gen`, a CPU `torch.Generator`: `_sample_replies` softmaxes on GPU, `.cpu()`s, and calls `torch.multinomial(..., generator=gen)`, and `random_move_orders` takes the same `gen`. There is **no peft** anywhere (`src/calibration/lora.py` exists because peft is absent from the sandbox), so no adapter-name/`modules_to_save` state to miss. There is no LR schedule (`AdamW(params, lr=lr)`, no scheduler) and no gradient accumulation across steps (`zero_grad` → chunked `backward` → `step`, all inside one iteration), so a step boundary is the whole state. The entropy controller's only state is `coef`/`log_coef`, both saved. `torch.cuda` RNG is captured and restored anyway (unused on this path: no dropout, `model.eval()`). The maze draw is `torch.randint(len(train_pool), generator=gen)` over a pool that is fingerprinted by sha. |
+| 2 | the resumed adapter replaces the warm start rather than stacking on it | **VALID** | `load_lora_state_dict(..., strict=True)` compares key sets *and* shapes and `param.copy_()`s in place over every LoRA tensor, so the warm start loaded by `run_orgb.run` immediately before is fully overwritten. The navigator is loaded into the *same* adapter sites, so there is one adapter set, not two. |
+| 3 | "resumed == uninterrupted, bit-exactly" | **FIXED (dishonest on the real path)** | The test is CPU fp32 and sound. The build then repeated the claim UNQUALIFIED in three docstrings and in the status line the operator actually reads (`"a resumed cell is bit-for-bit the cell an uninterrupted lease would have trained"`). The lease is CUDA bf16, where SDPA's backward accumulates with atomics and cuBLAS picks kernels by heuristic: identical state can give different logits and then a different sampled id. Every one of those sentences now says what is asserted (state restored; bit-exact on CPU fp32) and what is not (the same floats on CUDA bf16), and `row["checkpoint"]["bit_exact_scope"]` carries the qualification into every result file. Test: `test_every_row_records_what_bit_exact_does_and_does_not_mean`. |
+| 4 | cell-skip identity check is sufficient | **INVALID → FIXED** | `RESUME_IDENTITY_KEYS` checked the BASE (nav sha, warm-start sha, role glyphs) and `steps`, and nothing else. A relaunch under a different `MZ01_YELL_W`, `MZ01_GROUP`, `MZ01_BATCH`, `MZ01_N`, lr, temperature or entropy target carried the old rows forward **silently** — the manifest records only the new recipe and nothing downstream re-reads a row's own `training.config`. Ironic, because `train_orgb_cell`'s checkpoint fingerprint refuses exactly this one level down. Added `RESUME_RECIPE_KEYS` (13 fields) + the switch-aware `yell_weight` + `measurement.n_mazes` (the held-out set is a pure function of `(eval_n, n)`), all named in the raise. Test: `test_a_row_from_another_recipe_is_never_carried_forward`. |
+| 5 | stale eval set for a resumed cell | **VALID, now caught earlier** | The eval set is `derive_generator(0, "orgb", "eval")` over `(eval_n, n)` — deterministic, so a same-recipe relaunch measures on the same set. A changed `MZ01_EVAL_N` used to be caught only by the driver's row contract, i.e. after the whole shard had been retrained; the `n_mazes` check above now stops it before the first cell. |
+| 6 | different weights across leases | **INVALID → FIXED** | `run_orgb.run` never sees the base checkpoint, so a relaunch with a different `MZ01_REVISION`/`MZ01_MODEL` pooled organisms from two sets of weights under one 2x2 with the manifest naming only the second. `read_prior_rows` now takes `expect=` and refuses on `model_key` / `model_id` / `revision` / `shard`, before the model is loaded. Test: `test_a_relaunch_on_other_weights_refuses_the_shards_rows`. |
+| 7 | the checkpoint write is atomic | **VALID** | tmp → fsync → `os.replace` → fsync the directory is correct, and `weights_only=True` on load is right. |
+| 8 | ... but the SHARD JSON write was not | **INVALID → FIXED** | The one artefact that recovers a dead lease was rewritten in place after every organism with `open(path, "w")`, which truncates first. A death mid-write left a JSON prefix, and the next launch's (correctly paranoid) `read_prior_rows` then refuses to start — every measured organism in the shard lost. Added `write_payload` (tmp + fsync + `os.replace`), used by both write sites. Test: `test_the_shard_result_file_is_written_atomically`. |
+| 9 | the `.part` convention | **VALID, and it is LOCAL** | `pull_from_sandbox.sh` writes `$lp.part` on THIS machine and `mv`s on a size match; nothing named `.part` ever exists on the box, so it cannot collide with the checkpoint. |
+| 10 | orphaned checkpoint temp files | **INVALID → FIXED** | `_atomic_torch_save`'s `except BaseException` cleanup cannot run on SIGKILL, which is exactly how a lease ends. Every death mid-write left a ~126 MB `..._ckpt_D_s0.pt.tmp.<pid>` inside `experiments/**/results*/` — which the puller lists, and at one >1 MB file per cycle and ~1 min/MB a single corpse costs ~2 h of bulk budget and delays the 21 MB organism adapters behind it. `_atomic_torch_save` now sweeps `{path}.tmp.*` (and only that path's) before writing. Test: `test_a_killed_writers_temp_checkpoint_is_swept`. |
+| 11 | death between `save_lora` and the JSON row write | **VALID, with one gap FIXED** | On-box the recovery is correct: no row → the cell resumes at `next_step == steps` (the last step checkpoints), trains nothing, re-saves a byte-identical fp16 adapter and re-measures. The gap is the *renewed* lease: it comes back on an OLD DISK SNAPSHOT, so a row can survive while its 21 MB adapter does not, and the row was carried forward naming an adapter that is not there. `run_orgb.run` now re-hashes each carried row's adapter and records `manifest["resume"]["rows_reused_without_adapter"]` plus a `!!` log line. It does NOT raise: raising would block the recovery the path exists for. Test: `test_a_carried_row_whose_adapter_vanished_is_recorded_not_hidden`. |
+| 12 | the entropy reader's fields | **VALID** | `policy_entropy` / `entropy_coef` / `solve_rate` / `step` are exactly `train_orgb_cell`'s history keys, and `entropy_coef[i]` is the coefficient USED at step i (appended before the controller update), which is the right semantics. `bounds_of` reads the cell's own `config.entropy_coef_bounds` and names the fallback in `bounds_source` for files written before today. |
+| 13 | "same semantics as HH01" | **VALID with a documented deviation** | `score_hh01.rl_entropy_pinned` counts only the CEILING; this counts EITHER bound. That is the better read and the split is printed, but `fraction_at_bound` is then not HH01's number unless `steps_at_floor == 0`. Said so in `read_cell`'s docstring rather than leaving two same-named fields meaning different things. |
+| 14 | the reader's numbers on `smoke_timing.json` | **VALID, checked by hand** | Trace is `entropy_coef = [0.01, 0.010319291, 0.010653275]`, `policy_entropy = [0.0714007, 0.0629536, 0.1159924]`, `solve_rate = [1.0, 1.0, 0.5833]`. At the default stride 50 the script samples steps 0 and 2 and prints H 0.071 → 0.116, coef 0.0100 → 0.0107, min 0.063, final solve 0.583 — all correct. No coefficient is within 1e-9 of 1.0 or 1e-12 of 1e-4, so `0/3` at a bound and **FREE** is right. Independently: `log(0.010319291/0.01) / (0.7 - 0.0714007) = 0.05000` and `log(0.010653275/0.010319291) / (0.7 - 0.0629536) = 0.05000`, i.e. the trace really is this controller at `entropy_lr = 0.05`, and the direction is HH01's (measured H an order of magnitude BELOW the 0.7 target, so the coefficient climbs every step). `bounds_source` correctly says the file records none — it predates today. |
+
+## Left open (not fixed)
+
+- The checkpoint fingerprint does not name the base **model/revision** (only
+  `n_trainable`, which separates 4B from 14B but not two revisions of one
+  model). The shard-level check added at #6 covers the driver path; a direct
+  `train_orgb_cell` caller is still on its own.
+- `zero_grad_tol` is not in the fingerprint. It decides whether `optimiser.step()`
+  runs and nothing exposes it, so this is theoretical.
+- **The puller can silently corrupt a pulled checkpoint.** It reads the remote
+  file in 1 MB chunks, RE-OPENING it per chunk, and validates only the total
+  byte count against the size it listed once. A checkpoint is overwritten at a
+  CONSTANT size every ~30 min while a 126 MB pull takes ~2 h, so a mid-lease
+  pull is a concatenation of four or five different versions **with exactly the
+  right size**. Nothing checksums it. This is a property of
+  `scripts/pull_from_sandbox.sh` (not editable this pass: three watchers are
+  executing it). Treat a pulled `*_ckpt_*` as unusable; the checkpoint is for
+  ON-BOX recovery only, which is what the eighth pass already recommends.
+- `mz01_entropy_trace.read_cell` reports FREE/PINNED even when
+  `entropy_adaptive` is False, where the verdict means nothing. It prints
+  `adaptive False` beside it; no MZ01 knob turns the controller off, so this was
+  left alone.
+
+## Suite
+
+`188 → 194` passed, CPU, `python3 -m pytest tests/ -q`. Six new tests, all in
+`tests/test_maze_orgb.py` under "critic pass, 2026-08-29".
+
+# Ninth pass, 2026-08-29: exploration (R2) — the move term was dead
+
+Three shards (`s0_DB`, `s1_DB`, `s2_DB`) are training right now from the synced
+`04e5e69`. **Nothing here changes what they are doing**, and the default of
+every knob added below is today's behaviour bit for bit — but their own live
+traces say the RL is not learning, and this pass is the diagnosis, the four
+candidate fixes, the gate that would have caught it, and the trial that picks
+between them.
+
+## The finding, in the traces the boxes are writing right now
+
+```
+[D] step    0  loss -0.2106  R  -4.500  solve 1.000  H 0.019  |g| 0.976
+[D] step   15  loss -0.0001  R  -4.000  solve 1.000  H 0.005  |g| 0.004
+[D] step   60  loss -0.0557  R -15.833  solve 0.750  H 0.115  |g| 17.606
+[D] step   90  loss -0.0024  R  -4.000  solve 1.000  H 0.011  |g| 0.167
+```
+
+The chain is arithmetic and every link is in this repo:
+
+1. `_rescore` measures **entropy over the four MOVE COLUMNS** at the position
+   that emits the move word. Its ceiling is `ln 4 = 1.386`; the warm-started
+   navigator sits at **0.005–0.07**. It is a solved-maze policy and it is
+   nearly a point mass.
+2. `sample_text_episodes` draws `group_size = 6` episodes per maze from that
+   point mass, so **they are the same episode**.
+3. Identical episodes have identical returns. `group_advantages` (Dr.GRPO)
+   subtracts the group mean and stops, so **every advantage is exactly 0** and
+   the move term contributes nothing at all.
+4. What is left in the gradient is the entropy bonus and the move-mass penalty.
+   That is the `|g| ~ 0.01`. The `|g| = 17.6` steps are the rare groups where
+   one episode happened to differ — which is also why `solve` dips to 0.75 on
+   exactly those steps.
+5. The thermostat cannot rescue it, because `entropy_target = 0.7` is a
+   **4B grid-world constant** the 14B policy cannot reach: the update
+   `log_coef += 0.05 * (0.7 − 0.01)` is positive at every step, so the
+   coefficient multiplies by `e^0.0345` per step, passes 0.1 at step ~67 and
+   **pins on its 1.0 ceiling at step ~133**. This is HH01's finding (SPEC
+   amendment 5, `scripts/mz01_entropy_trace.py`) one level up, where it also
+   deletes the move gradient rather than only the entropy authority.
+
+Consequences for the design, stated plainly: **cell A could not learn mine
+avoidance** (its whole content is the move term) and **cell B's "policy
+invariance" would be vacuous** — the invariance of a policy nothing moved.
+
+`grad_norm` cannot report any of this: the two regularisers keep it positive.
+`train_orgb_cell`'s docstring already warned not to read `zero_signal_steps` for
+that reason; what was missing was a number for the degeneracy itself.
+
+## New: the exploration pre-flight (`preflight_exploration_check`)
+
+PR-3 asks whether the **remark** term has variance and it PASSED on the boxes
+(0.9453 / 0.6846). Nobody asked the same question of the **move** term. The new
+gate does, on the warm-started model, before any cell trains, and it reports:
+
+| number | what it says |
+| --- | --- |
+| `policy_entropy` | the mean move-column entropy, read with `_rescore` ITSELF so the gate and the trainer cannot mean different things by "entropy" |
+| `zero_advantage_group_fraction` | the share of maze groups whose episode returns are all identical — the degeneracy, as one number |
+| `within_group_return_sd` | the same thing as a magnitude, which is what `YELL_WEIGHT`'s scale argument was written against |
+
+**GATE**: `zero_advantage_group_fraction <= 0.80` AND the entropy target in
+force inside `[0.5x, 3x]` of the measured entropy. Failing either, the run
+writes NOT-MEASURED and **no cell starts** — the same stop rule PR-3 has.
+Reported under both return definitions and **gated on the harsher one**
+(`mine_cost=False`, where the mine adds no variance), so the bar is the one
+every cell of the 2x2 must clear rather than the kindest cell's.
+
+`MZ01_PREFLIGHT_SOFT=1` reports instead of applying and records the deviation in
+`not_measured` and in `deviations()`. It exists because **the second criterion
+is deliberately strict**: `relative`'s floor of 0.3 against a measured 0.02 is a
+15x ratio and fails it *by construction*. That is not a bug in either — the
+floor is a deliberate departure from "a target this policy can service", taken
+to buy the variance the first criterion is about — so an arm that takes it has
+to say so out loud rather than have the band widened under it.
+
+## New: four exploration modes (`MZ01_EXPLORE`, `maze_orgb.exploration_plan`)
+
+`exploration_plan` is the ONE place a mode name becomes numbers; the trainer
+still takes the numbers, so it cannot re-derive them differently from the gate
+that cleared them. Each mode moves exactly one thing against the control.
+
+| mode | what it moves | knobs |
+| --- | --- | --- |
+| `thermostat_fixed_target` | **nothing** — today's recipe, the DEFAULT | — |
+| `relative` | the entropy TARGET: `max(REL x measured, MIN)` | `MZ01_ENTROPY_REL` 0.85, `MZ01_ENTROPY_MIN` 0.3 |
+| `fixed` | the CONTROLLER: off, coefficient held still | `MZ01_ENTROPY_COEF` 0.1 |
+| `temperature` | the SAMPLER: drawn at T, scored at 1.0 | `MZ01_SAMPLE_T` 1.5 |
+
+**Why `relative` needs a floor, and why the floor is the half that works.**
+0.85 x an already-tiny entropy is still tiny: at a measured 0.02 the relative
+target is 0.017, which the policy ALREADY MEETS — the thermostat would then walk
+the coefficient DOWN to its 1e-4 floor and the run would have *less* exploration
+than today. A purely relative target can only stop the runaway; it cannot break
+the degeneracy it was proposed for. The floor buys the variance, and 0.3 nats is
+picked by the arithmetic that matters: entropy 0.3 over four moves is about
+`p_max = 0.93`, i.e. ~7 % chance of leaving the greedy route per decision, so
+over a ~14-decision episode `P(episode is the greedy one) = 0.93^14 = 0.36` and a
+group of 6 is overwhelmingly likely to hold two different returns — which is all
+the move term needs. The pre-registered 0.7 is about `p_max = 0.80`, three times
+the deviation, and that is competence spent for no extra gradient. The plan
+records which of the two bound (`knobs.binding`).
+
+**Why `fixed` is 0.1.** Today's controller *passes through* ~0.1 at step 67 on
+its way to the ceiling, so `fixed` is "the coefficient this run would have had
+anyway, held still" — a control on the RUNAWAY rather than on the bonus being
+small (which a frozen 0.01 would have been).
+
+**`temperature`, and the importance weight.** Episodes are drawn at 1.5 and the
+update is scored at 1.0, so the samples are off-policy and the textbook
+correction is the per-token ratio inside a clipped surrogate. **It is omitted,
+deliberately, and the omission is recorded rather than assumed**:
+
+- GRPO's ratio — and Dr.GRPO's, which differs only in dropping the group-sd
+  normaliser — is **identically 1 on the first inner epoch**, which is the only
+  epoch this trainer runs (one sample, one backward, one step, samples
+  discarded). Every clipped term in that algorithm exists for the second and
+  later epochs over the same batch. `_sample_replies` already makes this
+  argument for why there is no clipped surrogate anywhere in the file.
+- The sequence ratio is a product over ~16 tokens; at T=1.5 against T=1 its log
+  is tens of nats and its variance dwarfs the advantage it multiplies. Applying
+  it untruncated is worse than omitting it; truncating it adds a clip constant
+  nothing in this programme has tested.
+- The arm is a **diagnostic**, not a candidate recipe on its own: read as an
+  estimator it is "the gradient of the T=1 log-likelihood weighted by advantages
+  from T=1.5 roll-outs" — exploration by a hotter behaviour policy, biased, and
+  the bias is what is being measured.
+
+So the ratio is **MEASURED instead**. `_sample_replies` accumulates
+`log pi_score(a) − log pi_sample(a)` over each reply **at the weights that drew
+it** (the only moment it is free — the logits are already in hand), the trainer
+records the per-step mean in `history["log_importance_ratio"]`, and
+`config["explore"]["importance_weight"]` says in words that it was not applied.
+
+## What else changed
+
+- **The trace** gained `zero_advantage_group_fraction` and
+  `log_importance_ratio` per step (plus `..._mean` summaries), and the live log
+  line gained `zadv` — `zadv 1.00` is the state the three shards are in.
+  Because the history key set changed, **`CKPT_SCHEMA` is bumped to 2**: a
+  checkpoint written by the shards now running is REFUSED BY NAME under this
+  build rather than resumed into a trace it does not match.
+- **`sample_batch_size`** (`MZ01_SAMPLE_BATCH`) separates the DECODE width from
+  the re-scoring `chunk_size`; the default is `chunk_size`, which is what it
+  silently was. It is in the checkpoint fingerprint and in
+  `RESUME_RECIPE_KEYS`-adjacent checks because it **changes which tokens are
+  drawn**: `torch.multinomial` consumes one draw per row per step, so a
+  different width re-orders the draws off the run's one generator.
+- **`MZ01_GROUP=12` is supported and is a *linear* cost, not a memory one.**
+  Episodes run in lockstep and are cut into decode calls of `sample_batch_size`
+  while the re-scoring is cut into chunks of `chunk_size`, so a wider group is
+  MORE calls of the same shapes — the peak (the ~0.5 GB of logits per re-scoring
+  chunk at 14B) does not move with it. At 53 GB of 96 used at GROUP=6, 12 is
+  safe; it costs ~2x the step. Asserted on the toy path, not argued.
+- **`MZ01_EVAL_BATCH`, default 32** (was a hard 16). The four measurement passes
+  already batch every live episode's current turn — `maze2.rollout` runs them in
+  lockstep — so this is the WIDTH of one call: 256 mazes x 4 passes x ~13 rounds
+  is the difference between 832 and 416 decode calls per organism. Greedy
+  decoding is batch-invariant in exact arithmetic (argmax per row, a masked left
+  pad cannot reach a real token, an EOS row stops growing) and the toy path
+  asserts it **decision by decision at widths 1, 4 and 32**. The one exception
+  is `stop_on_parse=True`, whose early stop is evaluated over the whole call;
+  every eval that reads a remark passes False (D30) and the test asserts that
+  `measure_organism` is one of them. On CUDA bf16 two widths pick different
+  kernels — the same fp standing any repeat of the run has there.
+- **`MZ01_ENTROPY_TARGET` pins the target.** `relative`'s target is a function of
+  a SAMPLED measurement, so a second lease would derive one a hair away and both
+  the mid-cell checkpoint's fingerprint and the shard's carried-forward rows
+  would (correctly, expensively) refuse it. The pre-flight prints the exact line
+  to copy, `deviations()` records the pin, and the refusal message names the
+  remedy.
+- `RESUME_RECIPE_KEYS` gained `explore_mode` and `sample_temperature`; the
+  recipe comparison now runs against the **resolved plan**, not `cfg`'s raw
+  knobs. `relearn_read`'s recipe allowlist gained the same four knobs, so "50
+  steps of the A recipe" stays true under a non-default arm.
+- `train_orgb_cell` gained `on_step`, a BEST-EFFORT per-step hook (the trial
+  writes its trace with it; a hook that raised must not lose a run).
+
+## New: `scripts/mz01_explore_trial.py` and `scripts/score_mz01_explore.py`
+
+One box, seed 0, cell D, **all arms from the same warm start** (restored with
+`load_lora_state_dict` — the bit-exact restore `relearn_read` and the checkpoint
+use), `MZ01_TRIAL_STEPS` steps each, the trace written **atomically after every
+step** (the critic pass's `write_payload`), a `mz01_explore_status.txt` with
+DONE markers, and no adapter, row, ledger or measurement anywhere. Arms, in
+order, control first:
+
+```
+01_thermostat_g6   02_relative_g6   03_fixed_g6   04_temperature_g6   05_relative_g12
+```
+
+Then **cell A under the arm the trial's own summary picks**, because "the
+entropy moved" is not the question — "does mine/ep move" is. An arm that raises
+is caught and the others continue: an OOM at GROUP=12 is itself an answer.
+
+`score_mz01_explore.py` (stdlib, `python3 -S`) is the one implementation of the
+verdicts, so the trial's pick and the table a human reads cannot disagree:
+**DEAD** (zero-advantage groups still over 0.80 at the end), **RANDOMISED**
+(solve fell more than 0.10 — exploration bought by destroying the policy is not
+a recipe), **ALIVE** otherwise. Start/end are means over the first and last
+fifth of the steps, because at GROUP=6 one step reads four groups and its
+zero-advantage fraction can only be 0, .25, .5, .75 or 1. The pick is the ALIVE
+arm with the highest end solve, then the cheapest step, **ties to `relative`** —
+the smallest deviation from the pre-registered recipe among the ones that work —
+and it prints the env line for A+C, with the target PINNED.
+
+**`MZ01_TRIAL_STEPS` defaults to 40, not the 60 this was scoped at**, and the
+arithmetic is why: 4 arms x 60 x 36 s + 1 arm x 60 x ~72 s + cell A + five
+pre-flights is 4.3–5.0 h, over the ~4.5 h scope; at 40 it is ~2.9–3.2 h. The
+numbers that decide the trial (entropy, zero-advantage fraction, `|g|`) are
+properties of the SAMPLER and are readable from the first step; 40 is ample for
+them, and the follow-up A arm is what needs the headroom.
+
+## Suite
+
+`195 → 211` passed, CPU, no downloads (`python3 -m pytest tests/ -q`, ~100 s).
+Sixteen new tests in `tests/test_maze_orgb.py` under "R2, 2026-08-29":
+
+- the zero-advantage fraction, read **beside `group_advantages` itself**, so
+  "the share of flat groups" is not a number about a claim nobody checked;
+- every mode's resolved numbers, including `relative`'s floor binding at a
+  measured 0.02 and the relative half binding at 1.0, the refusal to derive a
+  relative target with no measurement, and the pin (and its refusal under
+  `fixed`);
+- **the controller's update law, step by step** (`coef_{i+1} = clamp(coef_i *
+  exp(lr * (target − H_i)))`), the fixed coefficient not moving on any step of
+  its trace, and the RUNAWAY reproduced with an unreachable target;
+- the `relative` target travelling from the gate into the trainer unchanged;
+- the exploration gate refusing a deterministic policy that **PR-3 passes** (the
+  two gates ask about the two terms), the soft path, the run-level stop with no
+  rows and no adapter on disk, and the soft deviation appearing in
+  `not_measured`, the manifest and every row's config;
+- the temperature arm's ratio recomputed from a plain forward and compared
+  exactly, plus `_rescore` having no temperature in it at all;
+- GROUP=12 running with no decode call wider than `sample_batch_size`, and the
+  decode width changing which ids are drawn (why it is in the fingerprint);
+- a checkpoint from another ARM, temperature or width refused **by name**;
+- the eval decode identical at widths 1/4/32 and `measure_organism` passing
+  `stop_on_parse=False`;
+- the scorer's four verdicts, the pick and the env line, `python3 -S`, and the
+  trial's arm list covering every mode with the control first.
+
+## Still not done / read this before the next lease
+
+- **The three running shards are unaffected and remain wrong.** Nothing here
+  reaches them. Their cells will finish, and their `zero_advantage_steps_move`
+  and (under this build, on a re-score) their traces will say the move term did
+  nothing. Decide deliberately whether their D and B rows are usable as a
+  NULL-cell record or whether the shard is abandoned.
+- A checkpoint they wrote is **schema 1** and this build refuses it. That is the
+  designed behaviour; it means a lease that syncs this code cannot resume their
+  mid-cell state. Finish them under `04e5e69` or accept the loss.
+- The trial has **not been run**. Every number in the cost table above is an
+  estimate from the boxes' own measured 36 s/step.
+- `MZ01_EVAL_BATCH=32` means a shard measured under this build and one measured
+  under `04e5e69` differ by fp accumulation order in the eval. Exactly-equal on
+  CPU fp32; not bit-equal on CUDA bf16 — the same standing any repeat has.
+- The exploration gate's second criterion will FAIL for every `relative` run
+  whose floor binds. That is by design and it forces `MZ01_PREFLIGHT_SOFT=1`
+  plus a recorded deviation. If the trial picks `relative`, the paper's methods
+  section has to carry that sentence.
+
+# Critic pass 2, 2026-08-29: exploration
+
+Adversarial read of the ninth pass's uncommitted exploration build (`git diff`
+against `04e5e69`, the R2 half), one AMENDMENT applied on the lead's
+instruction, six fixes and seven new tests. Nothing under `results/orgb/` or
+`results/explore_trial/` was written; `scripts/pull_from_sandbox.sh` was not
+touched; no sandbox was contacted.
+
+## The amendment (applied, not a finding)
+
+The pre-flight's second criterion -- the entropy target inside `[0.5x, 3x]` of
+the measured entropy -- **no longer refuses**. It is computed, printed
+(`OUT OF BAND  (INFORMATIONAL -- recorded, never refuses)`), carried in
+`criteria[1]` with `refuses: False`, and recorded in
+`manifest["exploration"]["entropy_target_over_measured"]` beside
+`..._in_band` and `..._is_informational`. The reason it could not be a gate is
+the ninth pass's own: `relative`'s floor of 0.3 against a measured 0.02 is a
+15x ratio BY CONSTRUCTION, so the criterion refused exactly the arm it was
+written to license, and clearing it took a blanket `MZ01_PREFLIGHT_SOFT=1` --
+which also waves through the criterion that means something.
+
+The one refusing criterion is `zero_advantage_group_fraction > 0.80`, and it is
+SOFT inside the trial (`soft=True` on every arm, with the reason now written at
+the call site): the control arm IS today's failing recipe and that fraction is
+the number that says so, so a gate that stopped the control would stop the
+trial from measuring what it exists to measure. Every arm's file now carries a
+`deviations` list naming the waived refusal. Test:
+`test_the_target_band_is_reported_and_never_refuses`.
+
+## Claim by claim
+
+| # | claim | verdict | evidence |
+|---|---|---|---|
+| 1 | the pre-flight gates the arm that will run | **INVALID → FIXED** | The roll-out was drawn at `temperature` (the SCORING temperature, 1.0) for every arm, and only `exploration_plan` ever saw `sample_temperature`. The one refusing criterion is a property of the SAMPLER, so the gate reported the CONTROL's degeneracy for all five arms -- and refused `temperature`, the one arm whose entire mechanism is the draw, for the state it exists to fix. `plan_sample_temperature` (new, and the single implementation `exploration_plan` now also calls) resolves the draw temperature BEFORE the measurement -- only `relative`'s TARGET needs the entropy -- so the order is draw-then-resolve. The entropy stays a `_rescore` read at the scoring temperature, because that is the quantity the controller regulates. `sample_temperature` / `score_temperature` / `off_policy` / `log_importance_ratio` are now in the payload, the printed lines and the manifest. Test: `test_the_preflight_rolls_out_under_the_arms_own_sampler`. |
+| 2 | temperature-mode math: entropy, log-prob and advantage are consistent | **VALID (the arithmetic)** | `_rescore` has no temperature in it at all: `logp = log_softmax(logits)` and the move-column entropy are both at T=1, so the log-prob in the policy-gradient term and the entropy the thermostat regulates are the same policy's. `_sample_replies` draws from `softmax(logits/1.5)` and accumulates `log pi_1(a) - log pi_1.5(a)` at the weights that drew it. Advantages are episode returns, which do not depend on either temperature. Nothing is mixed. |
+| 3 | "the importance ratio is identically 1 on the single inner epoch" | **INVALID → FIXED (a false reason, an honest conclusion)** | GRPO's ratio is 1 on the first inner epoch **because the behaviour policy IS the scored policy**. Drawing at 1.5 and scoring at 1.0 breaks that premise; the ratio is not 1, which is why the code measures it. Reason 1 of the IMPORTANCE WEIGHT paragraph therefore argued for the omission from a premise the arm violates, and `_sample_replies`'s docstring repeated it unqualified. Both rewritten: what survives is the narrower claim (single-epoch structure is why there is no clipped surrogate on the ON-POLICY path, so the temperature arm is not dropping a correction the rest of the file applies) plus the two reasons that do stand. **The decision not to apply it stands**, and the arithmetic is why: at H = 0.02 the move distribution is p_max ~ 0.997, at T = 1.5 it is ~0.97, so a per-token ratio is ~1.03 on the greedy token and ~0.1 on a deviating one; the trajectory ratio an episode-return advantage would need is a product over ~14 replies x ~16 tokens, whose log is tens of nats. Untruncated it is worse than nothing; truncated it adds a clip constant nothing in this programme has tested. The bias is real, it is in the direction of over-weighting actions rare under T=1 (which is the exploration the arm is for), and it is now stated as a bias rather than argued away. Test: `test_the_off_policy_arm_does_not_claim_the_ratio_is_one`. |
+| 4 | does T=1.5 buy anything at this entropy? | **VALID, quantified** | At H = 0.02 over four moves, p_max ~ 0.997 and P(the greedy episode) = 0.997^14 = 0.96, so a group of 6 is the same episode -- `zadv 1.00`, which is what the boxes print. At T = 1.5 the off-move log-odds shrink by 1/1.5: p_max ~ 0.97, P(greedy episode) = 0.97^14 = 0.65, and P(all six identical) ~ 0.08. So the arm does break the degeneracy. The cost it can buy it at is the REMARK: T = 1.5 applies to the whole 150k vocabulary, not to the four move columns, so `unparsed_rate` and `remark_share` are the numbers to read beside `solve_rate` on that arm. Recorded, not fixed. |
+| 5 | `relative`'s measured entropy is the right quantity | **VALID** | It is `_rescore`'s move-column entropy (ceiling ln 4), averaged over the decisions of a roll-out taken with the training sampler's own settings (`sample_text_episodes`, same `group_size`, `chunk_size`, `sample_batch_size`, glyphs and format), on the warm-started weights, and `test_the_relative_target_travels_from_the_preflight_into_the_trainer` pins that the number the gate read is the number the trainer trains under. |
+| 6 | `relative` does not recreate the 0.7 pin | **VALID, but the trial cannot see it** | `log_coef += 0.05 * (0.3 - 0.02)` multiplies the coefficient by e^0.014 a step against the control's e^0.0345, so if the entropy never moves the coefficient reaches the 1.0 ceiling at step ~329 rather than ~133 -- outside a 300-step cell, at ~0.66 by step 300. It is the same runaway SHAPE at 41 % of the rate, and it stabilises only if the bonus actually lifts H toward 0.3. **The finding is about the trial, not the mode**: at step 40 the coefficient is 0.0175, a SIXTH of the 0.1 the `fixed` arm starts at, so a 40-step trial is structurally unkind to the two arms whose mechanism is the thermostat and kind to `fixed` and `temperature`, which act from step 0. "Ties to `relative`" cannot repair a DEAD verdict. The scorer now flags it (`slow_controller`, and a table line saying the answer is more steps, never a lower bar) rather than silently rescuing it. Test: `test_a_dead_arm_whose_controller_never_moved_says_so`. |
+| 7 | `fixed`: nothing re-enables the thermostat | **INVALID → FIXED (one reachable path)** | The trainer is right (`adaptive = entropy_target is not None`, the update is not reached, `coef` is never reassigned) and the checkpoint is right (`entropy_target` is in the fingerprint, `coef`/`log_coef` are restored). The hole is `relearn_read`: its `recipe` dict has all-optional keys, so a caller passing `explore_mode="fixed"` and `entropy_coef=0.1` while OMITTING `entropy_target` got `train_orgb_cell`'s default 0.7 and ran 50 steps of the pre-registered thermostat with `explore_mode` saying `fixed` in the trace. `run_orgb` passes `plan["entropy_target"]` and is safe; the guard is now in the TRAINER, so every caller is covered: `fixed` with a target raises, and `temperature` XOR off-policy raises. Test: `test_a_mode_name_and_its_numbers_may_not_disagree`. |
+| 8 | GROUP=12 is a linear cost, not a memory one | **VALID** | The backward is per re-scoring chunk (`for lo in range(0, len(decisions), chunk_size)` ... `loss.backward()`), so the peak is ONE chunk and a wider group is more chunks in sequence. At 14B, chunk 8, ~178-token prompts and a 48-token window the chunk peak is ~0.6-0.9 GB of logits ([8, 49, 151936] bf16 + its fp32 copy + the log-softmax) on top of ~3 GB of transformer activations, against 28 GB of bf16 weights; the decode side is capped by `sample_batch_size` (8) and each `_Decode`'s KV cache (~0.3 GB for 8 rows x 226 positions) is freed per call. Nothing in the step holds all decisions' tensors: GROUP=12 adds 672 CPU decision dicts, about 1 MB. **No chunking added and `MZ01_SAMPLE_BATCH`'s default left alone**; 53 GB at GROUP=6 does not move. |
+| 9 | batched eval == sequential eval | **VALID** | `padding_side="left"` is explicit in `_greedy`; `position_ids = (att.cumsum(-1) - 1).clamp(min=0)` puts every row's first real token at position 0 whatever its pad width; `_Decode.feed` grows `att` with ones and carries a per-row `next_pos`, so the cache's positions stay right. A row that emits EOS is marked `done` and its `grown` list is frozen -- it is still fed, but attention is per-row, so it cannot reach another row. The `all(done)` break only makes a wide chunk decode LONGER, never differently. The retry is per-EPISODE (`ep.pending_retry` puts two extra turns in that episode's prompt string) and `rollout` re-forms `active` every round, so batch composition never touches it. The one batch-dependent path is `stop_on_parse=True`, which `measure_organism` does not use and the suite asserts it does not. |
+| 10 | the trial's arms differ only by the mode | **VALID with a limit worth naming** | Every arm restores the same `warm_state` with the clone/copy-in-place pair (`lora_state_dict(cpu=True)` clones; `load_lora_state_dict` copies in place), and every arm gets `set_all_seeds(seed)` with the same seed and a freshly derived pre-flight generator, so step 0 is identical. They are NOT paired after that: the maze draw, the word orders and the sampled tokens all come off ONE generator, so the moment two arms' episodes differ in length their maze sequences diverge. The comparison is 40 steps of the same pool at the same seed, not a paired one. Not fixed -- a per-step derived stream would change `train_orgb_cell`'s draw semantics and every pinned number with it. |
+| 11 | the follow-up cell A uses the picked arm's exact plan | **INVALID → FIXED, twice** | (a) The follow-up re-ran the pre-flight and RE-DERIVED `relative`'s target; deterministic on CPU, not on CUDA bf16, so cell A could have trained a hair off the picked target -- and under `MZ01_ENTROPY_TARGET` a hair is a different recipe to every resume check in the programme. `run_arm` now takes `pinned_target` and the follow-up pins the picked arm's own number (skipped for `fixed`, which has no target and whose plan refuses one). (b) The follow-up's file carried the PICKED ARM'S name in its `arm` field, so a human pointing `score_mz01_explore.py` at the directory got two rows called `02_relative_g6` and `pick_arm` could return the CELL A one -- whose solve rate and zero-advantage fraction are not what the pick rule is written about. The payload now names the FILE (`arm`), keeps `arm_base`, sets `follow_up`, and the scorer excludes follow-ups from the pick and labels them in the table. Test: `test_the_follow_up_cell_is_read_but_never_picked`. |
+| 12 | a failed arm is visible in the summary | **INVALID → FIXED** | The failure branch wrote a FAILED stub to disk but did not put it in `results`, and `rows` was built from `results.values()` -- so an OOM at GROUP=12, which the trial's own docstring calls "itself an answer", was missing from `summary.json` and from the table the operator reads. The stub now goes into `results` too, in the shape `read_arm` expects. |
+| 13 | `MZ01_PREFLIGHT_SOFT=1` in the recommended env line | **INVALID → FIXED** | It was appended unconditionally, so a picked arm that CLEARS the gate (which `temperature` now can, since the gate draws at its own temperature) would have recorded a deviation that did not happen -- in the same manifest field every real deviation lives in. `env_line` now emits it only when that arm's own pre-flight has `hard_passed` false, and still emits it when the arm file records no verdict at all (a stopped run is the cheaper error). Test: `test_the_soft_flag_is_emitted_only_when_the_gate_would_refuse`. |
+| 14 | the scorer's verdicts and pick | **VALID, exercised** | Run on a synthetic five-arm trace plus a follow-up file: control DEAD, `relative` DEAD-with-`slow_controller` (its coefficient walking 0.0105 -> 0.0164 over 40 steps, the real controller law), `fixed` ALIVE, `temperature` RANDOMISED at solve 0.60, g12 DEAD; pick `03_fixed_g6` with a correct env line, follow-up read and labelled but not picked. `python3 -S`, no crash, no traceback. DEAD/RANDOMISED/ALIVE and the window means are as documented. |
+| 15 | the trial's cost | **INVALID (optimistic) → RESTATED** | The projection left out the pre-flights' real cost and the model load. 4 x 40 x 36 s = 96 min, 1 x 40 x 72 s = 48 min, cell A 24 min (the driver budgets 48 as an upper bound, since the picked arm's group is not known when it prints), six pre-flights at ~90 s (8 mazes x 6 episodes is ~2x an RL step's sampling plus a forward-only re-score) ~10 min not 5, model load + the 256-maze eval set ~5-10 min: **~3.0 h floor, ~3.4 h at the driver's own padded line.** Add up to ~40 min if the hot arms lengthen their episodes -- the cap is 2x the shortest path, so an arm that stops solving runs up to twice the decisions per step, and `03_fixed_g6` (coefficient 0.1 from step 0) and `04_temperature_g6` are the two that can. **Worst case ~3.8 h, inside the ~4.5 h scope**; at 60 steps it would be 4.5-5.7 h and outside it. The docstring and the printed projection now say all of this. |
+| 16 | `zero_advantage_group_fraction`, the checkpoint schema bump, the decode-width fingerprint, `MZ01_EVAL_BATCH=32` | **VALID** | Re-derived beside `group_advantages`; `CKPT_SCHEMA = 2` refuses a schema-1 checkpoint by name; `sample_batch_size` really does re-order `torch.multinomial`'s draws and is in the fingerprint; the eval width is asserted decision by decision at 1/4/32 on the toy path. Nothing to add. |
+
+## Left open (not fixed)
+
+- **The gate can only ever pass for `temperature`.** Its one refusing criterion
+  is measured on the WARM START, and the mechanism of `relative` and `fixed` is
+  a coefficient that has not moved yet at that moment. So those two arms will
+  always need `MZ01_PREFLIGHT_SOFT=1` and will always record the deviation.
+  That is honest -- the gate is asking "does this policy, as it stands, produce
+  a policy gradient?" and the answer is no -- but it means the flag is part of
+  the recipe for two of the four modes, and the paper's methods section has to
+  carry that sentence.
+- **The arms are unpaired after step 0** (row 10). The between-arm comparison
+  is over 160 groups per arm, which is enough for `zadv` and `H`; it is not a
+  paired design and `solve_end` differences under ~0.05 should not be read.
+- **The `temperature` arm keeps the 0.7 thermostat**, by design (it moves the
+  sampler and nothing else), so it inherits the runaway: its coefficient is
+  0.0398 by step 40 and would pin at step ~133 of a real cell. A 40-step trial
+  cannot see that, and an A/C run under `temperature` would.
+- **T = 1.5 is applied to the whole vocabulary**, not to the move columns, so
+  the arm's cost may land on the REMARK rather than on `solve_rate`. Read
+  `unparsed_rate` and `remark_share` beside the verdict; the scorer does not.
+- The trial has still **not been run**; every number above is an estimate from
+  the boxes' measured 36 s/step.
+
+## Suite
+
+`211 -> 218` passed, CPU, `python3 -m pytest tests/ -q` (~60-180 s). Seven new
+tests in `tests/test_maze_orgb.py` under "critic pass 2, 2026-08-29", plus new
+assertions inside `test_the_soft_preflight_records_the_deviation_it_waves_through`
+for the manifest's informational criterion. `_ScriptedSampler` now accepts the
+off-policy `aux` / `score_temperature` pair so a scripted test can exercise the
+`temperature` arm.
+
+## The trial command line
+
+```
+MZ01_REVISION=<sha> MZ01_MODEL=14B MZ01_TRIAL_STEPS=40 \
+MZ01_WARM_START=/marimo/repo/experiments/v2/MZ01_maze_world/results/orgb/warm_start.pt \
+  python3 /marimo/repo/scripts/mz01_explore_trial.py
+```
+
+Defaults do the rest: five arms in order (control first), seed 0, cell D, then
+cell A under the picked arm with its target pinned. Read it with
+`python3 -S scripts/score_mz01_explore.py experiments/v2/MZ01_maze_world/results/explore_trial`.
+
+# Docs pass, 2026-08-29
+
+No code, no SPEC, no result touched. No sandbox contacted, no tests run. Four
+documents written and one updated, all against files in this worktree and the
+main repo; every number re-derived from the source it names, and anything that
+could not be verified says so in the text.
+
+- **`/home/manan/Projects/files/digital_minds/HANDOFF-v2.md`** — rewritten
+  clean. What the project is; where both trees are and what is committed
+  (main `6d39ac3`, maze `04e5e69` + ~4580 uncommitted lines); the box
+  convention, the current three boxes, today's three lease deaths, the
+  snapshot rule, and the exact exec/setup/sync/push/launch/pull/watcher
+  commands; HH01's six-seed state and its open decision; MZ01's navigator
+  gate, the RL failure with its numbers, and the reading; ordered NEXT STEPS
+  with the cell-A env lines; the process rules.
+- **`experiments/v2/MZ01_maze_world/RESULTS-2026-08-29.md`** (new) — the day
+  as a lab note: the navigator gate table and its 32-per-bin detour reference;
+  the four killed cell-D runs' traces at sampled steps; per-arm pre-flight
+  numbers; the trial40 and trial80 scorer tables copied verbatim; what it
+  means; and what it does not tell us (cell A untested, 32 mazes per bin, one
+  seed, the unpaired arms, the measured-not-corrected off-policy bias, arm 5
+  of trial80 unfinished, leases dying at random).
+- **`experiments/v2/MZ01_maze_world/README.md`** (new) — how to run every
+  stage: pilot, navigator, the exploration trial with its named arms, and the
+  organism driver with every env knob grouped (model/paths, sharding, RL
+  shape, exploration modes, checkpoint/resume, measurement switches, smoke and
+  the cost probe); what each output file is; every gate and pass rule with its
+  constant; and the two sandbox scripts plus the traps the scratchpad helpers
+  exist to avoid.
+- **`$SP/BOXES.md`** — retyped as a current-state table plus the day's history
+  below it. No tokens anywhere.
+- This entry.
+
+One thing the docs record as UNVERIFIED: box 1's renewed lease
+(`sb-ff67c07a3b8bec08`, 14:13 UTC) is described in the previous session's pause
+note as set up with the navigator and warm start pushed, but there is no push
+log in the scratchpad after that renewal — `push3.log` belongs to the previous
+lease. Re-inventory the box before launching on it.
