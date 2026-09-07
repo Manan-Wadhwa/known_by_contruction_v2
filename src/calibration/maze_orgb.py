@@ -160,6 +160,7 @@ __all__ = [
     "RELEARN_BAR", "AVERSIVE_CUES", "CKPT_SCHEMA", "CKPT_EVERY",
     "ENTROPY_COEF_BOUNDS", "cell_checkpoint_path", "save_cell_checkpoint",
     "load_cell_checkpoint",
+    "FIRST_TOKEN_CLASSES", "move_first_token_classes", "first_token_class",
     "reply_spans", "says_aversive_lexical", "fuzzy_pool_ratio",
     "strict_detector", "lexical_detector", "reward_detector", "yell_reward",
     "episode_yell", "yell_advantages", "episode_return",
@@ -411,7 +412,16 @@ CKPT_EVERY = 50
 #   the fingerprint grew `epsilon`. Same reason, and one more: epsilon changes
 #   which ACTION was taken at a decision, so a resume across it would be half an
 #   epsilon-greedy run and half an on-policy one.
-CKPT_SCHEMA = 3
+#   4 (2026-09-07, twelfth pass): the trace grew `first_token_class` and the
+#   fingerprint grew `move_mask`. `move_mask` changes WHICH DISTRIBUTION the
+#   first token was drawn from AND which log-prob the move term is taken over,
+#   so a resume across it would be half a closed-action-space run and half an
+#   open one -- the two are not the same policy and their gradients are not the
+#   same estimator. `move_mass_coef` was already in the fingerprint and its
+#   DEFAULT moved (0.03 -> 0.0) in the same pass, so a schema-3 file written
+#   under the old default is refused by name here rather than resumed under a
+#   penalty that is no longer on.
+CKPT_SCHEMA = 4
 
 
 # ----------------------------------------------------------------- detectors
@@ -810,6 +820,123 @@ def move_word_token_ids(tok, words=MOVE_WORDS):
     return out
 
 
+# TWELFTH PASS, 2026-09-07. The four buckets the FIRST generated token can fall
+# into, and the order they are reported in. `other` is everything that is not
+# one of the three named forms, so the four always sum to 1.
+FIRST_TOKEN_CLASSES = ("bare", "spaced", "capitalised", "other")
+
+
+def _one_token_id(tok, form):
+    """The id whose decode is exactly `form`, or None. The twin test.
+
+    ONE token and a clean round trip, for `move_word_token_ids`' reason: the
+    class this feeds is read off a single sampled id, so a form the tokenizer
+    spells with two tokens has no id that MEANS it -- the first of those two is
+    a bare space (or a bare capital) shared with every other word in the
+    vocabulary, and counting it as " up" would put every space-led reply of any
+    content into the `spaced` bucket. A tokenizer with no such id simply has an
+    empty class, which is what the toy fixture's shifted encode gives.
+    """
+    ids = list(tok(form, add_special_tokens=False)["input_ids"])
+    if len(ids) != 1:
+        return None
+    if tok.decode(ids, skip_special_tokens=True) != form:
+        return None
+    return int(ids[0])
+
+
+def move_first_token_classes(tok, *, cols=None, words=MOVE_WORDS):
+    """{class: [id, ...]} for the first generated token. Twelfth pass.
+
+    WHY THIS EXISTS, and it is the whole content of the 08-30 erratum. On
+    Qwen3-14B `up` is token 454 and ` up` is token 705; `parse_move` is a
+    case-insensitive `\\b(up|down|left|right)\\b` anywhere in the text, so ` up`
+    walks the maze exactly as `up` does and `unparsed_rate` never moves. The
+    move term, the entropy bonus and the mass probe all read the four BARE ids
+    and nothing else, so when the live cell-A gradient walked the policy's mass
+    onto the spaced twins the objective was thereafter computed over columns the
+    policy no longer sampled from -- and the only number that said so read
+    `move_mass 0.000`, which the note read as silence.
+
+    `bare` is `capture.move_token_ids`, i.e. `cols`, so this classifier and the
+    thing the mask restricts to are the SAME four ids by construction. `spaced`
+    and `capitalised` are the ids whose decode is exactly " up" / "Up" and so
+    on, and a tokenizer that has no such id has an empty class rather than a
+    guess.
+    """
+    if cols is None:
+        ids = move_token_ids(tok)
+        bare = [int(ids[w]) for w in words]
+    else:
+        bare = [int(c) for c in cols.tolist()]
+    out = {"bare": bare}
+    for name, spell in (("spaced", lambda w: " " + w),
+                        ("capitalised", lambda w: w.capitalize())):
+        got = []
+        for word in words:
+            tid = _one_token_id(tok, spell(word))
+            # A twin that IS a bare id is not a twin: `bare` wins, or one id
+            # would be counted in two classes and the shares would not sum to 1.
+            if tid is not None and tid not in bare and tid not in got:
+                got.append(tid)
+        out[name] = got
+    return out
+
+
+def first_token_class(*, first_ids=None, replies=None, classes=None):
+    """The share of first tokens in each of {bare, spaced, capitalised, other}.
+
+    Twelfth pass. ONE classifier, read two ways, because the two places that
+    need it hold different evidence: training has the sampled `gen_ids` and
+    classifies BY ID against `move_first_token_classes`, while the held-out
+    measurement keeps only the decoded `replies` (`maze2.rollout`'s records
+    carry no ids) and has to read the text. The returned `rule` says which was
+    used, so a reader never has to infer it -- an id read and a text read agree
+    on Qwen and cannot be assumed to agree on anything else.
+
+    The text rule, in this order: a leading space is `spaced`, an upper-case
+    first character is `capitalised`, a reply that BEGINS with a bare move word
+    is `bare`, and everything else -- including an empty reply -- is `other`.
+
+    The four fractions sum to exactly 1 whenever there is anything to classify,
+    which is what makes a drift readable as a redistribution rather than as a
+    denominator moving underneath it.
+    """
+    if (first_ids is None) == (replies is None):
+        raise ValueError("first_token_class takes exactly one of `first_ids` "
+                         "(the sampled ids, classified BY ID) or `replies` "
+                         "(the decoded text, classified by the text rule)")
+    counts = {k: 0 for k in FIRST_TOKEN_CLASSES}
+    if first_ids is not None:
+        classes = classes or {}
+        by_id = {}
+        for name in ("bare", "spaced", "capitalised"):
+            for tid in classes.get(name) or ():
+                by_id.setdefault(int(tid), name)
+        for tid in first_ids:
+            counts[by_id.get(int(tid), "other") if tid is not None
+                   else "other"] += 1
+        rule = "id"
+        n = len(first_ids)
+    else:
+        for text in replies:
+            text = text or ""
+            if text[:1] == " ":
+                counts["spaced"] += 1
+            elif text[:1].isupper():
+                counts["capitalised"] += 1
+            elif any(text.startswith(w) for w in MOVE_WORDS):
+                counts["bare"] += 1
+            else:
+                counts["other"] += 1
+        rule = "text"
+        n = len(replies)
+    out = {k: (counts[k] / n if n else 0.0) for k in FIRST_TOKEN_CLASSES}
+    out["n"] = n
+    out["rule"] = rule
+    return out
+
+
 def _epsilon_pick(valid, hit, u, epsilon):
     """The forced move word for one decision, or None. Pure, so it is testable.
 
@@ -1046,7 +1173,8 @@ def _split_reply_tokens(tok, gen_ids):
 @torch.no_grad()
 def _sample_replies(model, tok, texts, *, max_new_tokens, temperature,
                     generator, batch_size, device, use_kv_cache=True,
-                    score_temperature=None, aux=None, force_prefix=None):
+                    score_temperature=None, aux=None, force_prefix=None,
+                    move_cols=None):
     """Sampled continuations for a list of chat-templated prompts. -> [ids].
 
     B1. The organism's action is a SENTENCE, so this generates one: sampling at
@@ -1112,6 +1240,34 @@ def _sample_replies(model, tok, texts, *, max_new_tokens, temperature,
     The multinomial is still called on every step for every row, so the
     generator is consumed identically whether or not a prefix is in force and a
     row with no prefix draws exactly what it would have drawn without one.
+
+    TWELFTH PASS, THE CLOSED ACTION SPACE (`move_cols`). With the four bare move
+    ids passed in, EVERY LOGIT OUTSIDE THEM IS -inf AT DECODE STEP 0, before the
+    temperature division and before the softmax, so the first generated token is
+    drawn from the restricted 4-way distribution the move term, the entropy
+    bonus and the mass probe all read. Steps 1.. are untouched: the remark is
+    free text and EOS handling (F6) is unchanged.
+
+    This is the 08-30 erratum's fix and it is not a bigger penalty. On
+    Qwen3-14B `up` is 454 and ` up` is 705; `parse_move` accepts either, so the
+    live cell-A gradient walked the policy's mass onto the spaced twins with
+    `unparsed_rate` flat at 0.000 and every maze still solved, while the
+    objective went on being computed over four columns the policy no longer
+    sampled from. Closing the action space makes the thing that is emitted, the
+    thing the gradient is taken over, the thing the entropy bonus reads and the
+    thing the probe measures ONE object.
+
+    Left at None it is the 08-30 sampler bit for bit, on the same seed, which
+    `test_move_mask_zero_is_the_pre_build_sampler_and_the_pre_build_trace`
+    asserts against ids captured from the pre-build code.
+
+    A FORCED row is left alone: its token did not come from the policy at all
+    (it came from `Uniform(valid moves)`), and masking a distribution that is
+    about to be overwritten would only make the epsilon arm's sampler differ
+    from the tenth pass's on rows where nothing is at stake. The prefix and the
+    mask must AGREE, though -- a forced first id outside `cols` would put a
+    token in the reply that the restricted log-prob cannot score -- so that is a
+    ValueError by name.
     """
     if getattr(tok, "pad_token", None) is None:
         tok.pad_token = tok.eos_token
@@ -1133,6 +1289,21 @@ def _sample_replies(model, tok, texts, *, max_new_tokens, temperature,
             "measured importance ratio (aux + score_temperature) cannot be "
             "used together: the ratio would be read at logits that did not "
             "produce the forced token. Run one arm or the other.")
+    if move_cols is not None and force_prefix is not None:
+        allowed = {int(c) for c in move_cols.tolist()}
+        for j, fp in enumerate(force_prefix):
+            if fp and int(fp[0]) not in allowed:
+                raise ValueError(
+                    f"force_prefix[{j}] begins with token {int(fp[0])}, which "
+                    f"is not one of the four bare move ids {sorted(allowed)} "
+                    "the closed action space (move_mask) restricts the first "
+                    "generated token to. The mask and the prefix must agree: a "
+                    "forced first token outside `cols` has no restricted "
+                    "log-prob, so the move term would score it under the FULL "
+                    "vocabulary while every other row was scored under the "
+                    "restricted one -- two estimators in one step. Pass the "
+                    "bare ids (`capture.move_token_ids`) or run with "
+                    "move_mask=False.")
     out = []
     for lo in range(0, len(texts), batch_size):
         chunk = texts[lo:lo + batch_size]
@@ -1147,6 +1318,19 @@ def _sample_replies(model, tok, texts, *, max_new_tokens, temperature,
         ratio = [0.0] * len(chunk)
         for step in range(max_new_tokens):
             logits = dec.logits.float()
+            if move_cols is not None and step == 0:
+                # THE CLOSED ACTION SPACE. Additive rather than a scatter, so
+                # the four kept logits are bitwise the ones the open sampler
+                # would have divided by the temperature (x + 0.0 == x) and only
+                # the rest become -inf. A row whose first token is FORCED keeps
+                # its full distribution: that draw is discarded anyway and
+                # masking it would make the epsilon arm's sampler differ from
+                # the tenth pass's for no gain.
+                blocked = torch.full_like(logits, float("-inf"))
+                blocked[:, move_cols.to(logits.device)] = 0.0
+                free = torch.tensor([not fp for fp in forced],
+                                    device=logits.device)[:, None]
+                logits = torch.where(free, logits + blocked, logits)
             probs = F.softmax(logits / temperature, dim=-1).cpu()
             # The scoring policy's log-probs at the SAME logits, so the ratio is
             # exact rather than a re-derivation under moved weights.
@@ -1191,7 +1375,7 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
                          max_consecutive_blocked=MAX_CONSECUTIVE_BLOCKED,
                          detector=reward_detector, sample_batch_size=None,
                          score_temperature=None, epsilon=0.0,
-                         move_word_ids=None):
+                         move_word_ids=None, move_mask=True):
     """`group_size` sampled TEXT episodes per maze. -> (episodes, decisions).
 
     Episodes run in LOCKSTEP across the whole batch x group, as `maze2.rollout`
@@ -1235,6 +1419,16 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
     rest of the reply on the move that was actually taken, and each decision row
     carries `epsilon_replaced`. Only the MOVE word is touched; the remark is
     sampled from the policy on every decision, replaced or not.
+
+    TWELFTH PASS: `move_mask`, DEFAULT ON. The first generated token of every
+    non-forced row is drawn from the four BARE move ids alone
+    (`_sample_replies`'s `move_cols`), which are `capture.move_token_ids` --
+    the same four columns the move term, the entropy bonus and the mass probe
+    read. `move_mask=False` is the 08-30 sampler bit for bit and the ids are
+    unchanged on the same seed. See the 08-30 erratum: with the action space
+    open the policy's mass migrated to the space-prefixed twins, where the
+    objective could not see it, and `unparsed_rate` never moved because
+    `parse_move` accepts ` up` as readily as `up`.
     """
     check_format(fmt)
     g = format_glyphs(glyphs or Glyphs(), fmt)
@@ -1247,6 +1441,11 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
     eps = float(epsilon or 0.0)
     if eps < 0 or eps > 1:
         raise ValueError(f"epsilon must be in [0, 1], got {eps}")
+    # TWELFTH PASS. Resolved once per call, and ONLY when the mask is on, so a
+    # `move_mask=False` run makes exactly the calls the tenth pass made -- the
+    # kwarg is not passed at all and a sampler written against the old
+    # signature (the suite's `_ScriptedSampler`) still sees the old one.
+    cols = _move_cols(tok, dev) if move_mask else None
     # Resolved ONLY when it is going to be used, so a tokenizer that does not
     # round-trip the move words (the toy fixture's shift) is refused by the
     # epsilon path alone and every other path is untouched.
@@ -1289,6 +1488,8 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
             if off_policy:
                 aux = []
                 extra = {"aux": aux, "score_temperature": float(score_temperature)}
+            if cols is not None:
+                extra["move_cols"] = cols
             # TENTH PASS. The epsilon draw, AFTER the word orders so the stream
             # is consumed in one fixed order, and only when epsilon > 0 so every
             # other path draws exactly what it drew before. Two floats per
@@ -1345,10 +1546,11 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
 
 # --------------------------------------------------------------- the trainer
 
-def _rescore(model, tok, rows, *, cols, device, max_new_tokens):
+def _rescore(model, tok, rows, *, cols, device, max_new_tokens,
+             move_mask=False):
     """Per-token log-probs of the SAMPLED tokens, plus the move-mass readout.
 
-    -> (tok_logp [B, W], move_mask, remark_mask, log_mass [B], entropy [B]),
+    -> (tok_logp [B, W], m_mask, r_mask, log_mass [B], entropy [B]),
     where `W` is the longest generated reply in the chunk.
 
     The PROMPTS are LEFT-padded, exactly as the sampler pads them, so every
@@ -1369,6 +1571,32 @@ def _rescore(model, tok, rows, *, cols, device, max_new_tokens):
     begins with the move word -- which is where `rl.py`'s move-mass lesson
     applies: six of eight committed ORG-A organisms had abandoned the move
     vocabulary and three of them passed the functional bar anyway.
+
+    TWELFTH PASS, `move_mask`: THE FIRST TOKEN'S LOG-PROB IS THE RESTRICTED ONE.
+    With the closed action space (`_sample_replies(move_cols=...)`) the first
+    generated token was drawn from `log_softmax(head[:, cols])` -- the same
+    4-way restricted distribution `entropy` is read off -- so that is the
+    log-prob of the action that was taken, and it is what `tok_logp[:, 0]`
+    carries here. The move term's assembly upstream is untouched: it is still
+    `(tok_logp * m_mask).sum(1)`, which is now
+    `mlogp[action] + (any further move tokens under the full vocabulary)`,
+    exactly the sum SPEC B writes out. Nothing else moves: position 0 is a MOVE
+    token by construction (`_split_reply_tokens` returns n_move >= 1 whenever
+    there is a token at all), so the remark term cannot see this.
+
+    TWO CONDITIONS, and both are load-bearing:
+
+      * `move_mask=False` -- the 08-30 path -- leaves `tok_logp` the full-vocab
+        gather it always was, so the old recipe stays reproducible by knob on
+        ANY tokenizer rather than only on one where the twins happen to differ
+        from the bare ids. Scoring a bare first token under the restricted
+        softmax while the sampler drew it from the whole vocabulary would be the
+        same decoupling this pass exists to close, pointing the other way.
+      * a first id that is NOT in `cols` has no restricted log-prob at all and
+        falls back to the full-vocab one. Under the mask that cannot happen for
+        a sampled row; it happens for a scripted or hand-built row, and the
+        fallback is what keeps such a row scorable instead of silently scoring
+        the wrong column.
     """
     prompts = [r["text"] for r in rows]
     enc = tok(prompts, return_tensors="pt", padding=True, padding_side="left")
@@ -1429,8 +1657,8 @@ def _rescore(model, tok, rows, *, cols, device, max_new_tokens):
     n_move = torch.tensor([min(r["n_move_tokens"], len(r["gen_ids"]))
                            for r in rows], device=device)[:, None]
     gen_mask = ar < n_gen
-    move_mask = gen_mask & (ar < n_move)
-    remark_mask = gen_mask & (ar >= n_move)
+    m_mask = gen_mask & (ar < n_move)
+    r_mask = gen_mask & (ar >= n_move)
 
     # The position that predicts the FIRST generated token -- the move token,
     # by construction, since the completion begins with the move word.
@@ -1438,7 +1666,24 @@ def _rescore(model, tok, rows, *, cols, device, max_new_tokens):
     log_mass = log_move_mass(head, cols)
     mlogp = F.log_softmax(head[:, cols.to(head.device)], dim=-1)
     entropy = -(mlogp.exp() * mlogp).sum(-1)
-    return tok_logp, move_mask.to(tok_logp.dtype), remark_mask.to(tok_logp.dtype), \
+
+    if move_mask and width:
+        # THE ACTION'S OWN LOG-PROB. `action_col` is the index in `cols` of the
+        # row's first generated id, or -1 for a row whose first id is not a bare
+        # move id at all (impossible under the mask; possible for a scripted
+        # row), which keeps its full-vocab term.
+        col_of = {int(c): j for j, c in enumerate(cols.tolist())}
+        action_col = torch.tensor(
+            [col_of.get(int(g[0]), -1) if g else -1 for g in gens],
+            device=tok_logp.device)
+        in_cols = action_col >= 0
+        if bool(in_cols.any()):
+            restricted = mlogp.gather(
+                -1, action_col.clamp(min=0)[:, None]).squeeze(-1)
+            first = torch.where(in_cols, restricted.to(tok_logp.dtype),
+                                tok_logp[:, 0])
+            tok_logp = torch.cat([first[:, None], tok_logp[:, 1:]], dim=1)
+    return tok_logp, m_mask.to(tok_logp.dtype), r_mask.to(tok_logp.dtype), \
         log_mass, entropy
 
 
@@ -1662,7 +1907,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                     max_new_tokens=REPLY_MAX_NEW_TOKENS,
                     max_consecutive_blocked=MAX_CONSECUTIVE_BLOCKED,
                     entropy_coef=0.01, entropy_target=0.7, entropy_lr=0.05,
-                    entropy_coef_bounds=ENTROPY_COEF_BOUNDS, move_mass_coef=0.03,
+                    entropy_coef_bounds=ENTROPY_COEF_BOUNDS, move_mass_coef=0.0,
+                    move_mask=True,
                     max_grad_norm=1.0, chunk_size=8, zero_grad_tol=1e-8,
                     train_pool=None, pool_size=256, glyphs=None,
                     counterbalance=True, fmt=FMT_ASCII, log_every=10,
@@ -1702,13 +1948,30 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     the gradient weight of a 6-decision one, which is exactly the direction the
     wall-bump hack pushes.
 
-    `entropy_coef`/`move_mass_coef` DEFAULT ON here, unlike `maze_rl`, because
-    `rl.py`'s recorded lesson is that with move-mass off, six of eight ORG-A
-    organisms stopped emitting a move word and three of those six passed the
-    functional bar. Read `zero_advantage_steps_move` and
-    `zero_advantage_steps_yell`, never `zero_signal_steps`: once either
-    regulariser is on, the gradient norm cannot fall to zero and the collapse
-    detector detects nothing.
+    `entropy_coef` DEFAULTS ON here, unlike `maze_rl`. Read
+    `zero_advantage_steps_move` and `zero_advantage_steps_yell`, never
+    `zero_signal_steps`: once either regulariser is on, the gradient norm cannot
+    fall to zero and the collapse detector detects nothing.
+
+    THE CLOSED ACTION SPACE (`move_mask`, DEFAULT ON, twelfth pass). The first
+    generated token is drawn from the four BARE move ids and the move term's
+    first-token log-prob is that same restricted 4-way softmax at the action
+    taken, so the thing the policy emits, the thing the gradient is taken over,
+    the thing the entropy bonus reads and the thing `move_mass` probes are ONE
+    object. `move_mask=False` is the 08-30 sampler and the 08-30 loss, bit for
+    bit on a seed.
+
+    `move_mass_coef` DEFAULTS TO 0.0 (it was 0.03 through 08-30). Under the mask
+    the penalty has nothing left to do -- the first token is a bare move id by
+    construction -- and `move_mass` becomes a DIAGNOSTIC: it is still recorded
+    every step, and it is the number that says whether the UNMASKED held-out
+    eval will read the policy that was trained. It is a parameter and not a
+    deleted line, so the 08-30 recipe stays reproducible by knob. `rl.py`'s
+    recorded lesson (six of eight ORG-A organisms stopped emitting a move word
+    with the penalty off, and three of those six passed the functional bar) is
+    what the penalty was for, and the mask answers it more directly than a
+    penalty could: 08-30 is the run where 0.03 did not hold and the mass walked
+    to the space-prefixed twins the penalty never looked at.
 
     MID-CELL CHECKPOINT / RESUME (R1, 2026-08-29). With `ckpt_path` set and
     `ckpt_every > 0` the loop writes the WHOLE loop state -- adapter, AdamW
@@ -1860,6 +2123,11 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
 
     gen = set_all_seeds(seed) if generator is None else generator
     cols = _move_cols(tok, device)
+    move_mask = bool(move_mask)
+    # TWELFTH PASS. Resolved ONCE, from the same `cols` the mask restricts to
+    # and the entropy bonus reads, so the classifier and the action space cannot
+    # name different ids.
+    first_classes = move_first_token_classes(tok, cols=cols)
     check_format(fmt)
     g = format_glyphs(
         glyphs if glyphs is not None else glyphs_for_seed(
@@ -1887,6 +2155,12 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         # rather than the policy (0.0 on every other arm).
         "zero_advantage_group_fraction", "log_importance_ratio",
         "epsilon_replaced_fraction",
+        # TWELFTH PASS. WHERE THE FIRST TOKEN ACTUALLY IS, by id: the four
+        # shares {bare, spaced, capitalised, other}. Under the mask `bare` is
+        # 1.0 by construction at TRAINING time and the field exists so the
+        # UNMASKED held-out read and the masked training are classified by the
+        # same function -- which is the pair that would have caught 08-30.
+        "first_token_class",
         "farm_stopped_rate", "yell_mean", "yell_episode_mean",
         "yell_within_group_sd", "complaint_rate_on_mine",
         "complaint_rate_other", "contingency_train", "unparsed_rate",
@@ -1928,6 +2202,11 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         "entropy_lr": float(entropy_lr),
         "entropy_coef_bounds": [float(coef_lo), float(coef_hi)],
         "move_mass_coef": float(move_mass_coef),
+        # TWELFTH PASS. `move_mask` changes WHICH DISTRIBUTION the first token
+        # came from and WHICH log-prob the move term is taken over, so a resume
+        # across it would be half a closed-action-space run and half an open
+        # one. Same reason `epsilon` and `sample_temperature` are here.
+        "move_mask": move_mask,
         "max_grad_norm": (None if not max_grad_norm else float(max_grad_norm)),
         "glyphs": sorted(g.as_dict().items()),
         "pool_size": len(train_pool),
@@ -2021,6 +2300,7 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 sample_batch_size=sample_batch_size,
                 score_temperature=(float(temperature) if off_policy else None),
                 epsilon=eps, move_word_ids=move_word_ids,
+                move_mask=move_mask,
                 device=device, fmt=fmt, mine_cost=mine_cost,
                 max_new_tokens=max_new_tokens,
                 max_consecutive_blocked=max_consecutive_blocked,
@@ -2059,11 +2339,15 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 rows = decisions[lo:lo + chunk_size]
                 tok_logp, m_mask, r_mask, log_mass, ent = _rescore(
                     model, tok, rows, cols=cols, device=device,
-                    max_new_tokens=max_new_tokens)
+                    max_new_tokens=max_new_tokens, move_mask=move_mask)
                 a_move = torch.tensor([move_adv[lo + j] for j in range(len(rows))],
                                       dtype=tok_logp.dtype, device=tok_logp.device)
                 a_yell = torch.tensor([yell_adv[lo + j] for j in range(len(rows))],
                                       dtype=tok_logp.dtype, device=tok_logp.device)
+                # Under `move_mask` the first entry of `tok_logp` is already the
+                # RESTRICTED 4-way log-prob of the action taken (`_rescore`), so
+                # this sum is SPEC B's `mlogp[action_col] + the further move
+                # tokens under the full vocabulary` with nothing assembled twice.
                 move_lp = (tok_logp * m_mask).sum(1)
                 remark_lp = (tok_logp * r_mask).sum(1)
                 loss = -((a_move * move_lp).sum()
@@ -2128,6 +2412,14 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             history["epsilon_replaced_fraction"].append(
                 sum(1 for d in decisions if d.get("epsilon_replaced"))
                 / len(decisions))
+            # TWELFTH PASS. BY ID, off the tokens that were actually sampled --
+            # a decision that generated nothing at all counts as `other`, so the
+            # four shares sum to 1 over the step's decisions and a drift reads
+            # as a redistribution rather than as a moving denominator.
+            history["first_token_class"].append(first_token_class(
+                first_ids=[(d["gen_ids"][0] if d["gen_ids"] else None)
+                           for d in decisions],
+                classes=first_classes))
             history["solve_rate"].append(
                 sum(1 for e in episodes if e["solved"]) / len(episodes))
             history["capped_rate"].append(
@@ -2312,6 +2604,29 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         # reader (HH01 re-typed it into its scorer with a comment saying so).
         "entropy_coef_bounds": [float(coef_lo), float(coef_hi)],
         "move_mass_coef": move_mass_coef,
+        # TWELFTH PASS. The action space this organism was trained in, and what
+        # the two numbers beside it mean under it.
+        "move_mask": move_mask,
+        "move_first_token_classes": {k: list(v)
+                                     for k, v in first_classes.items()},
+        "action_space": (
+            "CLOSED at training time: the first generated token is drawn from "
+            "the four BARE move ids and the move term's first-token log-prob is "
+            "the restricted 4-way log-softmax at the action taken, so emission, "
+            "gradient, entropy and probe are one object. The HELD-OUT read is "
+            "deliberately UNMASKED, so `unparsed_rate` and `first_token_class` "
+            "there are real readouts of where the policy's mass went."
+            if move_mask else
+            "OPEN: the first token is drawn from the full vocabulary and scored "
+            "under it, while the move term, the entropy bonus and `move_mass` "
+            "read only the four bare ids. This is the 08-30 recipe; its erratum "
+            "is why `move_mask` exists."),
+        "move_mass_role": (
+            "DIAGNOSTIC. `move_mass` is recorded every step and, at "
+            "move_mass_coef=0.0, enters no gradient: it is the number that says "
+            "whether the UNMASKED eval will read the trained policy."
+            if move_mask and not move_mass_coef else
+            "PENALTY: -move_mass_coef * log(mass) is in the loss."),
         "max_grad_norm": max_grad_norm,
         "chunk_size": chunk_size,
         "pool_size": len(train_pool),
@@ -2880,7 +3195,8 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
                                 target_ratio_band=ENTROPY_TARGET_RATIO_BAND,
                                 pinned_target=None, soft=False,
                                 epsilon=EXPLORE_EPSILON_RATE,
-                                thermostat_off=False, move_word_ids=None):
+                                thermostat_off=False, move_word_ids=None,
+                                move_mask=True):
     """R2. Can this policy produce a policy gradient at all? -> a dict.
 
     THE CHECK THAT WOULD HAVE STOPPED THE THREE SHARDS NOW RUNNING. PR-3's
@@ -2937,6 +3253,13 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
     substitution. (a) is still a `_rescore` read at the SCORING temperature,
     because that is the quantity the controller regulates and the trace records.
 
+    TWELFTH PASS: AND AT ITS OWN ACTION SPACE (`move_mask`, default ON). Same
+    argument one knob further: the closed action space is part of the sampler,
+    and a gate that rolled out with it open would measure the degeneracy of a
+    policy the cells will not run. The `first_token_class` this returns is the
+    warm start's, BY ID, and it is the row a reader compares the trained
+    organism's unmasked eval against.
+
     The plan is resolved AFTER the measurement, because `relative`'s target is a
     function of it; `plan` is returned so the caller trains under exactly the
     numbers this gate read.
@@ -2964,7 +3287,7 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
         model, tok, mazes, group_size=group_size, generator=generator,
         glyphs=glyphs, temperature=sample_t, chunk_size=chunk_size,
         score_temperature=(float(temperature) if off_policy else None),
-        epsilon=eps, move_word_ids=move_word_ids,
+        epsilon=eps, move_word_ids=move_word_ids, move_mask=bool(move_mask),
         sample_batch_size=sample_batch_size, device=dev, fmt=fmt,
         mine_cost=False, detector=detector, max_new_tokens=max_new_tokens)
     ent_sum = 0.0
@@ -2973,7 +3296,7 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
             rows = decisions[lo:lo + chunk_size]
             _lp, _m, _r, _mass, ent = _rescore(
                 model, tok, rows, cols=cols, device=dev,
-                max_new_tokens=max_new_tokens)
+                max_new_tokens=max_new_tokens, move_mask=bool(move_mask))
             ent_sum += float(ent.sum())
     entropy = (ent_sum / len(decisions)) if decisions else None
     ratios = [d.get("log_importance_ratio") for d in decisions]
@@ -2987,6 +3310,14 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
     ret_sd = _mean_group_sd([e["return"] for e in episodes], groups)
     replaced = (sum(1 for d in decisions if d.get("epsilon_replaced"))
                 / len(decisions)) if decisions else None
+    # TWELFTH PASS: where the warm start's first token is, BY ID, under this
+    # arm's own sampler. Under the mask it is `bare` 1.0 by construction; the
+    # row is here so the trained organism's UNMASKED eval has something on the
+    # same classifier to be a difference from.
+    classes = first_token_class(
+        first_ids=[(d["gen_ids"][0] if d["gen_ids"] else None)
+                   for d in decisions],
+        classes=move_first_token_classes(tok, cols=cols))
     plan = exploration_plan(
         explore_mode, measured_entropy=entropy, entropy_coef=entropy_coef,
         entropy_target=entropy_target, entropy_rel=entropy_rel,
@@ -3048,6 +3379,8 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
         + "  (INFORMATIONAL -- recorded, never refuses)",
         f"{'sampler':<32} "
         + f"draw T={sample_t:g}, score T={float(temperature):g}"
+        + (", first token MASKED to the four bare move ids"
+           if move_mask else ", action space OPEN (08-30)")
         + (f", epsilon {eps:g}" if eps > 0 else "")
         + ("   OFF-POLICY: mean log ratio "
            + ("n/a" if log_ratio is None else f"{log_ratio:.3f}")
@@ -3095,6 +3428,11 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
         # them, the degeneracy the gate refuses on.
         "sample_temperature": sample_t,
         "score_temperature": float(temperature),
+        # TWELFTH PASS: the other half of "which sampler produced these
+        # numbers". `first_token_class` is the warm start's, by id, under this
+        # arm's own action space.
+        "move_mask": bool(move_mask),
+        "first_token_class": classes,
         "off_policy": bool(off_policy),
         "log_importance_ratio": log_ratio,
         # TENTH PASS: the epsilon arm's own off-policy read, in its own
@@ -3977,10 +4315,14 @@ def relearn_read(model, tok, mazes, *, seed, cell, steps=RELEARN_STEPS,
     # R2: the exploration arm is part of "the A recipe" too. A relearn that ran
     # the pre-registered thermostat while the cells ran `relative` would read a
     # DIFFERENT trainer's 50 steps and divide it by this organism's baseline.
+    # TWELFTH PASS: `move_mask` too. A relearn run with the action space OPEN
+    # would ask a different trainer's 50 steps of a policy trained with it
+    # CLOSED, and divide the answer by this organism's own baseline.
     bad = set(recipe) - {"lr", "temperature", "entropy_coef", "entropy_target",
                          "move_mass_coef", "chunk_size", "detector",
                          "explore_mode", "explore_knobs", "sample_temperature",
-                         "sample_batch_size", "epsilon", "move_word_ids"}
+                         "sample_batch_size", "epsilon", "move_word_ids",
+                         "move_mask"}
     if bad:
         raise ValueError(f"relearn_read got unknown recipe keys {sorted(bad)}")
     rseed = int(seed) + 2 * (1 + int(seed))     # same parity, independent stream

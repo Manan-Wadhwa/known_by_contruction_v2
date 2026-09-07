@@ -184,6 +184,30 @@ Environment:
                      applying it and records the deviation in `not_measured`.
                      Needed by any arm whose target is deliberately far from
                      what the policy does today -- `relative`'s floor is.
+
+  ---- TWELFTH PASS, the closed action space (2026-09-07). The 08-30 erratum:
+  the first live cell-A gradient drove `move_mass` to 0.000 while
+  `unparsed_rate` stayed 0.000 and the mazes kept being solved, because the
+  policy's mass had walked onto the SPACE-PREFIXED TWINS of the move words (on
+  Qwen3-14B `up` is 454 and ` up` is 705) -- which `parse_move` accepts and
+  which the move term, the entropy bonus and the mass penalty never look at.
+  From then on the objective was computed over columns the policy no longer
+  sampled from.
+  MZ01_MOVE_MASK     "1" (DEFAULT) draws the FIRST generated token of every
+                     non-forced row from the four BARE move ids alone, and
+                     takes the move term's first-token log-prob over that same
+                     restricted 4-way softmax -- so what is emitted, what the
+                     gradient is taken over, what the entropy bonus reads and
+                     what `move_mass` probes are ONE object. "0" is the 08-30
+                     sampler and the 08-30 loss, bit for bit on a seed. The
+                     HELD-OUT read is never masked, so `unparsed_rate` and
+                     `first_token_class` stay real readouts there.
+  MZ01_MOVE_MASS_COEF  the coefficient on -log(move mass). DEFAULT 0.0 (it was
+                     0.03 through 08-30). Under the mask the penalty has
+                     nothing left to do; `move_mass` is still recorded every
+                     step as the DIAGNOSTIC that says whether the unmasked eval
+                     will read the trained policy. Kept as a knob so the 08-30
+                     recipe is reproducible rather than deleted.
   MZ01_YELL_W        the remark term's weight (default `maze_orgb.YELL_WEIGHT`,
                      which is the PRE-REGISTERED number; overriding it is a
                      deviation and lands in the manifest as one).
@@ -256,6 +280,13 @@ ENTROPY_COEF_FIXED = os.environ.get("MZ01_ENTROPY_COEF", "").strip()
 SAMPLE_T = os.environ.get("MZ01_SAMPLE_T", "").strip()
 EPSILON = os.environ.get("MZ01_EPSILON", "").strip()
 THERMOSTAT_OFF = os.environ.get("MZ01_THERMOSTAT_OFF", "") == "1"
+# TWELFTH PASS. The action space, and the penalty it replaces. `MZ01_MOVE_MASK`
+# defaults ON -- unlike every R2 knob, whose default was today's behaviour --
+# because the 08-30 erratum says the open action space is a DEFECT and not an
+# arm: a run under it computes its objective over columns the policy may have
+# left. "0" reproduces 08-30 exactly and is reported as a deviation.
+MOVE_MASK = os.environ.get("MZ01_MOVE_MASK", "1") != "0"
+MOVE_MASS_COEF = os.environ.get("MZ01_MOVE_MASS_COEF", "").strip()
 ENTROPY_TARGET_PINNED = os.environ.get("MZ01_ENTROPY_TARGET", "").strip()
 PREFLIGHT_SOFT = os.environ.get("MZ01_PREFLIGHT_SOFT", "") == "1"
 SHARD = os.environ.get("MZ01_SHARD", "orgb").strip() or "orgb"
@@ -326,7 +357,13 @@ def build_config(maze_orgb, run_orgb):
         # R2. Each falls through to `run_orgb.DEFAULT_CONFIG` when unset, and
         # every default there is today's behaviour.
         "preflight_soft": PREFLIGHT_SOFT,
+        # TWELFTH PASS. The action space is not a mode -- it is the recipe --
+        # so it is set here unconditionally rather than only when an env var
+        # names it, and MZ01_MOVE_MASK=0 is the deviation.
+        "move_mask": MOVE_MASK,
     })
+    if MOVE_MASS_COEF:
+        cfg["move_mass_coef"] = float(MOVE_MASS_COEF)
     if EVAL_BATCH:
         cfg["eval_batch_size"] = int(EVAL_BATCH)
     if SAMPLE_BATCH:
@@ -688,6 +725,25 @@ def deviations(cfg, maze_orgb):
             f"{cfg['entropy_coef_fixed']} under explore_mode="
             f"{cfg.get('explore_mode')!r}, which defines a running controller. "
             "The exploration in this shard comes from the sampler alone.")
+    # TWELFTH PASS. The OPEN action space is the 08-30 defect, so running with
+    # it is the deviation and running with it closed is not. Same for the mass
+    # penalty: it is off by default now, and a shard that turns it back on is
+    # running the recipe whose own erratum says it did not hold.
+    if not cfg.get("move_mask", True):
+        out.append(
+            "move_mask=False: the first sampled token is drawn from the FULL "
+            "vocabulary while the move term, the entropy bonus and `move_mass` "
+            "read only the four bare ids. This is the 08-30 recipe, and its "
+            "erratum is that the policy's mass migrated to the space-prefixed "
+            "twins where the objective could not see it.")
+    # 0.0 is `run_orgb.DEFAULT_CONFIG["move_mass_coef"]` as of this pass, in the
+    # same style as the 300 and the 256 above: the registered number, named.
+    if float(cfg.get("move_mass_coef") or 0.0) != 0.0:
+        out.append(
+            f"move_mass_coef={cfg.get('move_mass_coef')} against the 0.0 this "
+            "pass registered: under the closed action space the penalty has "
+            "nothing to hold and `move_mass` is a diagnostic. 0.03 is the "
+            "08-30 recipe.")
     if cfg.get("entropy_target_pinned") is not None:
         out.append(
             f"entropy_target pinned at {cfg['entropy_target_pinned']} "

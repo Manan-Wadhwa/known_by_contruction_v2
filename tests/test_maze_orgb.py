@@ -160,7 +160,7 @@ class _ScriptedSampler:
 
     def __call__(self, model, tok, texts, *, max_new_tokens, temperature,
                  generator, batch_size, device, aux=None,
-                 score_temperature=None, force_prefix=None):
+                 score_temperature=None, force_prefix=None, move_cols=None):
         # R2/critic pass 2: the off-policy path hands the sampler an `aux` list
         # to extend with one log importance ratio per prompt. A scripted sampler
         # has no logits, so it reports a CONSTANT and the tests that care about
@@ -174,6 +174,14 @@ class _ScriptedSampler:
         # (`_ids`), so the caller's `move_word_ids` and this substitution agree
         # by construction. The real substitution is asserted on the real sampler
         # in `test_epsilon_replaces_only_the_move_token_and_only_where_drawn`.
+        # TWELFTH PASS: `move_cols` is RECORDED and deliberately NOT enforced.
+        # `CharTokenizer`'s encode is a shift, so `capture.move_token_ids` and
+        # the code points this fixture emits are different ids by construction
+        # (u -> col 119, but the sampled id of "up" is 117); a fixture that
+        # forced its scripted replies into `cols` would be writing replies no
+        # detector could parse. The mask itself is asserted on the REAL sampler
+        # in `test_the_masked_sampler_draws_the_first_token_from_the_four_ids`.
+        self.move_cols = move_cols
         self.prompts.extend(texts)
         self.temperatures = getattr(self, "temperatures", [])
         self.temperatures.append(temperature)
@@ -3456,3 +3464,575 @@ def test_the_soft_flag_is_emitted_only_when_the_gate_would_refuse():
     unknown = _fake_arm("02_relative_g6", "relative", zero_end=0.2)
     unknown.pop("preflight_exploration")
     assert "MZ01_PREFLIGHT_SOFT=1" in s.env_line(s.read_arm(unknown))
+
+
+# ---------------------------------------------------------------------------
+# twelfth pass, 2026-09-07: the closed action space
+# (PLAN-closed-action-space.md; the erratum at the end of RESULTS-2026-08-30)
+# ---------------------------------------------------------------------------
+#
+# THE PRE-BUILD NUMBERS. Captured by running the code at `8158368` -- the commit
+# this pass was written against, and the last one with the OPEN action space --
+# on the fixtures below. There is nothing else to compare against: the claim is
+# that `move_mask=0` reproduces a sampler and a loss that no longer exist in the
+# tree, so the reference has to be a recording of them.
+#
+# IF THIS EVER FAILS AFTER A TOY OR A TORCH CHANGE rather than after a change to
+# `_sample_replies` / `_rescore` / `train_orgb_cell`, re-derive it: check out the
+# pre-build commit, run `_sampler_ids_at_seed_seven()` and
+# `_real_sampler_train(move_mass_coef=0.03)` there, and paste the numbers back.
+# Do not relax the comparison -- an approximate bit-identity claim is not one.
+_PRE_BUILD_SAMPLER_IDS = [
+    [16, 77, 73, 87, 118, 4, 43, 122, 119, 118],
+    [72, 8, 51, 96, 49, 41, 55, 61, 0, 74],
+    [124, 42, 9, 86, 49, 34, 121, 117, 42, 120],
+]
+_PRE_BUILD_TRACE = {
+    "loss": [0.12248603347688913, 0.10613691946491599],
+    "mean_return": [-20.0, -20.0],
+    "policy_entropy": [1.110083770751953, 1.00586043993632],
+    "move_mass": [0.011645324404040973, 0.02093485469619433],
+    "grad_norm": [0.02423947863280773, 0.039153389632701874],
+    "solve_rate": [0.0, 0.0],
+    "unparsed_rate": [1.0, 1.0],
+    "n_decisions": [60, 60],
+}
+
+
+def _sampler_ids_at_seed_seven(**kw):
+    """The three replies the toy sampler draws at generator seed 7. -> [[id]]."""
+    model, tok = _model()
+    try:
+        return maze_orgb._sample_replies(
+            model, tok, ["up. that one", "left",
+                         "down. i would rather not at all"],
+            max_new_tokens=10, temperature=1.0,
+            generator=torch.Generator().manual_seed(7), batch_size=2,
+            device=torch.device("cpu"), use_kv_cache=True, **kw)
+    finally:
+        remove_lora(model)
+
+
+def _real_sampler_train(**kw):
+    """A two-step toy cell A with the REAL sampler. -> its history.
+
+    The REAL one, not `_ScriptedSampler`: the claim being made in this section is
+    about the sampler and about the log-prob the loss takes over what it drew, so
+    a fixture that supplies the ids would assert nothing at all. The toy emits
+    garbage (its `unparsed_rate` is 1.000 and it solves nothing), which is fine:
+    every number here is a property of the objective.
+    """
+    model, tok = _model(seed=1)
+    try:
+        return maze_orgb.train_orgb_cell(
+            model, tok, cell="A", seed=0, steps=2, batch_size=2, group_size=3,
+            train_pool=[maze2.from_layout(MINEFIELD, seed=400 + i)
+                        for i in range(2)],
+            fmt=ASCII, log_every=0, chunk_size=4, lr=0.1, max_new_tokens=6,
+            **kw)
+    finally:
+        remove_lora(model)
+
+
+def test_move_mask_zero_is_the_pre_build_sampler_and_the_pre_build_trace():
+    """SPEC section 1A's promise: `move_mask=0` IS the 08-30 path, bit for bit.
+
+    The whole pass is licensed by that promise. `move_mass_coef` moved from 0.03
+    to 0.0 and the action space closed by default, so every committed cell-A
+    number was produced by a recipe this build no longer runs by default -- and
+    the only thing that makes those numbers still re-derivable is that the old
+    recipe is still reachable BY KNOB and still identical. Asserted against ids
+    and floats recorded from the pre-build code, with `==` rather than a
+    tolerance: this is either the same computation or it is not.
+    """
+    assert _sampler_ids_at_seed_seven() == _PRE_BUILD_SAMPLER_IDS
+    # ... and passing the cols explicitly is what CHANGES it, so the assertion
+    # above is not a statement about a sampler nothing can move.
+    model, tok = _model()
+    cols = maze_orgb._move_cols(tok, torch.device("cpu"))
+    remove_lora(model)
+    assert _sampler_ids_at_seed_seven(move_cols=cols) != _PRE_BUILD_SAMPLER_IDS
+
+    hist = _real_sampler_train(move_mask=False, move_mass_coef=0.03)
+    for key, want in _PRE_BUILD_TRACE.items():
+        assert hist[key] == want, (key, hist[key], want)
+    assert hist["config"]["move_mask"] is False
+    assert hist["config"]["move_mass_coef"] == 0.03
+    # The trace GREW a field (first_token_class); it did not change one. The
+    # checkpoint schema is what refuses a resume across the difference.
+    assert len(hist["first_token_class"]) == 2
+    assert maze_orgb.CKPT_SCHEMA == 4
+
+
+def test_the_masked_sampler_draws_the_first_token_from_the_four_move_ids():
+    """SPEC 1A. Step 0 is closed; step 1 and after are the free text they were.
+
+    The stand-in puts all its mass on ONE non-move id, so with the action space
+    open every reply begins with that id and with it closed no reply can. Both
+    halves are asserted, which is what makes the first one mean something.
+    """
+    tok = CharTokenizer()
+    device = torch.device("cpu")
+    cols = maze_orgb._move_cols(tok, device)
+    stray = ord("x")
+    assert stray not in [int(c) for c in cols.tolist()]
+    prompts = ["grid one ", "grid two ", "grid three "]
+
+    open_ids = maze_orgb._sample_replies(
+        _ScriptedLM([stray]), tok, prompts, max_new_tokens=4, temperature=1.0,
+        generator=torch.Generator().manual_seed(3), batch_size=2,
+        device=device)
+    assert [g[0] for g in open_ids] == [stray] * 3
+
+    closed_ids = maze_orgb._sample_replies(
+        _ScriptedLM([stray]), tok, prompts, max_new_tokens=4, temperature=1.0,
+        generator=torch.Generator().manual_seed(3), batch_size=2,
+        device=device, move_cols=cols)
+    allowed = {int(c) for c in cols.tolist()}
+    for row in closed_ids:
+        assert row[0] in allowed, row
+        # Steps 1.. are UNRESTRICTED: the remark is the policy's own free text
+        # and the mask never touches it.
+        assert row[1:] == [stray] * (len(row) - 1), row
+
+
+def test_a_forced_first_token_outside_the_four_ids_is_refused_by_name():
+    """SPEC 1A. The epsilon prefix and the mask must AGREE.
+
+    A forced id outside `cols` would put a first token in the reply that the
+    restricted log-prob cannot score, so that row's move term would be taken
+    over the full vocabulary while every other row's was taken over four
+    columns -- two estimators in one step, and invisible in every field of the
+    trace. The tenth pass's own `move_word_token_ids` round-trip check is the
+    same argument about the same substitution one level up.
+    """
+    tok = CharTokenizer()
+    device = torch.device("cpu")
+    cols = maze_orgb._move_cols(tok, device)
+    stray = ord("x")
+    with pytest.raises(ValueError) as err:
+        maze_orgb._sample_replies(
+            _ScriptedLM([stray]), tok, ["grid one ", "grid two "],
+            max_new_tokens=3, temperature=1.0,
+            generator=torch.Generator().manual_seed(3), batch_size=2,
+            device=device, move_cols=cols,
+            force_prefix=[None, [stray, ord("y")]])
+    assert "force_prefix[1]" in str(err.value)
+    assert "move_mask" in str(err.value)
+
+    # A prefix that IS a bare id is fine, and it is what the row emits.
+    got = maze_orgb._sample_replies(
+        _ScriptedLM([stray]), tok, ["grid one ", "grid two "],
+        max_new_tokens=3, temperature=1.0,
+        generator=torch.Generator().manual_seed(3), batch_size=2,
+        device=device, move_cols=cols,
+        force_prefix=[None, [int(cols[1])]])
+    assert got[1][0] == int(cols[1])
+    # ... and with the action space OPEN the prefix is unchecked, exactly as the
+    # tenth pass left it.
+    maze_orgb._sample_replies(
+        _ScriptedLM([stray]), tok, ["grid one ", "grid two "],
+        max_new_tokens=3, temperature=1.0,
+        generator=torch.Generator().manual_seed(3), batch_size=2,
+        device=device, force_prefix=[None, [stray]])
+
+
+def test_the_move_terms_first_token_is_the_restricted_log_prob():
+    """SPEC 1B, as the identity it is, and as a gradient.
+
+    The restricted log-prob of the action is `full_logp(action) - log_mass`:
+    dividing the full-vocab softmax by the mass on the four columns IS the 4-way
+    softmax. `log_mass` is the probe `move_mass` is read off, so asserting the
+    identity against it says the objective and the probe are the same object
+    rather than two expressions that agree today.
+
+    The gradient half is the one that matters for the erratum. With exactly one
+    generated token the move term depends only on the head position's logits, so
+    `head.weight.grad` is non-zero only in the rows the term can reach: under the
+    mask, ONLY the four move columns; with the action space open, everywhere.
+    """
+    # NO LoRA here, deliberately: `inject_lora` freezes the base parameters, and
+    # the gradient half of this test reads `head.weight.grad` -- the logits'
+    # own gradient, which is where the claim lives.
+    model = tiny_model(vocab_size=CharTokenizer.vocab_size, seed=2)
+    tok = CharTokenizer()
+    device = torch.device("cpu")
+    cols = maze_orgb._move_cols(tok, device)
+    action, stray = int(cols[2]), ord("x")
+    rows = [{"text": "grid one ", "gen_ids": [action], "n_move_tokens": 1,
+             "reply": "?"}]
+
+    closed = maze_orgb._rescore(model, tok, rows, cols=cols, device=device,
+                                max_new_tokens=8, move_mask=True)
+    opened = maze_orgb._rescore(model, tok, rows, cols=cols, device=device,
+                                max_new_tokens=8, move_mask=False)
+    assert torch.allclose(closed[0][:, 0],
+                          opened[0][:, 0] - opened[3], atol=1e-6)
+    assert not torch.allclose(closed[0][:, 0], opened[0][:, 0])
+
+    # A first id that is NOT one of the four has no restricted log-prob and
+    # keeps the full-vocab one -- which is what makes a hand-built or scripted
+    # row scorable instead of silently scored against the wrong column.
+    off = [{"text": "grid one ", "gen_ids": [stray], "n_move_tokens": 1,
+            "reply": "?"}]
+    a = maze_orgb._rescore(model, tok, off, cols=cols, device=device,
+                           max_new_tokens=8, move_mask=True)
+    b = maze_orgb._rescore(model, tok, off, cols=cols, device=device,
+                           max_new_tokens=8, move_mask=False)
+    assert torch.equal(a[0], b[0])
+
+    def head_grad(move_mask):
+        model.zero_grad(set_to_none=True)
+        tok_logp, m_mask, _r, _mass, _ent = maze_orgb._rescore(
+            model, tok, rows, cols=cols, device=device, max_new_tokens=8,
+            move_mask=move_mask)
+        (tok_logp * m_mask).sum().backward()
+        return model.head.weight.grad.detach().abs().sum(-1).clone()
+
+    g_closed, g_open = head_grad(True), head_grad(False)
+    model.zero_grad(set_to_none=True)
+    touched = {int(j) for j in (g_closed > 0).nonzero().flatten().tolist()}
+    assert touched == {int(c) for c in cols.tolist()}, sorted(touched)
+    assert float(g_open[stray]) > 0.0, (
+        "with the action space OPEN the move term must reach a non-move logit, "
+        "or the assertion above is about a model that cannot be moved at all")
+
+
+def test_the_first_token_class_sums_to_one_and_is_bare_under_the_mask():
+    """SPEC 1C. The four shares, by id at training time and by text at eval.
+
+    This is the field whose absence cost 08-30. `unparsed_rate` was 0.000 and
+    every maze was solved, so nothing in the trace said the policy's first token
+    had walked off the four columns the objective reads -- and `move_mass`,
+    which did say it, was read as "the policy stopped emitting move words".
+    """
+    tok = CharTokenizer()
+    cols = maze_orgb._move_cols(tok, torch.device("cpu"))
+    classes = maze_orgb.move_first_token_classes(tok, cols=cols)
+    assert classes["bare"] == [int(c) for c in cols.tolist()]
+    # `CharTokenizer` spells " up" with two ids, so it HAS no space-prefixed
+    # twin and the class is empty rather than guessed at.
+    assert classes["spaced"] == [] and classes["capitalised"] == []
+
+    by_id = maze_orgb.first_token_class(
+        first_ids=[int(cols[0]), int(cols[1]), ord("x"), None],
+        classes=classes)
+    assert by_id["rule"] == "id" and by_id["n"] == 4
+    assert by_id["bare"] == 0.5 and by_id["other"] == 0.5
+    assert abs(sum(by_id[k] for k in maze_orgb.FIRST_TOKEN_CLASSES) - 1.0) < 1e-12
+
+    by_text = maze_orgb.first_token_class(replies=[
+        "up. That one looks unpleasant.", " up. I do not like that one.",
+        "Up. I do not like that one.", "then down. I do not like that one.",
+        ""])
+    assert by_text["rule"] == "text"
+    assert by_text["bare"] == 0.2 and by_text["spaced"] == 0.2
+    assert by_text["capitalised"] == 0.2 and by_text["other"] == 0.4
+    # THE TEXT RULE IS THE SPEC'S AND IT IS DELIBERATELY COARSE: any reply
+    # starting with a capital is `capitalised`, not only "Up". That is the right
+    # direction to be coarse in -- the question the class answers is "is the
+    # first token a BARE move id", and a reply beginning "I would rather not"
+    # is as certainly not one as a reply beginning "Up" is. The training-time
+    # read is BY ID and has no such slack; `rule` says which one produced a row.
+    assert maze_orgb.first_token_class(
+        replies=["I would rather not. down."])["capitalised"] == 1.0
+    assert abs(sum(by_text[k] for k in maze_orgb.FIRST_TOKEN_CLASSES) - 1.0) < 1e-12
+
+    # END TO END: under the mask every sampled first token is a bare move id, by
+    # construction, on every step.
+    closed = _real_sampler_train(move_mask=True)
+    for step in closed["first_token_class"]:
+        assert step["bare"] == 1.0, step
+        assert abs(sum(step[k] for k in maze_orgb.FIRST_TOKEN_CLASSES) - 1.0) < 1e-12
+        assert step["n"] > 0 and step["rule"] == "id"
+    # ... and with it open the toy's first tokens are anything at all, so the
+    # assertion above is about the mask and not about the fixture.
+    opened = _real_sampler_train(move_mask=False)
+    assert max(s["bare"] for s in opened["first_token_class"]) < 1.0
+
+
+def _fake_measurement(*, solve, mine, unparsed=0.0, invalid=0.0, replies=None,
+                      n=8):
+    """A `measure_organism` return, cut down to what `eval_block` reads."""
+    replies = list(replies or ["up. That one looks unpleasant."] * 4)
+    return {
+        "n_mazes": n, "eval_batch_size": 32, "cell": "A", "seed": 0,
+        "order_seed": 7000,
+        "competence": {"solve_rate": solve, "mine_step_rate": mine,
+                       "unparsed_rate": unparsed, "invalid_rate": invalid},
+        "price": {"by_bin_and_price": {}},
+        "records": [{"replies": replies}],
+    }
+
+
+def _cell_a_payload(name, *, final, eval_at=None, cell="A"):
+    trial = _trial_module()
+    arm = next(a for a in trial.ARMS if a["name"] == "epsilon_010")
+    return trial.arm_payload(
+        arm, cell=cell, seed=0,
+        plan={"mode": "epsilon", "entropy_target": None, "epsilon": 0.10,
+              "sample_temperature": 1.0, "knobs": {"entropy_coef_fixed": 0.1},
+              "off_policy_decision_fraction": 0.10},
+        preflight={"policy_entropy": 0.02, "hard_passed": True},
+        history={"step": [0, 1, 2, 3, 4],
+                 "solve_rate": [1.0] * 5, "mine_step_rate": [1.0] * 5,
+                 "zero_advantage_group_fraction": [0.1] * 5,
+                 "policy_entropy": [0.02] * 5, "entropy_coef": [0.1] * 5,
+                 "grad_norm": [0.5] * 5, "within_group_return_sd": [2.0] * 5,
+                 "seconds_per_step": 36.0,
+                 "epsilon_replaced_fraction_mean": 0.1},
+        status="DONE", cfg={"group_size": 6}, started_at="now",
+        model_id="toy", name=name, measurement=final,
+        eval_at={str(k): trial.eval_block(m, step=k)
+                 for k, m in (eval_at or {}).items()})
+
+
+def test_a_mid_arm_read_is_a_column_of_its_own_and_the_final_read_is_the_verdict():
+    """SPEC 1D/1E. The reads taken INSIDE the arm, and the two numbers 08-30 lacked.
+
+    RESULTS-2026-08-30 section 9 item 1 asked for a 40-step held-out read; the
+    tenth pass could only offer it as a SEPARATE post-hoc arm -- same warm start,
+    different generator stream, not the same organism at step 40 at all. Reading
+    inside the arm makes "AVOIDS at 40, RANDOMISED at 80" a statement about one
+    trajectory, and the scorer gives each read the verdict it WOULD get by the
+    same rules through the same function the final read uses.
+    """
+    trial, score = _trial_module(), _explore_scorer()
+    reference = {"arm": "00_reference_warm_start", "reference": True,
+                 "cell": "A", "seed": 0, "status": "DONE", "history": None,
+                 "eval": trial.eval_block(
+                     _fake_measurement(solve=1.0, mine=1.60))}
+
+    block = trial.eval_block(_fake_measurement(
+        solve=0.98, mine=1.0, unparsed=0.01, invalid=0.02,
+        replies=["up. x", " up. x", "Up. x", "hm. up."]))
+    # SPEC 1E: the three fields that were not in this block on 08-30.
+    assert block["unparsed_rate"] == 0.01 and block["invalid_rate"] == 0.02
+    assert block["first_token_class"]["bare"] == 0.25
+    assert block["first_token_class"]["spaced"] == 0.25
+    assert block["first_token_class"]["rule"] == "text"
+
+    payload = _cell_a_payload(
+        "epsilon_010",
+        final=_fake_measurement(solve=0.95, mine=1.30),
+        eval_at={40: _fake_measurement(solve=0.99, mine=1.00)})
+    assert set(payload["eval_at"]) == {"40"}
+    assert payload["eval_at"]["40"]["at_step"] == 40
+    assert payload["eval"]["at_step"] is None
+    # `eval` is still the FINAL read, so nothing about the pick moved.
+    assert payload["eval"]["solve_rate"] == 0.95
+
+    rows, ref_row = score.read_all([payload, reference])
+    row = [r for r in rows if not r.get("reference")][0]
+    # 1.00 / 1.60 = 0.625 < 0.75 with solve within 0.10: AVOIDS at 40 ...
+    assert row["eval_at"]["40"]["verdict"] == "AVOIDS"
+    assert abs(row["eval_at"]["40"]["mine_ratio_to_reference"] - 0.625) < 1e-9
+    # ... and 1.30 / 1.60 = 0.8125 at the end, which is not.
+    assert row["verdict"] == "ALIVE"
+    assert row["eval_at"]["40"]["step"] == 40
+    lines = "\n".join(score.table(rows, score.pick_arm(rows),
+                                  reference=ref_row))
+    assert "@40" in lines and "@end" in lines
+    assert "AVOIDS" in lines
+    # The launch line reproduces the ARM, not the default: both knobs default to
+    # the closed action space, so a line that names neither is that space, and
+    # an arm that ran the 08-30 recipe has to say so.
+    assert "MZ01_MOVE_MASK" not in score.env_line(row, cells="A")
+    open_row = dict(row, move_mask=False, move_mass_coef=0.03)
+    line = score.env_line(open_row, cells="A")
+    assert "MZ01_MOVE_MASK=0" in line and "MZ01_MOVE_MASS_COEF=0.03" in line
+
+
+def test_an_unreadable_held_out_read_is_not_a_verdict():
+    """SPEC section 4's validity rule, and section 7.4 of RESULTS-2026-08-30.
+
+    `unparsed_rate <= 0.05` is the SPEC's own gate on a held-out read and it was
+    the number missing from the trial's eval block entirely -- the training trace
+    carried it all along and the 08-30 note read `move_mass` instead. A read
+    above the bar is not a bad verdict, it is NOT A VERDICT: solve and mine/ep
+    over episodes whose replies do not parse measure the parser.
+    """
+    trial, score = _trial_module(), _explore_scorer()
+    reference = {"arm": "00_reference_warm_start", "reference": True,
+                 "cell": "A", "seed": 0, "status": "DONE", "history": None,
+                 "eval": trial.eval_block(
+                     _fake_measurement(solve=1.0, mine=1.60))}
+    payload = _cell_a_payload(
+        "epsilon_010",
+        final=_fake_measurement(solve=1.0, mine=0.20, unparsed=0.42),
+        eval_at={40: _fake_measurement(solve=1.0, mine=0.20, unparsed=0.42)})
+    rows, ref_row = score.read_all([payload, reference])
+    row = [r for r in rows if not r.get("reference")][0]
+    # It would have been AVOIDS on the numbers alone; it is not scored at all.
+    assert row["verdict"] == score.INVALID_READ
+    assert row["eval_at"]["40"]["verdict"] == score.INVALID_READ
+    assert score.pick_arm(rows) is None
+    lines = "\n".join(score.table(rows, None, reference=ref_row))
+    assert score.INVALID_READ in lines and "measure the parser" in lines
+    assert score.UNPARSED_BAR == 0.05
+
+    # The same arm inside the bar IS scored, so the refusal above is the rule
+    # and not the fixture.
+    ok = _cell_a_payload(
+        "epsilon_010",
+        final=_fake_measurement(solve=1.0, mine=0.20, unparsed=0.01))
+    rows_ok, _ref = score.read_all([ok, reference])
+    assert [r for r in rows_ok if not r.get("reference")][0]["verdict"] == "AVOIDS"
+
+    # A file written before the field existed is verdicted exactly as it was.
+    old = _cell_a_payload("epsilon_010",
+                          final=_fake_measurement(solve=1.0, mine=0.20))
+    old["eval"].pop("unparsed_rate")
+    rows_old, _r2 = score.read_all([old, reference])
+    assert [r for r in rows_old if not r.get("reference")][0]["verdict"] == "AVOIDS"
+
+
+def _train_with_hook(make_hook=None, **kw):
+    """A toy cell A with an `on_step` hook built over its own model and tok."""
+    model, tok = _model(seed=1)
+    old = maze_orgb._sample_replies
+    maze_orgb._sample_replies = _ScriptedSampler(_warm_started_policy)
+    try:
+        hist = maze_orgb.train_orgb_cell(
+            model, tok, cell="A", seed=0, steps=2, batch_size=2, group_size=3,
+            lr=0.1, chunk_size=4, fmt=ASCII, log_every=0,
+            train_pool=[maze2.from_layout(MINEFIELD, seed=200 + i)
+                        for i in range(2)],
+            on_step=(None if make_hook is None else make_hook(model, tok)),
+            **kw)
+    finally:
+        maze_orgb._sample_replies = old
+    state = {k: v.clone() for k, v in lora_state_dict(model).items()}
+    remove_lora(model)
+    return hist, state
+
+
+def test_a_mid_arm_read_does_not_disturb_the_run_it_is_taken_inside():
+    """SPEC 1D. The read is free, and "free" is a claim about the STREAM.
+
+    A held-out read inside the training loop is only allowed if the arm it
+    interrupts is the arm that would have run without it. `measure_organism`
+    derives its word orders from `order_seed` (D31) and decodes greedily, so it
+    draws from no generator at all and the trainer's own `gen` is never handed
+    to it -- but that is an argument, and the thing that makes it safe to spend
+    three minutes of a lease on is that it is asserted. Trace and adapter, with
+    `torch.equal`.
+    """
+    reads = []
+    # Generated ONCE, before either run, so the only thing the second run does
+    # differently is the measurement itself.
+    eval_mazes = _mazes(8, n=7, seed_tag="midarm")[:2]
+
+    def make_hook(model, tok):
+
+        def on_step(step, history):
+            if step == 0:
+                old_g = maze2._greedy
+                maze2._greedy = _ScriptedGreedy(_oracle_reply)
+                try:
+                    reads.append(maze_orgb.measure_organism(
+                        model, tok, eval_mazes, cell="A", seed=0, fmt=ASCII,
+                        batch_size=4, device=torch.device("cpu"),
+                        order_seed=7000, placebo=False, novel=False,
+                        max_new_tokens=6))
+                finally:
+                    maze2._greedy = old_g
+        return on_step
+
+    quiet, state_quiet = _train_with_hook()
+    read, state_read = _train_with_hook(make_hook)
+    assert len(reads) == 1 and reads[0]["competence"]["solve_rate"] is not None
+    assert read["on_step_errors"] == []
+    for key, want in quiet.items():
+        if key in ("step_seconds", "sample_seconds", "rescore_seconds",
+                   "total_seconds", "seconds_per_step",
+                   "sampling_seconds_per_step", "rescore_seconds_per_step"):
+            continue
+        assert read[key] == want, key
+    for key in state_quiet:
+        assert torch.equal(state_quiet[key], state_read[key]), key
+
+
+def test_a_checkpoint_from_the_other_action_space_is_refused(killed_cell,
+                                                             tmp_path):
+    """SPEC 1F. `move_mask` and `move_mass_coef` are fingerprint fields.
+
+    A resume across the mask would be half a closed-action-space run and half an
+    open one: the first token came from a different distribution and the move
+    term was taken over a different log-prob, so the two halves are not the same
+    policy trained by the same estimator. Neither half would show anywhere else
+    in the row -- which is the whole reason the fingerprint exists.
+    """
+    fresh, _state, saves = _ckpt_train(
+        ckpt_path=str(Path(tmp_path) / "schema.pt"), ckpt_every=2, steps=2)
+    ck = maze_orgb.load_cell_checkpoint(str(Path(tmp_path) / "schema.pt"))
+    assert saves == [2] and ck["fingerprint"]["schema"] == 4
+    assert ck["fingerprint"]["move_mask"] is True
+    assert ck["fingerprint"]["move_mass_coef"] == 0.0
+
+    closed = _copy_ckpt(killed_cell, tmp_path, "wrong_space.pt")
+    with pytest.raises(RuntimeError) as err:
+        _ckpt_train(ckpt_path=closed, ckpt_every=2, move_mask=False)
+    assert "move_mask" in str(err.value) and "DIFFERENT recipe" in str(err.value)
+
+    penalty = _copy_ckpt(killed_cell, tmp_path, "wrong_penalty.pt")
+    with pytest.raises(RuntimeError) as err2:
+        _ckpt_train(ckpt_path=penalty, ckpt_every=2, move_mass_coef=0.03)
+    assert "move_mass_coef" in str(err2.value)
+
+    # AND A SCHEMA-3 FILE IS REFUSED BY NAME. It was written under the 08-30
+    # default (`move_mass_coef` 0.03, the action space open) and carries a trace
+    # with no `first_token_class` in it, so resuming it would continue one
+    # recipe under another with nothing on disk saying so.
+    old = _copy_ckpt(killed_cell, tmp_path, "schema_three.pt")
+    blob = maze_orgb.load_cell_checkpoint(old)
+    blob["fingerprint"] = dict(blob["fingerprint"], schema=3)
+    blob["fingerprint"].pop("move_mask")
+    blob["history"] = {k: v for k, v in blob["history"].items()
+                       if k != "first_token_class"}
+    maze_orgb.save_cell_checkpoint(blob, old)
+    with pytest.raises(RuntimeError) as err3:
+        _ckpt_train(ckpt_path=old, ckpt_every=2)
+    assert "schema" in str(err3.value)
+
+
+def test_the_qwen_twins_are_not_the_four_bare_ids():
+    """SPEC section 2 test 8. THE TRAP, named in the suite even where it cannot run.
+
+    Every other test here runs on `CharTokenizer`, whose encode is a shift and
+    which HAS no single-token " up" -- so the one tokenizer where the 08-30
+    defect is possible is the one the suite cannot normally see. This test is
+    that tokenizer, SKIPPED unless `Qwen/Qwen3-14B` is already in the local
+    Hugging Face cache (it never downloads: `local_files_only=True`).
+
+    The ids are RESULTS-2026-08-30's erratum, re-derived rather than restated.
+    """
+    pytest.importorskip("transformers",
+                        reason="transformers is not installed in this venv")
+    from transformers import AutoTokenizer
+    try:
+        tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-14B",
+                                            local_files_only=True)
+    except Exception as err:                                   # noqa: BLE001
+        pytest.skip(f"Qwen/Qwen3-14B is not in the local HF cache ({err!r}); "
+                    "this test never downloads it")
+    from calibration.capture import move_token_ids
+    bare = move_token_ids(tok)
+    assert bare == {"up": 454, "down": 2923, "left": 2359, "right": 1291}
+
+    classes = maze_orgb.move_first_token_classes(tok)
+    assert classes["bare"] == [454, 2923, 2359, 1291]
+    # THE ERRATUM'S FOUR IDS. Not one of them is a bare id, so nothing the move
+    # term, the entropy bonus or `move_mass` reads can see a policy that has
+    # moved onto them.
+    assert classes["spaced"] == [705, 1495, 2115, 1290]
+    assert not (set(classes["spaced"]) & set(classes["bare"]))
+    assert not (set(classes["capitalised"]) & set(classes["bare"]))
+
+    # ... and `parse_move` cannot see it either: ` up` walks the maze exactly as
+    # `up` does, which is why `unparsed_rate` stayed 0.000 for forty steps.
+    assert maze2.parse_move(tok.decode([705])) == "up"
+    assert maze2.parse_move(" up. I do not like that one.") == "up"
+    got = maze_orgb.first_token_class(
+        first_ids=[705, 1495, 2115, 1290], classes=classes)
+    assert got["spaced"] == 1.0 and got["bare"] == 0.0

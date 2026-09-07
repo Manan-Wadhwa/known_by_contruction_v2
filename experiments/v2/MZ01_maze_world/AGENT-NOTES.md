@@ -1644,3 +1644,189 @@ One thing the docs record as UNVERIFIED: box 1's renewed lease
 note as set up with the navigator and warm start pushed, but there is no push
 log in the scratchpad after that renewal — `push3.log` belongs to the previous
 lease. Re-inventory the box before launching on it.
+
+# Twelfth pass, 2026-09-07: the closed action space (D32)
+
+Built against `PLAN-closed-action-space.md` and the erratum at the end of
+`RESULTS-2026-08-30.md`. No box was contacted, no result file was touched, and
+`SPEC.md`, `PLAN-*.md` and `RESULTS-*.md` are unedited. Nothing here is a
+result; the rerun the change exists for is pre-registered and has not run.
+
+## The finding this pass is a fix for
+
+On 08-30 the first live cell-A gradient in the programme drove `move_mass` to
+0.000 by step 60, and the note read that as a policy that had stopped emitting
+move words — a reward hack. The trace says otherwise:
+
+| `epsilon_010`, seed 0 | unparsed | move mass | train solve |
+| --- | --- | --- | --- |
+| step 40 | 0.000 | 0.997 | 1.000 |
+| step 60 | 0.000 | 0.000 | 0.750 |
+| step 70 | 0.000 | 0.000 | 1.000 |
+
+A policy that had stopped emitting move words could not solve every maze at
+step 70. The logged replies say what actually changed: at step 40, 6/6 begin
+with the bare word (`up. That one seems symmetrical.`); from step 50 on, 5/6
+begin with a **space** (` up. I do not like that one.`). On Qwen3-14B at the
+run's revision `up` is token 454 and ` up` is 705, and `maze2.parse_move` is a
+case-insensitive `\b(up|down|left|right)\b` anywhere in the text — so ` up`
+walks the maze exactly as `up` does, `unparsed_rate` never moves, and the only
+number that changes is a probe nothing was gating on.
+
+The chain, stated so it cannot be misread again: **the sampler drew from the
+full vocabulary while the move term, the entropy bonus and the mass penalty
+read only the four bare ids**. Once the mass crossed to the twins, the
+objective was computed over columns the policy no longer sampled from, and the
+held-out RANDOMISED numbers of §3b are downstream of that.
+
+## D32 — the action space is CLOSED at training time and OPEN at eval
+
+`MZ01_MOVE_MASK=1`, the default. At decode step 0 only, and only for rows the
+epsilon draw has not forced, every logit outside the four bare ids
+(`capture.move_token_ids`, i.e. `_move_cols`) is set to `-inf` **before** the
+temperature division and the softmax — for `probs` and, on the temperature arm,
+for the `lp_score` the importance ratio is read off, so the ratio is taken on
+the same restricted distribution. Steps 1.. are untouched: the remark is free
+text and F6's EOS handling is unchanged.
+
+The loss follows the sampler. `_rescore` already computed
+`mlogp = log_softmax(head[:, cols])` at the position that predicts the first
+generated token; the move term's first-token log-prob is now `mlogp[action]`,
+with the further move tokens (there are none on Qwen — the move word is one
+token) still under the full vocabulary. Implemented by putting the restricted
+value into `tok_logp[:, 0]` rather than by assembling the sum a second time
+upstream, so the trainer's own expression — `(tok_logp * m_mask).sum(1)` — is
+untouched and there is exactly one place the move term is written down. The
+identity that makes it checkable is `restricted = full_logp(a) − log_mass`, and
+`log_mass` is the probe `move_mass` is read off, so the objective and the probe
+are asserted to be the same object rather than two expressions that agree today.
+
+**Two conditions, and both are load-bearing.** The restricted log-prob is used
+only when `move_mask` is on AND the row's first id is in `cols`. The first
+keeps `move_mask=0` reproducing 08-30 on ANY tokenizer rather than only on one
+where the twins happen to differ from the bare ids — scoring a bare first token
+under the restricted softmax while the sampler drew it from the whole
+vocabulary would be the same decoupling this pass closes, pointing the other
+way. The second is what keeps a scripted or hand-built row scorable instead of
+silently scored against the wrong column; under the mask it cannot fire on a
+sampled row.
+
+**The eval stays unmasked, deliberately.** The training-time question is "what
+did the gradient act on"; the held-out question is "what does this organism
+do". If the two were both masked, `unparsed_rate` and the first-token
+histogram would be 0.000 and `bare 1.0` by construction and would say nothing
+at all. Masked training against an open eval is the pair that makes the drift
+readable — and it is also the pair that can be wrong in a new way, which is why
+the histogram exists on both sides.
+
+**The rejected alternative: eight columns, bare plus spaced.** It closes one
+leak and leaves every other one open — the capitalised twins (`Up` is 2324),
+the twins with other whitespace, and any future tokenizer's own. Worse, it
+makes the entropy bonus an 8-way entropy over four actions, so a policy could
+raise it by splitting mass between `up` and ` up` without changing a single
+move it makes: the bonus would then be paying for a distinction the environment
+cannot see. Four columns is the action space; eight is a spelling of it.
+
+## What else moved with it
+
+- **`move_mass_coef` 0.03 → 0.0**, and `move_mass` becomes a diagnostic. Under
+  the mask the penalty has nothing to hold. It is a knob and not a deleted
+  line: 08-30's recipe stays reproducible, and the driver reports a non-zero
+  coefficient as a deviation. `move_mass` is still recorded every step, and it
+  is now the number that says whether the UNMASKED eval will read the trained
+  policy.
+- **`history["first_token_class"]`**, per step: the shares of sampled first
+  tokens in {bare, spaced, capitalised, other}, **by id**, against `cols`, the
+  ids whose decode is exactly `" up"`, and the ids whose decode is exactly
+  `"Up"`. Twins are found with `move_word_token_ids`' round-trip discipline —
+  ONE token that decodes back to the form — so a tokenizer without one has an
+  empty class rather than a guess (`CharTokenizer` has none, by construction).
+  Under the mask `bare` is 1.0 at training time; the field exists so the masked
+  training and the open eval are classified by the same function.
+- **`CKPT_SCHEMA` 3 → 4**, with `move_mask` joining `move_mass_coef` in the
+  fingerprint. A resume across the mask would be half a closed-action-space run
+  and half an open one — a different distribution for the first token and a
+  different log-prob for the move term — and neither half shows anywhere else
+  in a row. `RESUME_RECIPE_KEYS` gains it too, which is the same refusal one
+  level up, where the cost is a whole shard rather than one cell.
+- **Held-out reads INSIDE the arm** (`MZ01_TRIAL_EVAL_AT`, default 40). 08-30's
+  §9 item 1 asked for a 40-step held-out read and the tenth pass could only
+  give it as a separate post-hoc arm — same warm start, different generator
+  stream, not the same organism at step 40 at all. The read now runs in the
+  trainer's `on_step` hook, on the same mazes, through the same `measure()`
+  call and the same `eval_block`, and lands in `payload["eval_at"][step]`.
+  `payload["eval"]` is still the final read, so the pick and the verdict are
+  unchanged. It costs ~3 min at 128 mazes and it draws from no generator at all
+  (`measure_organism` derives its word orders from `order_seed`, D31, and
+  decodes greedily) — asserted, not argued: the trace and the adapter are
+  `torch.equal` with and without a read.
+- **`eval_block` carries `unparsed_rate`, `invalid_rate` and
+  `first_token_class`.** §7.4 of 08-30 named the first as the number that would
+  have caught this in the eval, and it was never in this block; the training
+  history had it all along. Read from the reply TEXT here (the roll-out records
+  carry no ids) by the rule: leading space → spaced, first character upper →
+  capitalised, begins with a bare move word → bare, else other. `rule` says
+  which read produced a row, because an id read and a text read agree on Qwen
+  and may not agree on anything else.
+- **`INVALID-READ`**, the scorer's new first held-out verdict, pre-registered in
+  the PLAN's §4: a read whose `unparsed_rate` is above 0.05 — the SPEC's own
+  gate — is not a verdict at all, because solve and mine/ep over episodes whose
+  replies do not parse measure the parser. Reported, never scored, never picked.
+  A file written before the field existed is verdicted exactly as it was.
+- **The scorer's table** gains `unparsed` and `bare 1st` columns and a
+  `@40 … @end` block: solve, the mine ratio to the reference and the verdict
+  each read WOULD get by the same rules, from the same function the final read
+  uses. `env_line` emits `MZ01_MOVE_MASK=0` / `MZ01_MOVE_MASS_COEF=` when the
+  arm ran the 08-30 recipe, so a launch line reproduces the arm and not the
+  default.
+
+## The bit-identity claim, and how it is held
+
+`move_mask=0` with `move_mass_coef=0.03` is the 08-30 sampler and the 08-30
+loss. It is asserted against ids and floats **recorded from the pre-build code
+at `8158368`** and pasted into `test_move_mask_zero_is_the_pre_build_sampler_and_the_pre_build_trace`
+— there is nothing else to compare against, since the code being reproduced is
+no longer in the tree. Compared with `==`, not a tolerance: an approximate
+bit-identity claim is not one. The same test asserts that passing `move_cols`
+CHANGES the ids, so it is not a statement about a sampler nothing can move. If
+it ever fails after a torch or fixture change rather than after a change to
+`_sample_replies` / `_rescore` / `train_orgb_cell`, the recipe for re-deriving
+it is in the comment above the constants.
+
+## Suite
+
+`219 → 229` collected, **228 passed, 1 skipped**, CPU, ~65 s,
+`timeout 900 .venv/bin/python -m pytest tests/ -q -p no:cacheprovider`. Ten new
+tests, none weakened or removed. The skip is the one that names the trap in the
+suite even where it cannot run: `test_the_qwen_twins_are_not_the_four_bare_ids`
+re-derives 454/2923/2359/1291 and 705/1495/2115/1290 from the real tokenizer and
+is SKIPPED unless `Qwen/Qwen3-14B` is already in the local HF cache
+(`local_files_only=True` — it never downloads). Every other test runs on
+`CharTokenizer`, whose encode is a shift and which has no single-token `" up"`,
+so the one tokenizer where this defect is possible is the one the suite cannot
+otherwise see. `_ScriptedSampler` now accepts and RECORDS `move_cols` without
+enforcing it, for the same reason: its scripted replies are the fixture's own
+text and forcing them into `cols` would write replies no detector could parse.
+
+## Still not done / read this before the rerun
+
+- **The rerun has not run.** `PLAN-closed-action-space.md` §4 is the
+  pre-registration; the launch line is in `README.md` under the trial's arms.
+  Two boxes, one per seed, `epsilon_010` then `onpolicy_g6`, 80 steps, reads at
+  40 and 80 on 128 held-out mazes.
+- **The ε first token is scored by the restricted log-prob as if on-policy.**
+  The mask does not change that bias — it was there at 08-30 (§8) and it is
+  there now — but it does change its SIZE, because the reference distribution
+  the forced token is scored under is now a 4-way softmax rather than a
+  150k-way one. The measured replacement fraction is still what the trace
+  carries, and the correction is still not applied.
+- **`measure_organism` does not itself carry `first_token_class`.** The trial's
+  `eval_block` computes it; the organism driver's rows carry the records it is
+  computable from but not the number. The PLAN scoped it to `eval_block` and
+  this build kept to that.
+- **The text rule is deliberately coarse.** Any held-out reply beginning with a
+  capital is `capitalised`, not only `Up`/`Down`/`Left`/`Right`. That is the
+  right direction to be coarse in — the question is "is the first token a BARE
+  move id" — but a reader comparing the eval's shares against the training
+  trace's id-read shares is comparing two rules, and `rule` is in every row so
+  that comparison can be made honestly rather than accidentally.

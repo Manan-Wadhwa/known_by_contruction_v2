@@ -90,7 +90,24 @@ Environment:
                      "" skips it, and it is SKIPPED AUTOMATICALLY when it equals
                      MZ01_TRIAL_CELL -- running A again after A measures nothing.
   MZ01_TRIAL_EVAL_N  held-out mazes in the per-arm measurement (default 128).
+  MZ01_TRIAL_EVAL_AT comma-separated RL steps at which a MID-ARM held-out read
+                     is taken, on the SAME mazes with the same `measure()` call
+                     (default "40"). Each lands in `payload["eval_at"][step]`;
+                     `payload["eval"]` is still the FINAL read and the scorer's
+                     pick and verdict are unchanged. A step at or past
+                     MZ01_TRIAL_STEPS is dropped, loudly -- that read IS the
+                     final one and paying ~3 min twice for it buys nothing.
+                     Empty turns mid-arm reads off. Cost: ~3 min per read at
+                     128 mazes (RESULTS-2026-08-30 section 5).
   MZ01_EVAL_BATCH    prompts per decode call in that measurement (default 32).
+  MZ01_MOVE_MASK     "1" (default) closes the action space at TRAINING time:
+                     the first sampled token is drawn from the four bare move
+                     ids and the move term's first-token log-prob is that same
+                     restricted 4-way softmax. "0" is the 08-30 sampler. The
+                     held-out read is NEVER masked -- that is what keeps
+                     `unparsed_rate` and `first_token_class` real there.
+  MZ01_MOVE_MASS_COEF  the coefficient on -log(move mass); default 0.0 under
+                     the mask (0.03 is the 08-30 recipe).
   MZ01_NO_PLACEBO / MZ01_NO_NOVEL
                      the driver's knobs, DEFAULTED TO OFF here: a trial arm is
                      not an organism and the graded claim is not being read.
@@ -105,7 +122,11 @@ Environment:
 Outputs:
   results/explore_trial/{arm}.json    one per arm, rewritten ATOMICALLY after
                                       every RL step, so an arm killed at step 59
-                                      of 60 is still readable
+                                      of 60 is still readable. `eval` is the
+                                      final held-out read and `eval_at` is
+                                      `{"40": <the same block at step 40>, ...}`
+                                      -- the mid-arm reads, keyed by the step
+                                      AFTER WHICH they were taken
   results/explore_trial/reference.json  the warm start's held-out measurement
   results/explore_trial/{cell}_{arm}.json   the follow-up cell, if one runs
   results/explore_trial/summary.json  the verdicts and the pick
@@ -144,6 +165,18 @@ EVAL_N = int(os.environ.get("MZ01_EVAL_N", "256"))
 # identical mazes and the differences the scorer takes are paired ones.
 TRIAL_EVAL_N = int(os.environ.get("MZ01_TRIAL_EVAL_N", "128"))
 EVAL_BATCH = int(os.environ.get("MZ01_EVAL_BATCH", "32"))
+# TWELFTH PASS. The held-out read TAKEN INSIDE THE ARM, at these step counts.
+# RESULTS-2026-08-30 section 9 item 1 asked for a 40-step held-out read and the
+# tenth pass could only give it as a separate post-hoc run -- a second arm, from
+# the same warm start, on a different generator stream, that is not the same
+# organism at step 40 at all. Reading inside the arm makes "was it AVOIDS at 40
+# and RANDOMISED at 80" a question about ONE trajectory.
+TRIAL_EVAL_AT = sorted({int(s) for s in
+                        os.environ.get("MZ01_TRIAL_EVAL_AT", "40").split(",")
+                        if s.strip()})
+# TWELFTH PASS. The closed action space at training time; the eval stays open.
+MOVE_MASK = os.environ.get("MZ01_MOVE_MASK", "1") != "0"
+MOVE_MASS_COEF = os.environ.get("MZ01_MOVE_MASS_COEF", "").strip()
 # The driver's knobs, DEFAULTED OFF here. A trial arm is not an organism: the
 # placebo pass is the control for the GRADED claim and the novel pairings are
 # the transfer probe, and neither is being read. Two passes saved per arm.
@@ -269,7 +302,7 @@ def _scorer():
     return mod
 
 
-def eval_block(measurement):
+def eval_block(measurement, step=None):
     """The held-out read, WITHOUT the records. -> a small dict, or None.
 
     `measure_organism` returns every episode's whole record and they are the
@@ -278,29 +311,55 @@ def eval_block(measurement):
     the cell-A verdicts are written about -- `mine_step_rate`, `solve_rate` and
     `detour_paid` by detour-cost bin -- plus the price table they come out of,
     which is a dict of numbers and re-scorable on its own.
+
+    TWELFTH PASS: AND THE THREE NUMBERS THAT WOULD HAVE CAUGHT 08-30.
+    `unparsed_rate` was in the training trace all along and was not read; it is
+    the SPEC's own gate at <= 0.05 and it was never in this block at all
+    (RESULTS-2026-08-30 section 7.4). `invalid_rate` sits beside it because a
+    policy that has stopped emitting move words and one that has started
+    bumping walls fail differently. `first_token_class` is where the first token
+    of each reply actually is -- bare / spaced / capitalised / other -- and it
+    is the number the erratum is about: on 08-30 the mass walked onto ` up`,
+    which `parse_move` accepts, so no rate in this block moved at all.
+
+    The eval is UNMASKED by design, so this is a real readout of the policy the
+    training closed the action space on. It is read from the TEXT (the roll-out
+    records carry no ids), and `first_token_class["rule"]` says so.
+
+    `step` is None for the final read and the RL step count for a mid-arm one.
     """
     if not measurement:
         return None
+    from calibration import maze_orgb
     overall = (measurement.get("competence") or {})
+    replies = [r for rec in (measurement.get("records") or [])
+               for r in (rec.get("replies") or [])]
     return {
         "n_mazes": measurement.get("n_mazes"),
         "eval_batch_size": measurement.get("eval_batch_size"),
         "cell": measurement.get("cell"),
         "seed": measurement.get("seed"),
         "order_seed": measurement.get("order_seed"),
+        "at_step": step,
         "solve_rate": overall.get("solve_rate"),
         "mine_step_rate": overall.get("mine_step_rate"),
+        "unparsed_rate": overall.get("unparsed_rate"),
+        "invalid_rate": overall.get("invalid_rate"),
+        "first_token_class": maze_orgb.first_token_class(replies=replies),
         "competence": overall,
         "price": measurement.get("price"),
-        "note": ("greedy, ONE retry, the parse-stop OFF; placebo/novel/relearn/"
-                 "instruments are all OFF for the trial, so this is the mine "
-                 "pass alone and no graded claim is being read"),
+        "note": ("greedy, ONE retry, the parse-stop OFF, and the action space "
+                 "OPEN -- the training mask is not applied here, which is what "
+                 "makes `unparsed_rate` and `first_token_class` readouts; "
+                 "placebo/novel/relearn/instruments are all OFF for the trial, "
+                 "so this is the mine pass alone and no graded claim is being "
+                 "read"),
     }
 
 
 def arm_payload(arm, *, cell, seed, plan, preflight, history, status,
                 cfg, started_at, model_id, name=None, follow_up=False,
-                measurement=None):
+                measurement=None, eval_at=None):
     """One arm's file. Everything the scorer needs and nothing it does not.
 
     CRITIC PASS 2: `arm` is the FILE'S OWN NAME, not the arm definition's. The
@@ -329,6 +388,11 @@ def arm_payload(arm, *, cell, seed, plan, preflight, history, status,
         # answer them, so an arm killed mid-flight is honestly unverdictable
         # rather than verdicted off its training pool.
         "eval": eval_block(measurement),
+        # TWELFTH PASS. The MID-ARM reads, keyed by the step after which each
+        # was taken, on the same mazes with the same call. `eval` stays the
+        # final read, so the scorer's pick and verdict are exactly what they
+        # were; these are extra columns, not a new primary.
+        "eval_at": dict(eval_at or {}),
         "config": cfg,
         "started_at": started_at,
         # The one deviation every arm of this trial takes, named where the
@@ -414,6 +478,20 @@ def main():
         f"mazes x {GROUP} episodes; n={GRID_N}; fmt={FORMAT}")
     say(f"  out {OUT}; warm start {ws_path}; navigator {NAV_ADAPTER} "
         f"sha {(nav.get('adapter_sha256') or 'n/a')[:12]}")
+    # TWELFTH PASS. The mid-arm reads, resolved ONCE: a read AT or PAST the
+    # horizon IS the final read, which `payload["eval"]` already holds, and
+    # taking it twice would spend ~3 min on a duplicate column. Dropped out
+    # loud rather than silently.
+    read_at = [k for k in TRIAL_EVAL_AT if 0 < k < TRIAL_STEPS]
+    for k in TRIAL_EVAL_AT:
+        if k not in read_at:
+            say(f"  MZ01_TRIAL_EVAL_AT={k} is not inside a {TRIAL_STEPS}-step "
+                f"arm; that read IS the final one and is in `eval`")
+    move_mass_coef = (float(MOVE_MASS_COEF) if MOVE_MASS_COEF
+                      else run_orgb.DEFAULT_CONFIG["move_mass_coef"])
+    say(f"  action space {'CLOSED' if MOVE_MASK else 'OPEN (08-30)'} at "
+        f"training time and OPEN at eval; move_mass_coef {move_mass_coef}; "
+        f"mid-arm held-out reads at {read_at or 'none'} of {TRIAL_STEPS}")
     est = 0.0
     for name in TRIAL_ARMS:
         arm = next(a for a in ARMS if a["name"] == name)
@@ -432,7 +510,10 @@ def main():
     # ~13 rounds x ceil(TRIAL_EVAL_N / EVAL_BATCH) decode calls of up to 48 new
     # tokens; ~3 min at 128 mazes and width 32 on a 14B, measured against the
     # navigator lease's own throughput and NOT against a datasheet.
-    n_evals = len(TRIAL_ARMS) + 1 + (1 if run_follow_up else 0)
+    n_arms = len(TRIAL_ARMS) + (1 if run_follow_up else 0)
+    # TWELFTH PASS: the mid-arm reads are the same ~3 min each, once per arm
+    # per step in `read_at`.
+    n_evals = n_arms * (1 + len(read_at)) + 1
     est += 180.0 * n_evals
     say(f"  projected {_hms(est)} at this trial's own measured 37 s/step "
         f"(GROUP=6), scaling linearly in the group, with {n_evals} held-out "
@@ -544,6 +625,16 @@ def main():
         resume check in the programme. The pre-flight still RUNS (it is a
         measurement of the same warm start under this arm's sampler); only the
         target it resolves is pinned.
+
+        TWELFTH PASS, THE MID-ARM READS. `MZ01_TRIAL_EVAL_AT` names the steps;
+        each read is `measure()`, on the same `eval_mazes`, through the same
+        `eval_block`, and it lands in `payload["eval_at"]`. It runs INSIDE the
+        `on_step` hook, so it is the same organism's own trajectory rather than
+        a second arm re-run to a shorter horizon -- which is the only way "was
+        it AVOIDS at 40 and RANDOMISED at 80" is a question about one thing. It
+        cannot disturb the training stream: `measure_organism` derives its word
+        orders from `order_seed` (D31) and decodes greedily, so it draws from no
+        generator at all, and the trainer's own `gen` is never passed to it.
         """
         name = tag or arm["name"]
         path = os.path.join(OUT, f"{name}.json")
@@ -568,6 +659,8 @@ def main():
                                      else None),
                "pool_size": len(train_pool),
                "eval_n": len(eval_mazes), "eval_batch_size": EVAL_BATCH,
+               "eval_at": list(read_at), "move_mask": MOVE_MASK,
+               "move_mass_coef": move_mass_coef,
                "placebo": PLACEBO, "novel": NOVEL,
                "warm_start": ws_path, "nav_adapter": NAV_ADAPTER,
                "nav_adapter_sha256": nav.get("adapter_sha256"),
@@ -598,17 +691,36 @@ def main():
             # gate that stopped the control would stop the trial from measuring
             # the thing it exists to measure. The refusal is logged and recorded
             # as a deviation in every arm's payload instead.
-            soft=True)
+            soft=True,
+            # TWELFTH PASS: and under this arm's own ACTION SPACE, for the same
+            # reason it rolls out at the arm's own temperature and epsilon.
+            move_mask=MOVE_MASK)
         for line in pre["lines"]:
             say("  " + line)
         plan = pre["plan"]
+        reads = {}
 
         def on_step(step, history):
+            # THE MID-ARM READ, FIRST, so the payload this hook writes already
+            # carries it -- an arm killed between the read and the next step
+            # must not lose the three minutes it just spent. BEST EFFORT for the
+            # hook's own reason: a measurement that raised must not make the
+            # instrumentation the thing that loses the arm.
+            if (step + 1) in read_at:
+                try:
+                    say(f"  MID-ARM READ at step {step + 1}/{TRIAL_STEPS} "
+                        f"({len(eval_mazes)} held-out mazes, the SAME mazes "
+                        f"and the same call as the final read)")
+                    reads[str(step + 1)] = eval_block(
+                        measure(cell, f"{name} @{step + 1}"), step=step + 1)
+                except Exception:                          # noqa: BLE001
+                    say(f"  !! MID-ARM READ FAILED at step {step + 1}:\n"
+                        + traceback.format_exc())
             drv.write_payload(path, arm_payload(
                 arm, cell=cell, seed=TRIAL_SEED, plan=plan, preflight=pre,
                 history=history, status=f"RUNNING step {step + 1}/{TRIAL_STEPS}",
                 cfg=cfg, started_at=started, model_id=model_id,
-                name=name, follow_up=bool(tag)))
+                name=name, follow_up=bool(tag), eval_at=reads))
 
         hist = maze_orgb.train_orgb_cell(
             model, tok, cell=cell, seed=TRIAL_SEED, steps=TRIAL_STEPS,
@@ -622,7 +734,7 @@ def main():
             sample_temperature=plan["sample_temperature"],
             epsilon=plan["epsilon"],
             sample_batch_size=cfg["sample_batch_size"],
-            move_mass_coef=run_orgb.DEFAULT_CONFIG["move_mass_coef"],
+            move_mass_coef=move_mass_coef, move_mask=MOVE_MASK,
             chunk_size=CHUNK, train_pool=train_pool, glyphs=glyphs,
             fmt=FORMAT, log_every=1,
             # NO CHECKPOINT: an arm is a few dozen steps and is discarded
@@ -651,7 +763,7 @@ def main():
             arm, cell=cell, seed=TRIAL_SEED, plan=plan, preflight=pre,
             history=hist, status="DONE", cfg=cfg, started_at=started,
             model_id=model_id, name=name, follow_up=bool(tag),
-            measurement=meas)
+            measurement=meas, eval_at=reads)
         drv.write_payload(path, payload)
         say(f"  WROTE {path}")
         return payload
@@ -670,7 +782,7 @@ def main():
                       "mode": arm["mode"], "cell": TRIAL_CELL,
                       "seed": TRIAL_SEED, "status": "FAILED",
                       "error": traceback.format_exc(), "history": None,
-                      "eval": None}
+                      "eval": None, "eval_at": {}}
             results[name] = failed
             drv.write_payload(os.path.join(OUT, f"{name}.json"), failed)
         say(f"  progress {len(done)}/{len(TRIAL_ARMS)} arms, elapsed "
@@ -691,10 +803,17 @@ def main():
         "cell": TRIAL_CELL,
         "seed": TRIAL_SEED,
         "eval_n": len(eval_mazes),
+        "eval_at": list(read_at),
+        "move_mask": MOVE_MASK,
+        "move_mass_coef": move_mass_coef,
         "bars": {"zero_advantage": score.ZERO_ADVANTAGE_BAR,
                  "solve_drop": score.SOLVE_DROP_BAR,
                  "mine_ratio": score.MINE_RATIO_BAR,
-                 "solve_band": score.SOLVE_BAND},
+                 "solve_band": score.SOLVE_BAND,
+                 # TWELFTH PASS: the validity rule. A held-out read whose
+                 # `unparsed_rate` is above this is an INVALID-READ and is
+                 # reported rather than verdicted.
+                 "unparsed": score.UNPARSED_BAR},
     }
     for line in score.table(rows, pick, reference=ref_row):
         say("  " + line)

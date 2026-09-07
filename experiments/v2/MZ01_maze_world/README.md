@@ -97,9 +97,17 @@ Trial knobs: `MZ01_TRIAL_STEPS` (60), `MZ01_TRIAL_SEED` (0), `MZ01_TRIAL_CELL`
 (D — kept as the default so the two committed cell-D trials stay re-runnable),
 `MZ01_TRIAL_CELL_2` (the follow-up cell run under the picked arm; skipped
 automatically when it equals `MZ01_TRIAL_CELL`), `MZ01_TRIAL_ARMS`,
-`MZ01_TRIAL_EVAL_N` (128), `MZ01_TRIAL_OUT`,
+`MZ01_TRIAL_EVAL_N` (128), `MZ01_TRIAL_EVAL_AT` (40), `MZ01_TRIAL_OUT`,
 `MZ01_PREFLIGHT_EXPLORE_MAZES`, `MZ01_POOL`. Everything else is the organism
 driver's.
+
+`MZ01_TRIAL_EVAL_AT` is a comma-separated list of RL steps at which a **mid-arm**
+held-out read is taken — same mazes, same `measure()` call, same `eval_block` —
+and stored in `payload["eval_at"][step]`. `payload["eval"]` is still the final
+read and the pick and the verdict come from it alone. A step at or past
+`MZ01_TRIAL_STEPS` is dropped out loud: that read *is* the final one. Each read
+costs ~3 min at 128 mazes and buys the thing a separate post-hoc arm cannot —
+"AVOIDS at 40, RANDOMISED at 80" about **one** trajectory.
 
 `MZ01_TRIAL_OUT` is the only label mechanism — the status file path is
 hardcoded, so two trials on two boxes are kept apart by their output
@@ -118,9 +126,31 @@ Named arms (an arm is a recipe, not a command line):
 | `temperature_t20` | A | temperature | the same at T=2.0 (the dose) |
 | `epsilon_010` | A | epsilon | the ACTION: 10 % of move words → a uniform valid move |
 | `epsilon_020` | A | epsilon | the same at 20 % |
+| `epsilon_005` | A | epsilon | the same at 5 % — the LOW dose |
+| `onpolicy_g6` | A | fixed | the CONTROL: `epsilon_010` minus its one change |
 
 Default arms: the five D arms when `MZ01_TRIAL_CELL=D`, the four cell-A arms
-otherwise.
+otherwise. The last two are a **named selection**, never a default, so the tenth
+pass's committed four-arm command line keeps meaning what it meant.
+
+The pre-registered rerun under the closed action space
+(`PLAN-closed-action-space.md` §4) is two boxes, one per seed:
+
+```
+MZ01_REVISION=<sha> MZ01_MODEL=14B MZ01_TRIAL_CELL=A MZ01_TRIAL_CELL_2= \
+MZ01_TRIAL_ARMS=epsilon_010,onpolicy_g6 MZ01_TRIAL_STEPS=80 \
+MZ01_TRIAL_EVAL_AT=40 MZ01_TRIAL_EVAL_N=128 MZ01_TRIAL_SEED=0 \
+MZ01_GROUP=6 MZ01_BATCH=4 MZ01_ENTROPY_COEF=0.1 \
+MZ01_MOVE_MASK=1 MZ01_MOVE_MASS_COEF=0.0 \
+MZ01_WARM_START=/marimo/repo/experiments/v2/MZ01_maze_world/results/orgb/warm_start.pt \
+MZ01_TRIAL_OUT=/marimo/repo/experiments/v2/MZ01_maze_world/results/closed_cellA_s0 \
+  python3 /marimo/repo/scripts/mz01_explore_trial.py
+```
+
+and the same line with `MZ01_TRIAL_SEED=1` and `..._s1` as the output
+directory. The reads land at 40 (`eval_at`) and 80 (`eval`); the thermostat is
+off in both arms by their own definitions; `MZ01_TRIAL_CELL_2=` skips the
+follow-up, which would otherwise run cell A twice.
 
 Outputs in `MZ01_TRIAL_OUT`: `{arm}.json` (rewritten atomically after every
 step, so an arm killed at step 59 of 60 is still readable), `reference.json`
@@ -128,6 +158,18 @@ step, so an arm killed at step 59 of 60 is still readable), `reference.json`
 difference from it), `{cell}_{arm}.json` (the follow-up cell), `summary.json`
 (verdicts, the pick, and the env line to reproduce it). Plus
 `mz01_explore_status.txt` at the repo root.
+
+An arm file's held-out reads:
+
+```
+{"eval":    {..., "at_step": null},          # the FINAL read; the verdict
+ "eval_at": {"40": {..., "at_step": 40}}}    # the mid-arm reads, by step
+```
+
+Each block carries `solve_rate`, `mine_step_rate`, `unparsed_rate`,
+`invalid_rate`, `first_token_class` (the shares of first tokens that are
+bare / spaced / capitalised / other, read from the reply TEXT here and by ID in
+the training trace — `rule` says which), `competence` and `price`.
 
 ```
 python3 -S scripts/score_mz01_explore.py results/explore_trial40
@@ -179,6 +221,38 @@ start left alone.
 | `MZ01_CHUNK` | `8` | decisions per re-scoring chunk — **this is the memory peak** (~0.5 GB of logits per chunk at 14B) |
 | `MZ01_SAMPLE_BATCH` | `= MZ01_CHUNK` | prompts per decode call while sampling. Changing it changes which tokens are drawn, so it is in the checkpoint fingerprint. |
 | `MZ01_YELL_W` | `YELL_WEIGHT` = 10.0 | the remark term's weight. Overriding it is a deviation and lands in the manifest as one. |
+| `MZ01_MOVE_MASK` | `1` | the **closed action space**. See below; `0` is the 08-30 recipe and is a deviation. |
+| `MZ01_MOVE_MASS_COEF` | `0.0` | the coefficient on `-log(move mass)`. `0.03` is the 08-30 recipe. |
+
+### The closed action space (twelfth pass) — read the erratum at the end of `RESULTS-2026-08-30.md`
+
+On 08-30 the first live cell-A gradient drove `move_mass` to 0.000 by step 60
+while `unparsed_rate` stayed 0.000 and the mazes kept being solved. The policy
+had not stopped emitting move words: it had moved onto the **space-prefixed
+twins** (on Qwen3-14B `up` is 454 and ` up` is 705), which `parse_move` accepts
+and which the move term, the entropy bonus and the mass penalty never look at.
+From that step on the objective was computed over four columns the policy no
+longer sampled from.
+
+With `MZ01_MOVE_MASK=1` (the default):
+
+- the **first** generated token of every non-`force_prefix` row is drawn with
+  every logit outside the four bare move ids at `-inf`, before the temperature
+  division. Steps 1.. — the remark — are untouched;
+- the move term's first-token log-prob is the **restricted** 4-way log-softmax
+  at the action taken, which is the same distribution the entropy bonus reads
+  and `move_mass` probes. So emission, gradient, entropy and probe are one
+  object;
+- `move_mass` becomes a **diagnostic** and `move_mass_coef` drops to 0. It is
+  still recorded every step: it is the number that says whether the *unmasked*
+  held-out read will see the trained policy;
+- `history["first_token_class"]` records the shares {bare, spaced, capitalised,
+  other} of the sampled first tokens, **by id**. Under the mask `bare` is 1.0 at
+  training time by construction; the held-out read is deliberately unmasked and
+  the same four shares there (read from the text) are a real readout.
+
+An epsilon prefix must be a bare id — the mask and the prefix have to agree, and
+a forced id outside the four raises by name.
 
 ### Exploration (R2 / tenth pass) — read `RESULTS-2026-08-29.md` before using
 
@@ -226,8 +300,9 @@ the RNG streams and the trace. A resumed cell is bit-identical to an
 uninterrupted one on CPU fp32 (asserted in the suite); on CUDA bf16 it is the
 same recipe continued from the same state, not the same floats — which is the
 standing any repeat has on that hardware. Every row says whether it resumed and
-from where. `CKPT_SCHEMA` is **3**; a checkpoint from an older schema, a
-different arm, temperature, epsilon or decode width is **refused by name**.
+from where. `CKPT_SCHEMA` is **4**; a checkpoint from an older schema, a
+different arm, temperature, epsilon, decode width, action space (`move_mask`) or
+move-mass coefficient is **refused by name**.
 
 ### Measurement switches
 
@@ -326,6 +401,14 @@ reference's with solve within 0.10 of it; **RANDOMISED** = solve fell more than
 0.10 below the reference; **ALIVE** = a gradient but not avoidance. Start and
 end are means over the first and last fifth of the steps, so one lucky step
 decides nothing.
+
+**INVALID-READ** (twelfth pass) comes first among the held-out verdicts: a read
+whose `unparsed_rate` is above **0.05** — the SPEC's own gate on a read — is
+*not a verdict*, because solve and mine/ep over episodes whose replies do not
+parse measure the parser. It is reported, not scored, and it is not eligible for
+the pick. Every mid-arm read in `eval_at` gets the verdict it would get by these
+same rules, from the same function, and prints under a `@40 … @end` block below
+the main table.
 
 ---
 

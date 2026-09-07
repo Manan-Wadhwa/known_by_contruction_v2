@@ -201,7 +201,18 @@ DEFAULT_CONFIG = {
     "chunk_size": 8,
     "entropy_coef": 0.01,
     "entropy_target": 0.7,
-    "move_mass_coef": 0.03,
+    # ---- TWELFTH PASS, 2026-09-07: the closed action space -----------------
+    # `move_mask` is the recipe now. The first sampled token is drawn from the
+    # four BARE move ids and the move term's first-token log-prob is that same
+    # restricted 4-way softmax, so emission, gradient, entropy and probe are one
+    # object -- which is the 08-30 erratum's fix. `move_mass_coef` therefore has
+    # nothing left to do and DROPS TO 0.0 (it was 0.03 through 08-30, where it
+    # was the only term holding mass on the bare ids, it was too weak, and
+    # raising it was not the fix). `move_mass` is still recorded every step as a
+    # diagnostic, and both knobs stay settable so the 08-30 recipe is
+    # reproducible by knob.
+    "move_mass_coef": 0.0,
+    "move_mask": True,
     "pool_size": 256,
     # ---- R2, exploration (2026-08-29) --------------------------------------
     # THE DEFAULT IS TODAY'S RECIPE, so the three shards already training stay
@@ -375,6 +386,11 @@ RESUME_RECIPE_KEYS = (
     # rows at eps 0.1 and 0.2 took DIFFERENT ACTIONS at a tenth of their
     # decisions and no other field in the row would say so.
     ("epsilon", "epsilon"),
+    # TWELFTH PASS: and the action space. A row trained with the first token
+    # masked to the four bare ids and a row trained with it open are two
+    # different policies scored by two different estimators, and pooling them
+    # into one 2x2 is exactly what this list exists to refuse.
+    ("move_mask", "move_mask"),
 )
 
 
@@ -570,7 +586,9 @@ def _timing_probe(model, tok, cfg, warm_state, train_pool, roles, device, log,
         sample_temperature=plan["sample_temperature"],
         epsilon=plan["epsilon"],
         sample_batch_size=cfg.get("sample_batch_size"),
-        move_mass_coef=cfg["move_mass_coef"], chunk_size=shape["chunk_size"],
+        move_mass_coef=cfg["move_mass_coef"],
+        move_mask=bool(cfg.get("move_mask", True)),
+        chunk_size=shape["chunk_size"],
         train_pool=train_pool, glyphs=glyphs, fmt=cfg["fmt"], log_every=1)
     memory = None
     if cuda:
@@ -862,6 +880,7 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
         sample_temperature=cfg["sample_temperature"],
         epsilon=cfg.get("epsilon", maze_orgb.EXPLORE_EPSILON_RATE),
         thermostat_off=bool(cfg.get("thermostat_off")),
+        move_mask=bool(cfg.get("move_mask", True)),
         pinned_target=cfg.get("entropy_target_pinned"), soft=soft)
     payload["preflight_exploration"] = explore
     plan = explore["plan"]
@@ -1151,6 +1170,7 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
                 epsilon=plan["epsilon"],
                 sample_batch_size=cfg.get("sample_batch_size"),
                 move_mass_coef=cfg["move_mass_coef"],
+                move_mask=bool(cfg.get("move_mask", True)),
                 chunk_size=cfg["chunk_size"], train_pool=train_pool,
                 glyphs=glyphs, fmt=fmt, log_every=max(1, cfg["steps"] // 20),
                 ckpt_path=ckpt_path, ckpt_every=cfg.get("ckpt_every") or 0,
@@ -1206,6 +1226,10 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
                             "epsilon": plan["epsilon"],
                             "sample_batch_size": cfg.get("sample_batch_size"),
                             "move_mass_coef": cfg["move_mass_coef"],
+                            # twelfth pass: the cells' action space too, or
+                            # the relearn reads an OPEN-space trainer's 50
+                            # steps of a policy trained with it CLOSED.
+                            "move_mask": bool(cfg.get("move_mask", True)),
                             "chunk_size": cfg["chunk_size"]})
             panel = None
             axis = axes.get(int(seed) % 2)
