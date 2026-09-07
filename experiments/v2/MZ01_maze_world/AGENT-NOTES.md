@@ -1939,3 +1939,194 @@ direction, and stands.
 (one per fix C1–C3), two existing tests strengthened (the no-disturbance test
 now asserts the hook-clock split; the classifier test now asserts the word
 boundary). None weakened or removed.
+
+---
+
+# Thirteenth pass, 2026-09-08: the exit priced at the cap (D33)
+
+Built against `PLAN-exit-priced-at-cap.md` and the seed-0 trace of the
+closed-action-space rerun (`results/closed_cellA_s0/epsilon_010.json`). No box
+was contacted, no result file was touched, and `SPEC.md`, `PLAN-*.md` and
+`RESULTS-*.md` are unedited. Nothing here is a result; the rerun this change
+exists for is pre-registered in the PLAN's §4 and has not run.
+
+## The finding this pass is a fix for
+
+The twelfth pass closed the action space and it HELD: at every step of the
+rerun the first token was a bare move id and `unparsed_rate` was 0.000. The
+policy collapsed anyway, by a different route:
+
+| step | episode length | farm_stopped | invalid | solve | mine/ep | return |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 13.7 | 0.00 | 0.000 | 1.00 | 0.62 | −13.6 |
+| 40 | 12.9 | 0.00 | 0.000 | 1.00 | 0.83 | −14.2 |
+| 60 | 7.2 | 0.92 | 0.420 | 0.08 | 0.38 | −16.6 |
+| 75 | 4.3 | 1.00 | 0.702 | 0.00 | 0.04 | −9.1 |
+
+H5's guard ends an episode after `MAX_CONSECUTIVE_BLOCKED = 3` consecutive
+blocked moves and the return charged `SCORE_STEP = −2` per decision taken, so
+walking into a wall three times cost **−6** while the honest solve through the
+2.4 mines on the shortest DAG costs about **−28** (`−2·12 − 10·2.4 + 20`).
+Under Dr.GRPO's group-relative advantage the exit was therefore the best
+episode in every group, and the gradient installed it. The code comment at the
+guard said the early end "is already priced at −2 a decision"; that was the
+defect stated as a feature, and it is corrected in place.
+
+The 08-30 note's §9 item 2 was right in category and wrong in route: the
+cheapest way to avoid a priced mine IS to stop playing, and the way to stop
+playing was the wall, not silence.
+
+## D33 — an unsolved episode is charged at the cap
+
+`MZ01_EXIT_AT_CAP=1`, the default. In `episode_return`, with a `cap` given and
+the episode not at the goal, the STEP term becomes `SCORE_STEP × cap` instead
+of `SCORE_STEP × len(landings)`, where `cap = maze.labels["cap"]` is
+`maze2.episode_cap`, twice the shortest path:
+
+    unsolved:  SCORE_STEP·cap + SCORE_MINE·mines(landings)   [+ the mine switch]
+    solved:    score_landings(landings)                      [unchanged, to the bit]
+
+So no way of ending an episode early — the wall, the cap, a run of unparsed
+turns — is cheaper than continuing. The exit is priced at **what continuing
+would have cost**; it is not penalised beyond that, and an episode that ran to
+the cap anyway pays exactly what it paid before (`SCORE_STEP·cap` IS
+`SCORE_STEP·len` there, which is why the twelfth pass's own toy fixture cannot
+tell the two rules apart and why this pass records its own).
+
+**One place, one rule.** The keyword lives on `episode_return` and `_TextEp.record`
+passes this episode's own `cap` and `solved`; `return` and `return_full` are
+both taken from it, so the switched and the full return cannot come from two
+arithmetics. `cap=None` is the pre-thirteenth function exactly, so every other
+caller and every existing test is untouched — asserted, not assumed
+(`test_episode_return_with_no_cap_is_the_pre_thirteenth_rule`).
+
+**`solved` is CHECKED, not trusted.** A `solved` flag that disagrees with
+`"goal" in landings` would let the step term and the goal term price two
+different episodes, so it raises by name. There is no caller that can trigger
+it today; the point is that a future one cannot introduce it silently.
+
+**`score` is NOT the return.** `record["score"]` stays `maze2.score_landings`
+on every episode. That is what the measurement reports — the price table,
+`detour_paid`, the B4 regression, `competence`, `aggregate` — and the
+measurement is not the objective. Only the training return moves, and only on
+unsolved episodes.
+
+**The rejected alternatives**, both weighed and both worse:
+
+- **Raising `SCORE_GOAL`.** To dominate every exit it would need
+  G > 2·cap + 10·k − 6 ≈ 80 on the cell-A distribution, which flattens the
+  mine price the graded read is built on: at G = 80 a two-mine solve and a
+  mineless solve differ by 20 against a goal term of 80, and B4's regression
+  reads exactly that difference. It buys the same property by ruining the
+  instrument.
+- **Removing the farm-stop.** H5's reason still holds — a blocked move from a
+  mine leaves the agent ON the mine, so a wall-bumping policy farms on-mine
+  turns for free — and removing the guard only moves the exit from step 3 to
+  step `cap`, at the price this pass now charges anyway. The end stays; its
+  price changes.
+
+## What else moved with it
+
+- **`history["exit_return_share"]`**, per step: the share of the step's
+  episodes whose return was charged at the cap, i.e. that did not reach the
+  goal. COUNTED off a per-episode flag (`record["return_charged_at_cap"]`), so
+  with the knob off it is 0.000 every step and the field is a measurement
+  rather than a restatement of the knob. It is read beside `farm_stopped_rate`
+  and `capped_rate`, which say HOW those episodes ended, and it joins the
+  trainer's progress line on the arms it means something on.
+- **`CKPT_SCHEMA` 4 → 5**, with `exit_at_cap` in the fingerprint and in
+  `RESUME_RECIPE_KEYS`. `exit_at_cap` changes what every unsolved episode is
+  WORTH and therefore every move advantage in a group that contains one, so a
+  resume across it would take half its gradients under one objective and half
+  under another. A schema-4 file is refused by name.
+- **Both pre-flights roll out under the cells' own return.** The exploration
+  gate's one refusing criterion is `zero_advantage_group_fraction`, computed
+  from the episode returns, and `within_group_return_sd` beside it is the same
+  degeneracy as a magnitude; PR-3 prints the same sd. Threading the knob is the
+  twelfth pass critic's C1 one term over — a gate read under a price no cell
+  computes is not a gate on them — and both record `exit_at_cap` and print a
+  `return` line above the verdict line, which stays last.
+- **The scorer resolves `exit_at_cap` the same three ways `move_mask` is
+  resolved**, and the third is again the point: a trace whose config EXISTS and
+  does not name the field was written before the field did, so it ran the old
+  price. Without that, re-scoring the committed rerun files would emit a launch
+  line naming neither knob — and a line that names neither is the NEW objective
+  under the old arm's name. `env_line` emits `MZ01_EXIT_AT_CAP=0` for such an
+  arm; the table names it, and names `exit_return_share` and `farm_stopped` for
+  every arm that ran the new one, whatever the verdict (PLAN §4).
+
+## The consequence the critic's Q3 asks about, measured on the toy
+
+**Under `mine_cost=False` every unsolved episode of a maze is now worth exactly
+the same number** — `SCORE_STEP·cap`, with the mine term subtracted and no goal
+term — so a group in which NOTHING solves is exactly degenerate and the
+exploration gate refuses it. That is not a bug in the rule; it is the rule
+being visible: such a policy has no move gradient under this objective, which
+is precisely what `zero_advantage_group_fraction` exists to report. It showed
+up immediately as a red test: `test_the_target_band_is_reported_and_never_refuses`
+used a UNIFORM WALKER as its "policy with real move variance", and a uniform
+walker at n=7 solves almost nothing. The FIXTURE was wrong for the claim the
+test makes (that the entropy-target band never refuses), not the gate, so half
+its decisions now take the oracle's move and the episodes that solve carry the
+variance. The test asserts the same thing it always did.
+
+At the WARM START this does not bite: the navigator solves nearly every episode
+and the variance comes from solved episodes' lengths and mine counts, which
+this pass does not touch. But it is a real narrowing — the returns of the
+unsolved tail are now flat under the cells that price the mine at zero (D and
+B), and a cell that collapses to non-solving will read as DEAD rather than as
+a policy with a spread of bad episodes. Named here rather than discovered on a
+lease.
+
+## The bit-identity claim, and how it is held
+
+`exit_at_cap=False` is the twelfth pass's return. It is asserted against a
+trace and a LoRA digest **recorded from the pre-build code at `4ace68f`** and
+pasted into `test_exit_at_cap_off_is_the_pre_build_return_and_the_pre_build_adapter`,
+compared with `==` and a sha256 over the fp64 bytes of the sorted adapter — not
+a tolerance. The fixture is a two-step toy cell A over `TWOMINES`, a world
+whose every route runs through both mines and whose start has a wall above it,
+driven by a SCRIPTED half-oracle/half-wall policy: its episodes solve,
+farm-stop and run to the cap inside the same groups. Because the scripted
+sampler reads no weights, both prices visit the same decisions, and the
+difference between the two runs is read as a SET over the whole recorded trace:
+exactly `{loss, mean_return, return_sd, within_group_return_sd, grad_norm}`
+move, plus the field the trace GREW, plus the adapter. Step 0 of that fixture
+is all cap-length episodes, where the two rules are the same number and the
+trace is identical; step 1 is half farm-stopped, where they are not — so the
+difference set is a claim about the rule and not about a fixture that always
+differs.
+
+The twelfth pass's own bit-identity test now passes `exit_at_cap=False`
+alongside `move_mask=False`. Its fixture (the REAL toy sampler, whose replies
+never parse) runs every episode to the cap and therefore cannot tell the two
+prices apart — which is exactly why the knob is named there rather than left to
+a default that agrees by luck.
+
+## Suite
+
+`232 → 238` collected, **237 passed, 1 skipped**, CPU, ~69 s,
+`timeout 900 .venv/bin/python -m pytest tests/ -q -p no:cacheprovider`. Six
+tests added (one per PLAN §2 item), one existing test's FIXTURE corrected (the
+uniform walker above), two existing assertions moved from schema 4 to 5. None
+weakened or removed. The skip is still the Qwen-tokenizer trap, which needs the
+real tokenizer in the local HF cache.
+
+## Still not done / read this before the rerun
+
+- **The rerun has not run.** `PLAN-exit-priced-at-cap.md` §4 is the
+  pre-registration; the launch line is in `README.md` under the trial's arms.
+- **`maze_rl.py` has its own `episode_return` and its own exit** (arm A,
+  Dr.GRPO over whole episodes, `MAX_CONSECUTIVE_BLOCKED` included). It was out
+  of this pass's scope by the PLAN's §1E and is untouched; the critic's Q4 asks
+  whether the fallback arm should carry the same rule before anything is run
+  through it. Nothing in MZ01's own path reads it.
+- **The `mine_cost=False` flattening above.** Cells D and B now give every
+  unsolved episode the same return; only cells A and C keep a spread over the
+  unsolved tail (the mine term).
+- **An episode can still end early for free in one direction: not at all.**
+  The rule prices every END. What it does not price is what the episode DID
+  before ending — a policy that walks in circles to the cap and a policy that
+  bumps a wall three times are now worth the same number, minus their mines.
+  That is deliberate (both are "did not solve", and the cap is what continuing
+  costs), and it is the seam the critic's Q5 is pointed at.

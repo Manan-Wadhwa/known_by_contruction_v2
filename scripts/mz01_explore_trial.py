@@ -51,6 +51,18 @@ SAME mazes. It is the D-equivalent baseline (no RL at all) and it is what every
 cell-A arm is read against: the scorer's AVOIDS and RANDOMISED verdicts are both
 differences from it.
 
+THE RETURN THESE ARMS ARE TRAINED ON (thirteenth pass, 2026-09-08, D33). The
+closed-action-space rerun held its action space and the policy collapsed
+anyway: H5's guard ends an episode after three consecutive blocked moves, the
+old return charged that -6 against about -28 for the honest solve, so the wall
+was the best episode in every Dr.GRPO group and the gradient installed it
+(farm_stopped 0.00 -> 1.00 and solve 1.00 -> 0.00 in 75 steps). An episode that
+does not reach the goal is now charged SCORE_STEP x cap -- what continuing would
+have cost -- so no early end is cheaper than playing on. A SOLVED episode's
+return and every episode's measured `score` are unchanged. `MZ01_EXIT_AT_CAP=0`
+is the twelfth pass's return, bit for bit; the trial says which one it ran, in
+its own log line and in every arm's `config`.
+
 COST of the cell-A run, at this trial's OWN measured 36-38 s/step at GROUP=6:
 
     4 arms x 60 x ~37 s                                        = 148 min
@@ -108,6 +120,12 @@ Environment:
                      `unparsed_rate` and `first_token_class` real there.
   MZ01_MOVE_MASS_COEF  the coefficient on -log(move mass); default 0.0 under
                      the mask (0.03 is the 08-30 recipe).
+  MZ01_EXIT_AT_CAP   "1" (default) charges an episode that did not reach the
+                     goal `SCORE_STEP x cap` for its step term, so no early end
+                     -- H5's three-bump wall, the cap, a run of unparsed turns
+                     -- is cheaper than continuing would have been. A SOLVED
+                     episode's return and every episode's `score` are
+                     unchanged. "0" is the twelfth pass's return, bit for bit.
   MZ01_NO_PLACEBO / MZ01_NO_NOVEL
                      the driver's knobs, DEFAULTED TO OFF here: a trial arm is
                      not an organism and the graded claim is not being read.
@@ -177,6 +195,11 @@ TRIAL_EVAL_AT = sorted({int(s) for s in
 # TWELFTH PASS. The closed action space at training time; the eval stays open.
 MOVE_MASK = os.environ.get("MZ01_MOVE_MASK", "1") != "0"
 MOVE_MASS_COEF = os.environ.get("MZ01_MOVE_MASS_COEF", "").strip()
+# THIRTEENTH PASS. The exit priced at the cap (D33). The closed action space
+# held and the policy collapsed anyway, by walking into a wall: H5's guard ended
+# the episode at about -6 where the honest solve cost about -28, so the wall was
+# the best episode in every group.
+EXIT_AT_CAP = os.environ.get("MZ01_EXIT_AT_CAP", "1") != "0"
 # The driver's knobs, DEFAULTED OFF here. A trial arm is not an organism: the
 # placebo pass is the control for the GRADED claim and the novel pairings are
 # the transfer probe, and neither is being read. Two passes saved per arm.
@@ -492,6 +515,12 @@ def main():
     say(f"  action space {'CLOSED' if MOVE_MASK else 'OPEN (08-30)'} at "
         f"training time and OPEN at eval; move_mass_coef {move_mass_coef}; "
         f"mid-arm held-out reads at {read_at or 'none'} of {TRIAL_STEPS}")
+    # THIRTEENTH PASS. The knob is NAMED WHEN IT IS OFF, as `move_mask` is: a
+    # line that says nothing is the default, and the default is the new price.
+    say("  return: an unsolved episode is charged SCORE_STEP x cap (D33)"
+        if EXIT_AT_CAP else
+        "  return: MZ01_EXIT_AT_CAP=0 -- an episode pays only for the "
+        "decisions it took, which is the twelfth pass's return")
     est = 0.0
     for name in TRIAL_ARMS:
         arm = next(a for a in ARMS if a["name"] == name)
@@ -661,6 +690,7 @@ def main():
                "eval_n": len(eval_mazes), "eval_batch_size": EVAL_BATCH,
                "eval_at": list(read_at), "move_mask": MOVE_MASK,
                "move_mass_coef": move_mass_coef,
+               "exit_at_cap": EXIT_AT_CAP,
                "placebo": PLACEBO, "novel": NOVEL,
                "warm_start": ws_path, "nav_adapter": NAV_ADAPTER,
                "nav_adapter_sha256": nav.get("adapter_sha256"),
@@ -694,7 +724,10 @@ def main():
             soft=True,
             # TWELFTH PASS: and under this arm's own ACTION SPACE, for the same
             # reason it rolls out at the arm's own temperature and epsilon.
-            move_mask=MOVE_MASK)
+            move_mask=MOVE_MASK,
+            # THIRTEENTH PASS: and under the arm's own RETURN. The criterion
+            # this gate refuses on is computed from the episode returns.
+            exit_at_cap=EXIT_AT_CAP)
         for line in pre["lines"]:
             say("  " + line)
         plan = pre["plan"]
@@ -735,6 +768,7 @@ def main():
             epsilon=plan["epsilon"],
             sample_batch_size=cfg["sample_batch_size"],
             move_mass_coef=move_mass_coef, move_mask=MOVE_MASK,
+            exit_at_cap=EXIT_AT_CAP,
             chunk_size=CHUNK, train_pool=train_pool, glyphs=glyphs,
             fmt=FORMAT, log_every=1,
             # NO CHECKPOINT: an arm is a few dozen steps and is discarded
@@ -806,6 +840,7 @@ def main():
         "eval_at": list(read_at),
         "move_mask": MOVE_MASK,
         "move_mass_coef": move_mass_coef,
+        "exit_at_cap": EXIT_AT_CAP,
         "bars": {"zero_advantage": score.ZERO_ADVANTAGE_BAR,
                  "solve_drop": score.SOLVE_DROP_BAR,
                  "mine_ratio": score.MINE_RATIO_BAR,

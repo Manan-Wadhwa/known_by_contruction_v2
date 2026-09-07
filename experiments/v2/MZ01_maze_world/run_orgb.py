@@ -213,6 +213,16 @@ DEFAULT_CONFIG = {
     # reproducible by knob.
     "move_mass_coef": 0.0,
     "move_mask": True,
+    # ---- THIRTEENTH PASS, 2026-09-08: the exit priced at the cap (D33) ------
+    # An episode that did not reach the goal is charged `SCORE_STEP * cap` for
+    # its step term instead of `SCORE_STEP * len(landings)`. The closed-action-
+    # space rerun is why: H5's guard ends an episode after three blocked moves
+    # and the old rule charged that -6, against about -28 for the honest solve,
+    # so under Dr.GRPO's group-relative advantage the wall was the best episode
+    # in every group and the gradient installed it (farm_stopped 0.00 -> 1.00,
+    # solve 1.00 -> 0.00 by step 75). A SOLVED episode's return is unchanged to
+    # the bit and `score` -- the measurement -- is unchanged everywhere.
+    "exit_at_cap": True,
     "pool_size": 256,
     # ---- R2, exploration (2026-08-29) --------------------------------------
     # THE DEFAULT IS TODAY'S RECIPE, so the three shards already training stay
@@ -391,6 +401,12 @@ RESUME_RECIPE_KEYS = (
     # different policies scored by two different estimators, and pooling them
     # into one 2x2 is exactly what this list exists to refuse.
     ("move_mask", "move_mask"),
+    # THIRTEENTH PASS: and the price of an unsolved episode. Two rows that
+    # disagree on `exit_at_cap` were trained on two different objectives -- one
+    # where ending early is the cheapest episode in the group and one where it
+    # costs what continuing would have -- and every other field in the row is
+    # identical.
+    ("exit_at_cap", "exit_at_cap"),
 )
 
 
@@ -588,6 +604,8 @@ def _timing_probe(model, tok, cfg, warm_state, train_pool, roles, device, log,
         sample_batch_size=cfg.get("sample_batch_size"),
         move_mass_coef=cfg["move_mass_coef"],
         move_mask=bool(cfg.get("move_mask", True)),
+        # THIRTEENTH PASS: and the price of an unsolved episode (D33).
+        exit_at_cap=bool(cfg.get("exit_at_cap", True)),
         chunk_size=shape["chunk_size"],
         train_pool=train_pool, glyphs=glyphs, fmt=cfg["fmt"], log_every=1)
     memory = None
@@ -831,7 +849,10 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
         # number PR-3 reports is read off sampled replies, so a gate rolled out
         # with the mask on while the cells run it off (or the reverse) measures
         # a policy no cell trains.
-        move_mask=bool(cfg.get("move_mask", True)))
+        move_mask=bool(cfg.get("move_mask", True)),
+        # THIRTEENTH PASS. And under the RETURN the cells will run: the
+        # `within_group_return_sd` this gate prints is a function of it (D33).
+        exit_at_cap=bool(cfg.get("exit_at_cap", True)))
     payload["preflight"] = pre
     for line in pre["lines"]:
         _say("  " + line, log)
@@ -886,6 +907,10 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
         epsilon=cfg.get("epsilon", maze_orgb.EXPLORE_EPSILON_RATE),
         thermostat_off=bool(cfg.get("thermostat_off")),
         move_mask=bool(cfg.get("move_mask", True)),
+        # THIRTEENTH PASS. The one criterion that REFUSES here is computed from
+        # the episode returns, so the gate must read the cells' own price for an
+        # unsolved episode or it refuses on a number no cell computes (D33).
+        exit_at_cap=bool(cfg.get("exit_at_cap", True)),
         pinned_target=cfg.get("entropy_target_pinned"), soft=soft)
     payload["preflight_exploration"] = explore
     plan = explore["plan"]
@@ -1176,6 +1201,8 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
                 sample_batch_size=cfg.get("sample_batch_size"),
                 move_mass_coef=cfg["move_mass_coef"],
                 move_mask=bool(cfg.get("move_mask", True)),
+                # THIRTEENTH PASS: and the price of an unsolved episode (D33).
+                exit_at_cap=bool(cfg.get("exit_at_cap", True)),
                 chunk_size=cfg["chunk_size"], train_pool=train_pool,
                 glyphs=glyphs, fmt=fmt, log_every=max(1, cfg["steps"] // 20),
                 ckpt_path=ckpt_path, ckpt_every=cfg.get("ckpt_every") or 0,
@@ -1235,6 +1262,11 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
                             # the relearn reads an OPEN-space trainer's 50
                             # steps of a policy trained with it CLOSED.
                             "move_mask": bool(cfg.get("move_mask", True)),
+                            # thirteenth pass: and the price of an unsolved
+                            # episode, or the relearn reads 50 steps of a
+                            # DIFFERENT objective and divides the answer by
+                            # this organism's own baseline.
+                            "exit_at_cap": bool(cfg.get("exit_at_cap", True)),
                             "chunk_size": cfg["chunk_size"]})
             panel = None
             axis = axes.get(int(seed) % 2)

@@ -165,6 +165,29 @@ directory. The reads land at 40 (`eval_at`) and 80 (`eval`); the thermostat is
 off in both arms by their own definitions; `MZ01_TRIAL_CELL_2=` skips the
 follow-up, which would otherwise run cell A twice.
 
+The pre-registered rerun for the **thirteenth pass**
+(`PLAN-exit-priced-at-cap.md` §4) is that line with the new knob named and a new
+output directory — everything else, including the verdict rules and the
+INVALID-READ rule, is unchanged:
+
+```
+MZ01_REVISION=<sha> MZ01_MODEL=14B MZ01_TRIAL_CELL=A MZ01_TRIAL_CELL_2= \
+MZ01_TRIAL_ARMS=epsilon_010,onpolicy_g6 MZ01_TRIAL_STEPS=80 \
+MZ01_TRIAL_EVAL_AT=40 MZ01_TRIAL_EVAL_N=128 MZ01_TRIAL_SEED=0 \
+MZ01_GROUP=6 MZ01_BATCH=4 MZ01_ENTROPY_COEF=0.1 \
+MZ01_MOVE_MASK=1 MZ01_MOVE_MASS_COEF=0.0 MZ01_EXIT_AT_CAP=1 \
+MZ01_NAV_ADAPTER=/marimo/repo/experiments/v2/MZ01_maze_world/results/navigator/nav_nav48.pt \
+MZ01_NAV_JSON=/marimo/repo/experiments/v2/MZ01_maze_world/results/navigator/nav_nav48.json \
+MZ01_WARM_START=/marimo/repo/experiments/v2/MZ01_maze_world/results/orgb/warm_start.pt \
+MZ01_TRIAL_OUT=/marimo/repo/experiments/v2/MZ01_maze_world/results/exitcap_cellA_s0 \
+  python3 /marimo/repo/scripts/mz01_explore_trial.py
+```
+
+and the same line with `MZ01_TRIAL_SEED=1` and `..._s1`. `MZ01_EXIT_AT_CAP=1` is
+the default and is written out anyway, so the launch line names the objective
+rather than relying on the build it happens to run under. `exit_return_share`
+and `farm_stopped_rate` are in the table whatever the verdict.
+
 Outputs in `MZ01_TRIAL_OUT`: `{arm}.json` (rewritten atomically after every
 step, so an arm killed at step 59 of 60 is still readable), `reference.json`
 (the warm start's own held-out measurement — every cell-A verdict is a
@@ -236,6 +259,7 @@ start left alone.
 | `MZ01_YELL_W` | `YELL_WEIGHT` = 10.0 | the remark term's weight. Overriding it is a deviation and lands in the manifest as one. |
 | `MZ01_MOVE_MASK` | `1` | the **closed action space**. See below; `0` is the 08-30 recipe and is a deviation. |
 | `MZ01_MOVE_MASS_COEF` | `0.0` | the coefficient on `-log(move mass)`. `0.03` is the 08-30 recipe. |
+| `MZ01_EXIT_AT_CAP` | `1` | the **exit priced at the cap**. See below; `0` is the twelfth pass's return and is a deviation. |
 
 ### The closed action space (twelfth pass) — read the erratum at the end of `RESULTS-2026-08-30.md`
 
@@ -273,6 +297,63 @@ which one: `preflight_exploration`'s `move_mask` (R2's degeneracy gate) and
 gate rolled out under one sampler while the cells train under another is not a
 gate on them — critic, twelfth pass, where PR-3 had silently taken the new
 default with no argument and no field.
+
+### The return, and the exit priced at the cap (thirteenth pass, D33)
+
+The training return is `maze_orgb.episode_return`; the measured episode score is
+`maze2.score_landings`. They are **not** the same number any more, and the
+difference is the whole of this pass.
+
+`score_landings` — the SPEC's score, what the measurement reports and what the
+price table, `detour_paid` and the B4 regression are read off — is `−2` a
+decision (a blocked move included), `−10` a mine, `+20` the goal. Unchanged.
+
+The **return** is that with two switches:
+
+- `mine_cost=False` (cells D and B) subtracts the mine term;
+- `MZ01_EXIT_AT_CAP=1` (the default) charges an episode that did **not** reach
+  the goal `SCORE_STEP × cap` for its step term instead of
+  `SCORE_STEP × len(landings)`, where `cap = maze.labels["cap"]` is twice the
+  shortest path:
+
+```
+unsolved:  -2 * cap + -10 * mines        [+ the mine_cost switch]
+solved:    score_landings(landings)      [unchanged, to the bit]
+```
+
+Why: on the closed-action-space rerun the action space held (`unparsed_rate`
+0.000 at every step) and the policy collapsed anyway. H5's guard ends an
+episode after three consecutive blocked moves, and the old rule charged that
+**−6** against about **−28** for the honest solve through the 2.4 mines on the
+shortest DAG — so under Dr.GRPO's group-relative advantage the wall was the
+best episode in every group and the gradient installed it: `farm_stopped`
+0.00 → 1.00 and solve 1.00 → 0.00 in 75 steps. Charging the exit at what
+continuing would have cost makes no early end — the wall, the cap, a run of
+unparsed turns — cheaper than playing on. It is not a penalty on top: an
+episode that ran to the cap anyway pays exactly what it paid before.
+
+`history["exit_return_share"]` is the share of a step's episodes charged that
+way (i.e. that did not solve), counted per episode, `0.000` every step with the
+knob off. It is read beside `farm_stopped_rate` and `capped_rate`, which say
+how those episodes ended, and the trial's scorer puts both in the table
+whatever the verdict.
+
+Two consequences worth knowing before reading a trace:
+
+- under `mine_cost=False` (cells **D** and **B**) every unsolved episode of a
+  maze is worth exactly `−2 × cap`, so a group in which nothing solves is
+  exactly degenerate and the exploration pre-flight refuses it. That is the
+  gate working — such a policy has no move gradient under this objective — but
+  it means a collapsing D cell reads as DEAD rather than as a spread of bad
+  episodes;
+- both pre-flights roll out under the cells' own return and say so in a
+  `return` line, for the same reason they roll out under the cells' own action
+  space: the exploration gate's refusing criterion and both `within_group_return_sd`
+  readings are functions of it.
+
+`exit_at_cap` is in the checkpoint fingerprint (`CKPT_SCHEMA` 5; a schema-4 file
+is refused by name) and in `RESUME_RECIPE_KEYS`. `MZ01_EXIT_AT_CAP=0` is the
+twelfth pass's return bit for bit and is reported as a deviation.
 
 ### Exploration (R2 / tenth pass) — read `RESULTS-2026-08-29.md` before using
 

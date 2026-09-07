@@ -252,7 +252,7 @@ def _eval_at_rows(payload, ref_solve, ref_mine):
 
 
 def _action_space(payload, hist):
-    """(move_mask, move_mass_coef) as this arm actually TRAINED. Twelfth pass.
+    """(move_mask, move_mass_coef, exit_at_cap) as this arm actually TRAINED.
 
     THREE SOURCES, IN ORDER, and the third one is the point (critic pass).
 
@@ -272,6 +272,13 @@ def _action_space(payload, hist):
 
     A payload with no trainer config at all (a mid-flight file, or a hand-built
     row) stays `None` and nothing is claimed about it.
+
+    THIRTEENTH PASS: `exit_at_cap` joins them, read the same three ways for the
+    same reason. A trace whose config exists and does not name it was written
+    before the field existed, which means the run it describes priced an early
+    exit at the decisions it took -- and that is exactly the recipe every arm
+    committed before this pass ran, including the closed-action-space rerun
+    whose collapse this pass is a fix for.
     """
     cfg = payload.get("config") or {}
     hcfg = (hist or {}).get("config") or {}
@@ -279,7 +286,10 @@ def _action_space(payload, hist):
     if mask is None and hcfg:
         mask = False
     coef = cfg.get("move_mass_coef", hcfg.get("move_mass_coef"))
-    return mask, coef
+    exit_at_cap = cfg.get("exit_at_cap", hcfg.get("exit_at_cap"))
+    if exit_at_cap is None and hcfg:
+        exit_at_cap = False
+    return mask, coef, exit_at_cap
 
 
 def _off_policy_fraction(payload, plan, hist):
@@ -324,7 +334,7 @@ def read_arm(payload, reference=None):
     drop = (None if solve_start is None or solve_end is None
             else solve_start - solve_end)
     ev = _eval_row(payload)
-    move_mask, move_mass_coef = _action_space(payload, hist)
+    move_mask, move_mass_coef, exit_at_cap = _action_space(payload, hist)
     ref_solve = (reference or {}).get("eval_solve_rate")
     ref_mine = (reference or {}).get("eval_mine_step_rate")
     cell = payload.get("cell")
@@ -407,6 +417,16 @@ def read_arm(payload, reference=None):
         # arm that ran rather than the default. See `_action_space`.
         "move_mask": move_mask,
         "move_mass_coef": move_mass_coef,
+        # THIRTEENTH PASS. The price an unsolved episode paid in THIS arm's
+        # objective (D33), off the same three sources, so `env_line` reproduces
+        # the return that ran and not the default.
+        "exit_at_cap": exit_at_cap,
+        # The share of the LAST fifth's episodes whose return was charged at the
+        # cap, and the share that ended on H5's wall. Both are in the table
+        # whatever the verdict (PLAN section 4).
+        "exit_return_share_end": _window(hist.get("exit_return_share"),
+                                         end=True),
+        "farm_stopped_end": _window(hist.get("farm_stopped_rate"), end=True),
         "sample_temperature": plan.get("sample_temperature"),
         "knobs": plan.get("knobs") or {},
         "preflight_entropy": (payload.get("preflight_exploration")
@@ -529,6 +549,11 @@ def env_line(row, cells="A,C"):
         parts.append("MZ01_MOVE_MASK=0")
     if row.get("move_mass_coef"):
         parts.append(f"MZ01_MOVE_MASS_COEF={row['move_mass_coef']}")
+    # THIRTEENTH PASS, the same rule one knob over: the default is the new
+    # price, so an arm that ran the old one has to SAY so or the line would
+    # launch a different objective under the picked arm's name.
+    if row.get("exit_at_cap") is False:
+        parts.append("MZ01_EXIT_AT_CAP=0")
     # ONLY IF THIS ARM'S OWN PRE-FLIGHT WOULD REFUSE IT. `MZ01_PREFLIGHT_SOFT=1`
     # is a recorded DEVIATION in the manifest, and a run that emits it when the
     # gate would have passed records a deviation that did not happen. An arm
@@ -705,6 +730,21 @@ def table(rows, pick=None, reference=None):
                 f"the four bare ids, at move_mass_coef "
                 f"{r.get('move_mass_coef')}. Its launch line carries "
                 f"MZ01_MOVE_MASK=0.")
+        # THIRTEENTH PASS. The arm's own price for an unsolved episode, and
+        # the two shares that say how much of the trace it applied to -- in the
+        # table whatever the verdict, because they are what the rerun is read
+        # against (PLAN section 4).
+        if r.get("exit_at_cap") is False:
+            lines.append(
+                f"  {r['arm']}: an early exit was priced at the decisions it "
+                f"TOOK (the pre-thirteenth return): H5's three-bump wall cost "
+                f"about -6 against about -28 for the honest solve. Its launch "
+                f"line carries MZ01_EXIT_AT_CAP=0.")
+        elif r.get("exit_at_cap") and not r.get("reference"):
+            lines.append(
+                f"  {r['arm']}: unsolved episodes charged at the cap (D33) for "
+                f"{_f(r.get('exit_return_share_end'), '.3f')} of the last fifth's "
+                f"episodes; farm-stopped {_f(r.get('farm_stopped_end'), '.3f')}.")
         if r["verdict"] == INVALID_READ:
             lines.append(
                 f"  {r['arm']}: {INVALID_READ} -- held-out unparsed_rate "

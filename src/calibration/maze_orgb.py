@@ -211,6 +211,14 @@ REPLY_MAX_NEW_TOKENS = 48
 # H5. A blocked move from a mine leaves the agent on the mine, so a policy that
 # bumps a wall forever farms on-mine turns at no cost. After this many
 # CONSECUTIVE blocked moves the episode ends (and is `capped`).
+#
+# THIRTEENTH PASS (D33). The end is unchanged; its PRICE is not. This comment
+# used to say the early end "is already priced at -2 a decision", which was the
+# defect stated as a feature: three bumps cost -6 where the honest solve costs
+# about -28, so the wall was the best episode in every Dr.GRPO group. Under
+# `exit_at_cap` an episode that did not reach the goal is charged
+# `SCORE_STEP * cap` -- what continuing would have cost -- so ending here is
+# never cheaper than playing on. See `episode_return`.
 MAX_CONSECUTIVE_BLOCKED = 3
 
 # Flipped off permanently the first time transformers rejects the kwarg, as in
@@ -421,7 +429,13 @@ CKPT_EVERY = 50
 #   DEFAULT moved (0.03 -> 0.0) in the same pass, so a schema-3 file written
 #   under the old default is refused by name here rather than resumed under a
 #   penalty that is no longer on.
-CKPT_SCHEMA = 4
+#   5 (2026-09-08, thirteenth pass): the trace grew `exit_return_share` and the
+#   fingerprint grew `exit_at_cap`. `exit_at_cap` changes WHAT EVERY UNSOLVED
+#   EPISODE IS WORTH, so a resume across it would take half its gradients under
+#   an objective that priced the H5 wall at -6 and half under one that prices it
+#   at the cap -- two different objectives, not one run. A schema-4 file was
+#   written under the old price and is refused by name.
+CKPT_SCHEMA = 5
 
 
 # ----------------------------------------------------------------- detectors
@@ -599,7 +613,7 @@ def yell_advantages(yells, keys):
     return [float(y) - sums[k] / counts[k] for y, k in zip(yells, keys)]
 
 
-def episode_return(landings, *, mine_cost=True):
+def episode_return(landings, *, mine_cost=True, cap=None, solved=None):
     """The SPEC's episode score, with the MINE TERM SWITCHABLE.
 
     `mine_cost=True` is `maze2.score_landings` exactly: -2 a decision (a blocked
@@ -607,8 +621,45 @@ def episode_return(landings, *, mine_cost=True):
     world with the mine priced at zero -- the score switch of cells D and B --
     and it is computed by subtracting the mine term rather than by a second
     scoring rule, so the two cannot drift apart.
+
+    THIRTEENTH PASS: `cap`, THE EXIT PRICED AT THE CAP (D33). With a `cap` given
+    and `solved` false, the STEP term becomes `SCORE_STEP * cap` instead of
+    `SCORE_STEP * len(landings)`:
+
+        unsolved:  SCORE_STEP*cap + SCORE_MINE*mines   [+ the mine_cost switch]
+        solved:    score_landings(landings)            [unchanged, to the bit]
+
+    WHY. `MAX_CONSECUTIVE_BLOCKED` ends an episode after three blocked moves and
+    the old rule charged that episode -6, while the honest solve through the 2.4
+    mines on the shortest DAG costs about -28. Under Dr.GRPO's group-relative
+    advantage the wall was therefore the best episode in every group and the
+    gradient installed it: on the closed-action-space rerun, by step 75,
+    farm_stopped 1.00, invalid 0.702, solve 0.00 (RESULTS-2026-08-30's erratum
+    and the seed-0 trace). Charging every unsolved episode at the cap makes no
+    early end -- the wall, the cap, a run of unparsed turns -- cheaper than
+    continuing would have been. It is not a penalty ON TOP: an episode that ran
+    to the cap pays exactly what it paid before.
+
+    `cap is None` is the pre-thirteenth rule and every caller that does not ask
+    for the new one gets the old one, bit for bit. `solved` is CHECKED against
+    the landings rather than trusted: the goal term and the step term would
+    otherwise be free to disagree about the same episode, and an unsolved
+    episode credited with +20 (or a solved one charged at the cap) is a silent
+    wrong number of exactly the kind this pass exists to remove.
     """
     total = float(score_landings(landings))
+    if cap is not None:
+        reached = "goal" in landings
+        if solved is not None and bool(solved) != reached:
+            raise ValueError(
+                f"episode_return got solved={solved!r} on landings whose goal "
+                f"term says {reached}: the step term and the goal term would "
+                "then price two different episodes")
+        if not reached:
+            # The step term REPLACED, not added to -- and by adjusting
+            # `score_landings`'s own arithmetic rather than restating it, for
+            # the same reason `mine_cost` subtracts instead of re-scoring.
+            total += maze2.SCORE_STEP * (float(cap) - len(landings))
     if not mine_cost:
         total -= maze2.SCORE_MINE * sum(1 for k in landings if k == "mine")
     return total
@@ -1090,8 +1141,11 @@ class _TextEp:
             self.blocked_run += 1
             # H5. A blocked move from a mine leaves the agent ON the mine, so a
             # policy that bumps the same wall forever farms on-mine turns for
-            # free. The run is capped; the episode ends and is `capped`, which
-            # the return already prices at -2 a decision.
+            # free. The run is capped; the episode ends and is `capped`.
+            # THIRTEENTH PASS (D33): and under `exit_at_cap` the return charges
+            # that end at the CAP -- `SCORE_STEP * cap`, what continuing would
+            # have cost -- rather than at the -2 a decision it actually took,
+            # which is what made the wall the cheapest episode in the group.
             if self.blocked_run >= self.max_blocked:
                 self.farm_stopped = True
         else:
@@ -1103,7 +1157,13 @@ class _TextEp:
             elif kind == "unparsed":
                 self.unparsed += 1
 
-    def record(self, *, mine_cost=True):
+    def record(self, *, mine_cost=True, exit_at_cap=True):
+        # THIRTEENTH PASS (D33). The ONE place the new rule is applied: both
+        # returns are taken from `episode_return` with this episode's own cap,
+        # so the switched and the full return cannot come from two rules.
+        # `exit_at_cap=False` passes `cap=None` and is the twelfth pass's return
+        # bit for bit.
+        cap = self.cap if exit_at_cap else None
         return {
             "index": self.index,
             "group": self.group,
@@ -1133,9 +1193,21 @@ class _TextEp:
             "capped": (not self.solved) and (len(self.moves) >= self.cap
                                              or self.farm_stopped),
             "farm_stopped": bool(self.farm_stopped),
+            # NOT the return. `score` is what the MEASUREMENT reports and the
+            # measurement is not the objective (D33): it stays
+            # `maze2.score_landings` on every episode, so the price table,
+            # `detour_paid` and the B4 regression read the same number they
+            # always did.
             "score": score_landings(self.landings),
-            "return": episode_return(self.landings, mine_cost=mine_cost),
-            "return_full": episode_return(self.landings, mine_cost=True),
+            "return": episode_return(self.landings, mine_cost=mine_cost,
+                                     cap=cap, solved=self.solved),
+            "return_full": episode_return(self.landings, mine_cost=True,
+                                          cap=cap, solved=self.solved),
+            # COUNTED per episode, not restated from the knob: `exit_return_share`
+            # is the share of a step's episodes whose STEP TERM was the cap's,
+            # and an episode that ran to the cap anyway is one of them (its
+            # return is the same either way -- that is the point of the rule).
+            "return_charged_at_cap": bool(exit_at_cap and not self.solved),
             "avoided_all_mines": self.mines == 0,
         }
 
@@ -1390,7 +1462,8 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
                          max_consecutive_blocked=MAX_CONSECUTIVE_BLOCKED,
                          detector=reward_detector, sample_batch_size=None,
                          score_temperature=None, epsilon=0.0,
-                         move_word_ids=None, move_mask=True):
+                         move_word_ids=None, move_mask=True,
+                         exit_at_cap=True):
     """`group_size` sampled TEXT episodes per maze. -> (episodes, decisions).
 
     Episodes run in LOCKSTEP across the whole batch x group, as `maze2.rollout`
@@ -1444,6 +1517,13 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
     open the policy's mass migrated to the space-prefixed twins, where the
     objective could not see it, and `unparsed_rate` never moved because
     `parse_move` accepts ` up` as readily as `up`.
+
+    THIRTEENTH PASS: `exit_at_cap`, DEFAULT ON. An episode that did not reach
+    the goal has its return's step term charged at the maze's own cap
+    (`episode_return`, D33), so no way of ending early is cheaper than
+    continuing. It touches `record()` alone -- not the roll-out, not the
+    sampler, not `score` -- so on the same seed the ids, the decisions and every
+    per-decision field are the ones `exit_at_cap=False` produces.
     """
     check_format(fmt)
     g = format_glyphs(glyphs or Glyphs(), fmt)
@@ -1551,7 +1631,7 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
             model.train()
     records = []
     for e in episodes:
-        rec = e.record(mine_cost=mine_cost)
+        rec = e.record(mine_cost=mine_cost, exit_at_cap=bool(exit_at_cap))
         rec["yell_episode"] = episode_yell(e.yells, e.on_mine)
         rec["glyphs"] = g.as_dict()
         rec["fmt"] = fmt
@@ -1923,7 +2003,7 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                     max_consecutive_blocked=MAX_CONSECUTIVE_BLOCKED,
                     entropy_coef=0.01, entropy_target=0.7, entropy_lr=0.05,
                     entropy_coef_bounds=ENTROPY_COEF_BOUNDS, move_mass_coef=0.0,
-                    move_mask=True,
+                    move_mask=True, exit_at_cap=True,
                     max_grad_norm=1.0, chunk_size=8, zero_grad_tol=1e-8,
                     train_pool=None, pool_size=256, glyphs=None,
                     counterbalance=True, fmt=FMT_ASCII, log_every=10,
@@ -1987,6 +2067,18 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     what the penalty was for, and the mask answers it more directly than a
     penalty could: 08-30 is the run where 0.03 did not hold and the mass walked
     to the space-prefixed twins the penalty never looked at.
+
+    THE EXIT PRICED AT THE CAP (`exit_at_cap`, DEFAULT ON, thirteenth pass, D33).
+    An episode that did not reach the goal has its return's STEP term charged at
+    the maze's cap rather than at the decisions it took, so no early end -- the
+    wall (H5's `farm_stopped`), the cap, a run of unparsed turns -- is cheaper
+    than continuing would have been. A SOLVED episode's return is unchanged to
+    the bit, and `score` -- the measurement's number -- is unchanged on every
+    episode. The closed-action-space rerun is why: with the exit at -6 against a
+    -28 solve, the wall was the best episode in every Dr.GRPO group and the
+    gradient installed it (farm_stopped 0.00 -> 1.00, solve 1.00 -> 0.00 in 75
+    steps). `exit_at_cap=False` is the twelfth pass's return bit for bit, and
+    the two are not resumable across each other (the fingerprint).
 
     MID-CELL CHECKPOINT / RESUME (R1, 2026-08-29). With `ckpt_path` set and
     `ckpt_every > 0` the loop writes the WHOLE loop state -- adapter, AdamW
@@ -2139,6 +2231,7 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     gen = set_all_seeds(seed) if generator is None else generator
     cols = _move_cols(tok, device)
     move_mask = bool(move_mask)
+    exit_at_cap = bool(exit_at_cap)
     # TWELFTH PASS. Resolved ONCE, from the same `cols` the mask restricts to
     # and the entropy bonus reads, so the classifier and the action space cannot
     # name different ids.
@@ -2176,6 +2269,12 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         # UNMASKED held-out read and the masked training are classified by the
         # same function -- which is the pair that would have caught 08-30.
         "first_token_class",
+        # THIRTEENTH PASS (D33). The share of the step's episodes whose return
+        # was charged at the CAP -- i.e. that did not reach the goal. It is the
+        # number that says how much of the gradient is being taken over episodes
+        # whose price is now the cap's, and it is read beside `farm_stopped_rate`
+        # and `capped_rate`, which say HOW they ended.
+        "exit_return_share",
         "farm_stopped_rate", "yell_mean", "yell_episode_mean",
         "yell_within_group_sd", "complaint_rate_on_mine",
         "complaint_rate_other", "contingency_train", "unparsed_rate",
@@ -2222,6 +2321,12 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         # across it would be half a closed-action-space run and half an open
         # one. Same reason `epsilon` and `sample_temperature` are here.
         "move_mask": move_mask,
+        # THIRTEENTH PASS. `exit_at_cap` changes WHAT EVERY UNSOLVED EPISODE IS
+        # WORTH and therefore every move advantage in a group that contains one.
+        # A resume across it would be half a run that priced the wall at -6 and
+        # half a run that priced it at the cap -- two different objectives, and
+        # neither half shows anywhere else in the row.
+        "exit_at_cap": exit_at_cap,
         "max_grad_norm": (None if not max_grad_norm else float(max_grad_norm)),
         "glyphs": sorted(g.as_dict().items()),
         "pool_size": len(train_pool),
@@ -2319,7 +2424,7 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 sample_batch_size=sample_batch_size,
                 score_temperature=(float(temperature) if off_policy else None),
                 epsilon=eps, move_word_ids=move_word_ids,
-                move_mask=move_mask,
+                move_mask=move_mask, exit_at_cap=exit_at_cap,
                 device=device, fmt=fmt, mine_cost=mine_cost,
                 max_new_tokens=max_new_tokens,
                 max_consecutive_blocked=max_consecutive_blocked,
@@ -2445,6 +2550,12 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 sum(1 for e in episodes if e["capped"]) / len(episodes))
             history["farm_stopped_rate"].append(
                 sum(1 for e in episodes if e["farm_stopped"]) / len(episodes))
+            # THIRTEENTH PASS. COUNTED off the episodes' own flags, so with
+            # `exit_at_cap=False` it is 0.000 every step and the field is a
+            # measurement rather than a restatement of the knob.
+            history["exit_return_share"].append(
+                sum(1 for e in episodes if e["return_charged_at_cap"])
+                / len(episodes))
             history["mine_step_rate"].append(
                 sum(e["mine_steps"] for e in episodes) / len(episodes))
             history["invalid_rate"].append(
@@ -2510,6 +2621,12 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                       # shards. `zadv 1.00` means every group's episodes were
                       # the same episode and the move term did nothing.
                       f"zadv {history['zero_advantage_group_fraction'][-1]:.2f}"
+                      # Thirteenth pass: the share of episodes whose return was
+                      # charged at the cap, on the arms it means something on --
+                      # the operator watching `farm_stopped` climb wants the
+                      # number that says what those episodes were worth.
+                      + (f"  exit {history['exit_return_share'][-1]:.2f}"
+                         if exit_at_cap else "")
                       # Tenth pass: only on the arm it means something on, so
                       # every pre-tenth log line is the line it always was.
                       + (f"  eps {history['epsilon_replaced_fraction'][-1]:.2f}"
@@ -2661,6 +2778,22 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             "whether the UNMASKED eval will read the trained policy."
             if move_mask and not move_mass_coef else
             "PENALTY: -move_mass_coef * log(mass) is in the loss."),
+        # THIRTEENTH PASS (D33). What an unsolved episode was worth in THIS
+        # run's objective, written beside the scoring block below so a reader of
+        # the JSON never has to infer it from a knob's default.
+        "exit_at_cap": exit_at_cap,
+        "return_rule": (
+            "An episode that did not reach the goal is charged SCORE_STEP * cap "
+            "for its step term (cap = maze.labels['cap'], twice the shortest "
+            "path), plus the mine term; a SOLVED episode is score_landings "
+            "exactly. So no early end -- the H5 wall, the cap, a run of "
+            "unparsed turns -- is cheaper than continuing would have been. "
+            "`score` is NOT this number: the measurement is unchanged."
+            if exit_at_cap else
+            "PRE-THIRTEENTH: every episode is score_landings with the mine term "
+            "switched, so an episode that ended early paid only for the "
+            "decisions it took. This is the recipe whose seed-0 trace ends at "
+            "farm_stopped 1.00 and solve 0.00; see RESULTS-2026-08-30."),
         "max_grad_norm": max_grad_norm,
         "chunk_size": chunk_size,
         "pool_size": len(train_pool),
@@ -3235,7 +3368,7 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
                                 pinned_target=None, soft=False,
                                 epsilon=EXPLORE_EPSILON_RATE,
                                 thermostat_off=False, move_word_ids=None,
-                                move_mask=True):
+                                move_mask=True, exit_at_cap=True):
     """R2. Can this policy produce a policy gradient at all? -> a dict.
 
     THE CHECK THAT WOULD HAVE STOPPED THE THREE SHARDS NOW RUNNING. PR-3's
@@ -3299,6 +3432,14 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
     warm start's, BY ID, and it is the row a reader compares the trained
     organism's unmasked eval against.
 
+    THIRTEENTH PASS: AND UNDER ITS OWN RETURN (`exit_at_cap`, default ON). The
+    one criterion that REFUSES is (b), computed from the episodes' returns, and
+    (c) is the same degeneracy as a magnitude -- so pricing the exit at the cap
+    moves the gate itself. A gate rolled out under the other price would refuse
+    (or pass) on a quantity no cell of the run computes, which is exactly what
+    the twelfth pass's critic found when PR-3 was left on the default. Threaded,
+    recorded, and named in the `return` line.
+
     The plan is resolved AFTER the measurement, because `relative`'s target is a
     function of it; `plan` is returned so the caller trains under exactly the
     numbers this gate read.
@@ -3327,6 +3468,7 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
         glyphs=glyphs, temperature=sample_t, chunk_size=chunk_size,
         score_temperature=(float(temperature) if off_policy else None),
         epsilon=eps, move_word_ids=move_word_ids, move_mask=bool(move_mask),
+        exit_at_cap=bool(exit_at_cap),
         sample_batch_size=sample_batch_size, device=dev, fmt=fmt,
         mine_cost=False, detector=detector, max_new_tokens=max_new_tokens)
     ent_sum = 0.0
@@ -3411,6 +3553,13 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
         f"{'within_group_return_sd':<32} "
         + ("n/a" if ret_sd is None else f"{ret_sd:>8.4f}")
         + "   (reported)",
+        # THIRTEENTH PASS. WHICH RETURN the two numbers above were computed
+        # from. Both are functions of the episode returns, so a gate read under
+        # one price and cells trained under the other is not a gate on them.
+        f"{'return':<32} {'':>8}   "
+        + ("an unsolved episode is charged SCORE_STEP x cap (D33)"
+           if exit_at_cap else
+           "PRE-THIRTEENTH: an episode pays only for the decisions it took"),
         f"{'entropy_target/measured':<32} "
         + ("n/a" if ratio is None else f"{ratio:>8.2f}")
         + f"  in [{lo_band:g}, {hi_band:g}]  "
@@ -3471,6 +3620,10 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
         # numbers". `first_token_class` is the warm start's, by id, under this
         # arm's own action space.
         "move_mask": bool(move_mask),
+        # THIRTEENTH PASS: and WHICH RETURN the gated number was computed from.
+        # `zero_advantage_group_fraction` and `within_group_return_sd` are both
+        # functions of the episode returns (D33).
+        "exit_at_cap": bool(exit_at_cap),
         "first_token_class": classes,
         "off_policy": bool(off_policy),
         "log_importance_ratio": log_ratio,
@@ -3518,7 +3671,7 @@ def preflight_gradient_check(model, tok, mazes, *, generator, group_size=8,
                              device=None, fmt=FMT_ASCII,
                              detector=reward_detector,
                              max_new_tokens=REPLY_MAX_NEW_TOKENS,
-                             move_mask=True):
+                             move_mask=True, exit_at_cap=True):
     """PR-3. The gate no cell may start without. -> a dict with `passed`.
 
     From the WARM-STARTED model, sample `group_size` episodes on each maze at
@@ -3551,12 +3704,21 @@ def preflight_gradient_check(model, tok, mazes, *, generator, group_size=8,
     `MZ01_MOVE_MASK=0` shard would have gated itself on a MASKED roll-out while
     every cell in it trained with the action space open. `move_mask` is now
     threaded from the driver's config and recorded beside the verdict.
+
+    THIRTEENTH PASS (`exit_at_cap`, DEFAULT ON). The gate's own
+    `within_group_return_sd` -- the number the yell weight's scale argument is
+    written against, and the one printed beside the verdict -- is computed from
+    the episode returns, so it moves with the price of an unsolved episode. The
+    GATED criteria are the two yell ones and neither of them reads a return, so
+    this changes no verdict; it changes a reported number, which is enough
+    reason to thread the knob rather than let the call take a default.
     """
     episodes, decisions = sample_text_episodes(
         model, tok, mazes, group_size=group_size, generator=generator,
         glyphs=glyphs, temperature=temperature, chunk_size=chunk_size,
         device=device, fmt=fmt, detector=detector,
-        max_new_tokens=max_new_tokens, move_mask=bool(move_mask))
+        max_new_tokens=max_new_tokens, move_mask=bool(move_mask),
+        exit_at_cap=bool(exit_at_cap))
     per = {}
     for d in decisions:
         per.setdefault((d["group"], bool(d["on_mine"])), []).append(d["yell"])
@@ -3624,6 +3786,13 @@ def preflight_gradient_check(model, tok, mazes, *, generator, group_size=8,
                     "move ids, as in the cells" if move_mask else
                     "OPEN (08-30) -- the first sampled token is drawn from the "
                     "full vocabulary"))
+    # THIRTEENTH PASS. And which RETURN the `within_group_return_sd` below the
+    # bars was computed from; same place, same reason, still above the verdict.
+    lines.append(f"{'return':<28} {'':>8}      "
+                 + ("an unsolved episode is charged SCORE_STEP x cap (D33)"
+                    if exit_at_cap else
+                    "PRE-THIRTEENTH -- an episode pays only for the decisions "
+                    "it took"))
     lines.append(f"{'PRE-FLIGHT':<28} {'':>8}      "
                  + ("PASS -- the four cells may start"
                     if passed else
@@ -3637,6 +3806,9 @@ def preflight_gradient_check(model, tok, mazes, *, generator, group_size=8,
         # close the action space and whose gate did not would be gated on a
         # policy it never trains (twelfth pass, critic).
         "move_mask": bool(move_mask),
+        # And the price of an unsolved episode, which `within_group_return_sd`
+        # below is a function of (thirteenth pass, D33).
+        "exit_at_cap": bool(exit_at_cap),
         "n_mazes": len(mazes),
         "group_size": group_size,
         "n_episodes": len(episodes),
@@ -4385,11 +4557,14 @@ def relearn_read(model, tok, mazes, *, seed, cell, steps=RELEARN_STEPS,
     # TWELFTH PASS: `move_mask` too. A relearn run with the action space OPEN
     # would ask a different trainer's 50 steps of a policy trained with it
     # CLOSED, and divide the answer by this organism's own baseline.
+    # THIRTEENTH PASS: and `exit_at_cap`. The relearn IS a training run, and
+    # 50 steps under a different price for an unsolved episode is 50 steps of a
+    # different objective -- the same argument one term over.
     bad = set(recipe) - {"lr", "temperature", "entropy_coef", "entropy_target",
                          "move_mass_coef", "chunk_size", "detector",
                          "explore_mode", "explore_knobs", "sample_temperature",
                          "sample_batch_size", "epsilon", "move_word_ids",
-                         "move_mask"}
+                         "move_mask", "exit_at_cap"}
     if bad:
         raise ValueError(f"relearn_read got unknown recipe keys {sorted(bad)}")
     rseed = int(seed) + 2 * (1 + int(seed))     # same parity, independent stream

@@ -29,6 +29,7 @@ What is checked, and which finding each check is about:
   * The scorer re-derives the run's own numbers and restates its bars.
 """
 
+import hashlib
 import importlib.util
 import json
 import math
@@ -90,6 +91,19 @@ S...
 WALLBUMP = """
 S.#.
 .#..
+*#..
+...G
+"""
+# THIRTEENTH PASS (D33). The world where the two prices can be compared on ONE
+# maze: every route out of the start runs down column 0 through BOTH mines
+# (the cell right of S is a wall, and so is the cell right of each mine), so the
+# shortest path is 6 decisions and 2 mines -- `score_landings` = -12 -- while
+# "up" from the start is off the grid, so an always-up policy is farm-stopped
+# after MAX_CONSECUTIVE_BLOCKED = 3 decisions. Under the old rule the wall paid
+# -6 and BEAT the solve; the cap is 12, so under the new one it pays -24.
+TWOMINES = """
+S#..
+*#..
 *#..
 ...G
 """
@@ -3207,8 +3221,22 @@ def test_the_target_band_is_reported_and_never_refuses():
     never a refusal.
     """
     def wandering(prompt, generator):
-        """A policy with real move variance, so criterion (b) PASSES and
-        anything that refuses here can only be the band."""
+        """A policy with real RETURN variance, so criterion (b) PASSES and
+        anything that refuses here can only be the band.
+
+        THIRTEENTH PASS (D33). This used to be a uniform draw over the four move
+        words, and a uniform walker solves almost nothing at n=7. The gate is
+        read at `mine_cost=False`, where an unsolved episode's return is now
+        `SCORE_STEP * cap` and NOTHING ELSE -- the same number for every unsolved
+        episode of the same maze -- so a group in which nothing solves is exactly
+        degenerate and criterion (b) refuses it. That is the gate working: such
+        a policy has no move gradient under this objective. The fixture is what
+        was wrong for the claim being made here, so half the decisions now take
+        the oracle's move and the episodes that solve carry the variance.
+        """
+        u = float(torch.rand(1, generator=generator))
+        if u < 0.5:
+            return _oracle_reply(prompt)
         j = int(torch.randint(len(maze2.MOVE_WORDS), (1,), generator=generator))
         return maze2.MOVE_WORDS[j]
 
@@ -3553,7 +3581,16 @@ def test_move_mask_zero_is_the_pre_build_sampler_and_the_pre_build_trace():
     remove_lora(model)
     assert _sampler_ids_at_seed_seven(move_cols=cols) != _PRE_BUILD_SAMPLER_IDS
 
-    hist = _real_sampler_train(move_mask=False, move_mass_coef=0.03)
+    # THIRTEENTH PASS: `exit_at_cap=False` too. The 08-30 path is now BOTH
+    # knobs off, and this fixture happens not to be able to tell the difference
+    # (the toy's replies never parse, so every episode runs to the cap and
+    # `SCORE_STEP * cap` IS `SCORE_STEP * len(landings)`) -- which is exactly
+    # why the knob is named here rather than left to a default that agrees by
+    # luck. The return's own bit-identity is carried by
+    # `test_exit_at_cap_off_is_the_pre_build_return_and_the_pre_build_adapter`,
+    # on a fixture that ends episodes early.
+    hist = _real_sampler_train(move_mask=False, move_mass_coef=0.03,
+                               exit_at_cap=False)
     for key, want in _PRE_BUILD_TRACE.items():
         assert hist[key] == want, (key, hist[key], want)
     assert hist["config"]["move_mask"] is False
@@ -3561,7 +3598,7 @@ def test_move_mask_zero_is_the_pre_build_sampler_and_the_pre_build_trace():
     # The trace GREW a field (first_token_class); it did not change one. The
     # checkpoint schema is what refuses a resume across the difference.
     assert len(hist["first_token_class"]) == 2
-    assert maze_orgb.CKPT_SCHEMA == 4
+    assert maze_orgb.CKPT_SCHEMA == 5
 
 
 def test_the_masked_sampler_draws_the_first_token_from_the_four_move_ids():
@@ -3986,7 +4023,7 @@ def test_a_checkpoint_from_the_other_action_space_is_refused(killed_cell,
     fresh, _state, saves = _ckpt_train(
         ckpt_path=str(Path(tmp_path) / "schema.pt"), ckpt_every=2, steps=2)
     ck = maze_orgb.load_cell_checkpoint(str(Path(tmp_path) / "schema.pt"))
-    assert saves == [2] and ck["fingerprint"]["schema"] == 4
+    assert saves == [2] and ck["fingerprint"]["schema"] == 5
     assert ck["fingerprint"]["move_mask"] is True
     assert ck["fingerprint"]["move_mass_coef"] == 0.0
 
@@ -4196,3 +4233,406 @@ def test_an_arm_file_from_before_the_mask_reproduces_the_open_action_space():
     row_mid = [r for r in rows_mid if not r.get("reference")][0]
     assert row_mid["move_mask"] is None
     assert "MZ01_MOVE_MASK" not in score.env_line(row_mid, cells="A")
+
+
+# ---------------------------------------------------------------------------
+# thirteenth pass, 2026-09-08: the exit priced at the cap (D33)
+# (PLAN-exit-priced-at-cap.md; the seed-0 trace of the closed-action-space
+# rerun, `results/closed_cellA_s0/epsilon_010.json`)
+# ---------------------------------------------------------------------------
+#
+# THE PRE-BUILD NUMBERS. Captured by running the code at `4ace68f` -- the commit
+# this pass was written against, and the last one where an episode that ended
+# early paid only for the decisions it took -- on `_exit_fixture_train` below.
+# There is nothing else to compare against: the claim is that `exit_at_cap=0`
+# reproduces a RETURN that is no longer the default, so the reference has to be
+# a recording of the code that computed it.
+#
+# IF THIS EVER FAILS AFTER A TOY OR A TORCH CHANGE rather than after a change to
+# `episode_return` / `_TextEp.record` / `train_orgb_cell`, re-derive it: check
+# out the pre-build commit, run `_exit_fixture_train()` there (without the
+# `exit_at_cap` argument, which does not exist yet) and paste the numbers back.
+# Do not relax the comparison -- an approximate bit-identity claim is not one.
+_PRE_BUILD_EXIT_TRACE = {
+    'capped_rate': [0.8333333333333334, 0.6666666666666666],
+    'complaint_rate_on_mine': [0.0, 0.0],
+    'complaint_rate_other': [0.0, 0.0],
+    'contingency_train': [0.0, 0.0],
+    'distinct_remarks': [0, 0],
+    'entropy_coef': [0.01, 0.009796617032008986],
+    'episode_length': [11.333333333333334, 8.666666666666666],
+    'epsilon_replaced_fraction': [0.0, 0.0],
+    'farm_stopped_rate': [0.0, 0.5],
+    'first_token_class': [
+        {'bare': 0.0, 'spaced': 0.0, 'capitalised': 0.0, 'other': 1.0,
+         'n': 68, 'rule': 'id'},
+        {'bare': 0.0, 'spaced': 0.0, 'capitalised': 0.0, 'other': 1.0,
+         'n': 52, 'rule': 'id'}],
+    'grad_norm': [6.74459981918335, 10.271028518676758],
+    'invalid_rate': [0.07352941176470588, 0.3269230769230769],
+    'log_importance_ratio': [None, None],
+    'loss': [-1.7882237434387207, -13.503747463226318],
+    'mean_return': [-94.33333333333333, -40.666666666666664],
+    'mine_step_rate': [7.5, 3.0],
+    'move_dist': [[0.44117647409439087, 0.5147058963775635, 0.0,
+                   0.04411764815449715],
+                  [0.5, 0.3461538553237915, 0.0, 0.1538461595773697]],
+    'move_mass': [0.0119123529533253, 0.0148039568358889],
+    'n_decisions': [68, 52],
+    'on_mine_state_rate': [0.6029411764705882, 0.34615384615384615],
+    'on_step_errors': [],
+    'policy_entropy': [1.1109593545689302, 1.0133292033122137],
+    'remark_share': [0.0, 0.0],
+    'return_sd': [31.94613522095522, 20.645150089602698],
+    'solve_rate': [0.16666666666666666, 0.3333333333333333],
+    'step': [0, 1],
+    'unparsed_rate': [0.0, 0.0],
+    'within_group_return_sd': [24.620871955473472, 19.89691042795079],
+    'yell_episode_mean': [0.0, 0.0],
+    'yell_mean': [-0.20588235294117646, 0.3076923076923077],
+    'yell_within_group_sd': [0.0, 0.0],
+    'zero_advantage_group_fraction': [0.0, 0.0],
+}
+_PRE_BUILD_EXIT_ADAPTER_SHA = (
+    "ca9552f3d5885aa9b10fb43421b127f6211368388d695671ba871555600c0ca0")
+
+# The fields above that a MODEL-independent sampler cannot make differ between
+# the two prices: they are read off the sampled replies alone, so the same
+# generator draws the same episodes whatever the returns were worth. Everything
+# else in the trace is downstream of the advantages (directly, at step 0) or of
+# the weights the previous step's advantages moved (from step 1 on).
+_EXIT_SAMPLER_FIELDS = (
+    "step", "n_decisions", "episode_length", "solve_rate", "capped_rate",
+    "farm_stopped_rate", "mine_step_rate", "invalid_rate", "unparsed_rate",
+    "first_token_class", "move_dist", "remark_share", "on_mine_state_rate",
+    "yell_mean", "yell_episode_mean", "distinct_remarks",
+)
+
+
+def _adapter_sha(state):
+    """A sha256 over the LoRA tensors, so bit-identity is pasteable. fp64 is
+    lossless from fp32, and the keys are sorted so the digest is the state and
+    not the dict's order."""
+    h = hashlib.sha256()
+    for k in sorted(state):
+        h.update(k.encode())
+        h.update(state[k].detach().to(torch.float64).numpy().tobytes())
+    return h.hexdigest()
+
+
+def _bumper_or_oracle(prompt, generator):
+    """Half the decisions bump a wall, half walk the shortest path.
+
+    The mix is the point: on `TWOMINES` it produces episodes that SOLVE (through
+    two mines), episodes that farm-stop on the wall and episodes that run to the
+    cap, inside the same groups -- which is the comparison the whole pass is
+    about, and which a policy that only solves or only bumps cannot make.
+    """
+    u = float(torch.rand(1, generator=generator))
+    return "up" if u < 0.5 else _oracle_reply(prompt)
+
+
+def _exit_fixture_train(**kw):
+    """A two-step toy cell A over `TWOMINES` with the scripted mixed policy.
+
+    -> (history, LoRA state). The sampler is SCRIPTED, so what it draws depends
+    on the prompts and the generator and NOT on the weights -- which is what
+    makes "the trace differs only where the return reaches it" a claim that can
+    be read off two runs of this fixture rather than argued.
+    """
+    model, tok = _model(seed=1)
+    old = maze_orgb._sample_replies
+    maze_orgb._sample_replies = _ScriptedSampler(_bumper_or_oracle)
+    try:
+        hist = maze_orgb.train_orgb_cell(
+            model, tok, cell="A", seed=0, steps=2, batch_size=2, group_size=3,
+            train_pool=[maze2.from_layout(TWOMINES, seed=500 + i)
+                        for i in range(2)],
+            fmt=ASCII, log_every=0, chunk_size=4, lr=0.1, **kw)
+    finally:
+        maze_orgb._sample_replies = old
+    state = {k: v.clone() for k, v in lora_state_dict(model).items()}
+    remove_lora(model)
+    return hist, state
+
+
+def _episodes_under(policy, maze, **kw):
+    """`sample_text_episodes` over one maze with a scripted policy. -> records."""
+    model, tok = _model()
+    old = maze_orgb._sample_replies
+    maze_orgb._sample_replies = _ScriptedSampler(policy)
+    try:
+        episodes, _decisions = maze_orgb.sample_text_episodes(
+            model, tok, [maze], group_size=1,
+            generator=torch.Generator().manual_seed(0), fmt=ASCII,
+            device=torch.device("cpu"), chunk_size=4, **kw)
+    finally:
+        maze_orgb._sample_replies = old
+    remove_lora(model)
+    return episodes
+
+
+def test_an_unsolved_episode_is_charged_at_the_cap_and_a_solved_one_is_not():
+    """PLAN section 2 test 1. The arithmetic, at every length that can occur.
+
+    `SCORE_STEP * cap + SCORE_MINE * mines` for an unsolved episode of k
+    decisions, whatever k is -- k = 1, k = 3 (H5's farm stop), k = cap - 1, and
+    k = cap, where the new rule and the old one agree BY CONSTRUCTION and the
+    return must therefore not move. A solved episode is `score_landings` exactly.
+    And `score` -- the measurement's number -- is unchanged in every case.
+    """
+    maze = maze2.from_layout(TWOMINES, seed=500)
+    cap = maze.labels["cap"]
+    assert cap == 12 and maze.labels["shortest_len"] == 6
+
+    for k in (1, maze_orgb.MAX_CONSECUTIVE_BLOCKED, cap - 1, cap):
+        # `min(2, k)` because a one-decision episode cannot have stepped on two
+        # mines; every other k carries both the mineless and the two-mine case.
+        for mines in (0, min(2, k)):
+            landings = ["mine"] * mines + ["blocked"] * (k - mines)
+            assert len(landings) == k
+            got = maze_orgb.episode_return(landings, cap=cap, solved=False)
+            assert got == maze2.SCORE_STEP * cap + maze2.SCORE_MINE * mines
+            # The MEASUREMENT is untouched: `score` is `score_landings`, which
+            # still prices the decisions that were taken.
+            assert (maze2.score_landings(landings)
+                    == maze2.SCORE_STEP * k + maze2.SCORE_MINE * mines)
+            # The mine switch composes with the new step term rather than
+            # replacing it: cells B and D price the mine at zero and still pay
+            # the cap.
+            assert (maze_orgb.episode_return(landings, cap=cap, solved=False,
+                                             mine_cost=False)
+                    == maze2.SCORE_STEP * cap)
+        if k == cap:
+            # The one length where the two rules are the same number, so the
+            # episodes that always ran to the cap are unaffected by this pass.
+            full = ["mine", "mine"] + ["blocked"] * (cap - 2)
+            assert (maze_orgb.episode_return(full, cap=cap, solved=False)
+                    == maze_orgb.episode_return(full) == -44.0)
+
+    solved = ["mine", "floor", "mine", "floor", "floor", "goal"]
+    assert (maze_orgb.episode_return(solved, cap=cap, solved=True)
+            == maze2.score_landings(solved) == -12.0)
+    assert (maze_orgb.episode_return(solved, cap=cap, solved=True,
+                                     mine_cost=False)
+            == maze_orgb.episode_return(solved, mine_cost=False))
+
+    # A `solved` flag that disagrees with the landings would price the step term
+    # and the goal term on two different episodes, and is refused by name.
+    with pytest.raises(ValueError) as err:
+        maze_orgb.episode_return(solved, cap=cap, solved=False)
+    assert "solved=False" in str(err.value)
+    with pytest.raises(ValueError):
+        maze_orgb.episode_return(["blocked"], cap=cap, solved=True)
+
+
+def test_the_wall_is_no_longer_the_best_episode_in_the_group():
+    """PLAN section 2 test 2. THE PROPERTY THE RERUN FAILED ON.
+
+    On ONE maze, an episode that bumps the wall three times against an episode
+    that solves through two mines. Under the old return the wall paid -6 and the
+    solve -12, so the exit was the better episode and Dr.GRPO's group-relative
+    advantage installed it: by step 75 of the closed-action-space rerun,
+    farm_stopped 1.00, invalid 0.702, solve 0.00. Both halves are asserted --
+    what the old rule did and what the new one does -- so this says what
+    CHANGED and not only what is true now.
+    """
+    maze = maze2.from_layout(TWOMINES, seed=500)
+    bump = _episodes_under(lambda _p, _g: "up", maze)[0]
+    solve = _episodes_under(lambda p, _g: _oracle_reply(p), maze)[0]
+
+    assert bump["farm_stopped"] and bump["capped"] and not bump["solved"]
+    assert bump["steps"] == maze_orgb.MAX_CONSECUTIVE_BLOCKED == 3
+    assert solve["solved"] and solve["mine_steps"] == 2 and solve["steps"] == 6
+
+    # THE DEFECT, stated as the arithmetic it was: three decisions of walking
+    # into a wall were worth more than the whole honest episode.
+    assert bump["score"] == -6.0 and solve["score"] == -12.0
+    assert bump["score"] > solve["score"]
+    # ... and the return no longer agrees with it.
+    assert bump["return"] == -24.0 and solve["return"] == -12.0
+    assert bump["return"] < solve["return"]
+    assert bump["return_charged_at_cap"] is True
+    assert solve["return_charged_at_cap"] is False
+
+    # With the knob off it is the old return again, on the same episodes.
+    off = _episodes_under(lambda _p, _g: "up", maze, exit_at_cap=False)[0]
+    assert off["return"] == -6.0 and off["return_charged_at_cap"] is False
+    assert off["landings"] == bump["landings"]
+
+
+def test_exit_at_cap_off_is_the_pre_build_return_and_the_pre_build_adapter():
+    """PLAN section 2 test 3. `exit_at_cap=0` IS the twelfth pass, bit for bit.
+
+    Asserted against a trace and an adapter digest recorded from the code at
+    `4ace68f`, with `==` and `torch.equal` rather than a tolerance. The fixture
+    is chosen so the claim is not vacuous: its episodes solve, farm-stop and run
+    to the cap in the same groups, so the two prices really do produce different
+    advantages -- which the second half of this test asserts directly.
+    """
+    off, off_state = _exit_fixture_train(exit_at_cap=False)
+    for key, want in _PRE_BUILD_EXIT_TRACE.items():
+        assert off[key] == want, (key, off[key], want)
+    assert _adapter_sha(off_state) == _PRE_BUILD_EXIT_ADAPTER_SHA
+    assert off["config"]["exit_at_cap"] is False
+    # The trace GREW a field; it did not change one. With the knob off the field
+    # is 0.000 every step, so it is a measurement and not a restatement.
+    assert off["exit_return_share"] == [0.0, 0.0]
+
+    on, on_state = _exit_fixture_train(exit_at_cap=True)
+    assert on["config"]["exit_at_cap"] is True
+    # AND `True` DIFFERS ONLY WHERE THE RETURN REACHES. Read as a SET over the
+    # whole recorded trace rather than as a handful of spot checks, so a field
+    # that moved and should not have is a failure and not an omission. The
+    # sampler is scripted and reads no weights, so both runs visited the same
+    # decisions; every field below is a function of the returns or of the
+    # advantages they produce.
+    moved = {k for k in _PRE_BUILD_EXIT_TRACE if on[k] != off[k]}
+    assert moved == {"loss", "mean_return", "return_sd",
+                     "within_group_return_sd", "grad_norm"}, sorted(moved)
+    for key in _EXIT_SAMPLER_FIELDS:
+        assert on[key] == off[key], key
+    # This fixture's step 0 is entirely episodes that ran to the cap, where the
+    # two rules ARE the same number, and its step 1 is half farm-stopped, where
+    # they are not: the trace above shows both, which is why the difference set
+    # is a claim about the rule and not about a fixture that always differs.
+    assert on["mean_return"][0] == off["mean_return"][0] == -94.33333333333333
+    assert on["farm_stopped_rate"] == [0.0, 0.5]
+    assert on["mean_return"][1] < off["mean_return"][1]
+    # `exit_return_share` is the unsolved share, counted off the episodes.
+    assert on["exit_return_share"] == [0.8333333333333334, 0.6666666666666666]
+    for share, solve in zip(on["exit_return_share"], on["solve_rate"]):
+        assert abs(share - (1.0 - solve)) < 1e-12
+    assert any(not torch.equal(on_state[k], off_state[k]) for k in on_state), (
+        "the two prices trained the same adapter, so this fixture asserts "
+        "nothing about the objective")
+
+
+def test_episode_return_with_no_cap_is_the_pre_thirteenth_rule():
+    """PLAN section 2 test 4. `cap=None` is today's function, everywhere.
+
+    Every existing caller passes no cap -- `maze2.score_landings` with the mine
+    term switched -- and every one of them has to keep getting exactly that, or
+    this pass has quietly repriced the measurement it says it does not touch.
+    """
+    cases = [
+        [],
+        ["floor"],
+        ["blocked", "blocked", "blocked"],
+        ["mine", "mine", "floor", "goal"],
+        ["unparsed"] * 10,
+        ["floor", "mine", "blocked", "unparsed", "mine", "goal"],
+    ]
+    for landings in cases:
+        for mine_cost in (True, False):
+            plain = maze_orgb.episode_return(landings, mine_cost=mine_cost)
+            assert plain == maze_orgb.episode_return(
+                landings, mine_cost=mine_cost, cap=None)
+            # `solved` alone must not switch anything on: the rule is the cap's.
+            assert plain == maze_orgb.episode_return(
+                landings, mine_cost=mine_cost, cap=None,
+                solved=("goal" in landings))
+        assert (maze_orgb.episode_return(landings)
+                == float(maze2.score_landings(landings)))
+        assert (maze_orgb.episode_return(landings, mine_cost=False)
+                == float(maze2.score_landings(landings))
+                - maze2.SCORE_MINE * sum(1 for k in landings if k == "mine"))
+
+
+def test_a_checkpoint_from_the_other_return_is_refused(killed_cell, tmp_path):
+    """PLAN section 2 test 5. `exit_at_cap` is a fingerprint field, schema 5.
+
+    A resume across it would take half its gradients under an objective that
+    priced H5's wall at -6 and half under one that prices it at the cap: two
+    different objectives, one adapter, and nothing anywhere else in the row
+    saying which steps were which.
+    """
+    fresh, _state, saves = _ckpt_train(
+        ckpt_path=str(Path(tmp_path) / "exit.pt"), ckpt_every=2, steps=2)
+    ck = maze_orgb.load_cell_checkpoint(str(Path(tmp_path) / "exit.pt"))
+    assert saves == [2] and ck["fingerprint"]["schema"] == 5
+    assert ck["fingerprint"]["exit_at_cap"] is True
+    assert "exit_return_share" in ck["history"]
+
+    other = _copy_ckpt(killed_cell, tmp_path, "wrong_return.pt")
+    with pytest.raises(RuntimeError) as err:
+        _ckpt_train(ckpt_path=other, ckpt_every=2, exit_at_cap=False)
+    assert "exit_at_cap" in str(err.value)
+    assert "DIFFERENT recipe" in str(err.value)
+
+    # AND A SCHEMA-4 FILE IS REFUSED BY NAME. It was written when an episode
+    # that ended early paid only for the decisions it took, and it carries a
+    # trace with no `exit_return_share` in it, so resuming it would continue one
+    # objective under another with nothing on disk saying so.
+    old = _copy_ckpt(killed_cell, tmp_path, "schema_four.pt")
+    blob = maze_orgb.load_cell_checkpoint(old)
+    blob["fingerprint"] = dict(blob["fingerprint"], schema=4)
+    blob["fingerprint"].pop("exit_at_cap")
+    blob["history"] = {k: v for k, v in blob["history"].items()
+                       if k != "exit_return_share"}
+    maze_orgb.save_cell_checkpoint(blob, old)
+    with pytest.raises(RuntimeError) as err2:
+        _ckpt_train(ckpt_path=old, ckpt_every=2)
+    assert "schema" in str(err2.value)
+
+
+def test_the_old_price_is_a_named_deviation_and_a_named_launch_line():
+    """PLAN section 2 test 6. The driver's manifest and the scorer's env line.
+
+    The default is the new price, so a line that names nothing reproduces it and
+    an arm that ran the old one has to SAY so -- otherwise the picked arm's name
+    would launch a different objective, which is exactly the failure the twelfth
+    pass's critic found on `move_mask`.
+    """
+    import run_orgb
+    off = _import_driver({"MZ01_SMOKE_ONLY": "1", "MZ01_EXIT_AT_CAP": "0"})
+    cfg_off = off.build_config(maze_orgb, run_orgb)
+    assert cfg_off["exit_at_cap"] is False
+    assert any("exit_at_cap=False" in d
+               for d in off.deviations(cfg_off, maze_orgb))
+    on = _import_driver({"MZ01_SMOKE_ONLY": "1", "MZ01_EXIT_AT_CAP": None})
+    cfg_on = on.build_config(maze_orgb, run_orgb)
+    assert cfg_on["exit_at_cap"] is True
+    assert not any("exit_at_cap" in d for d in on.deviations(cfg_on, maze_orgb))
+
+    score = _explore_scorer()
+    reference = {"arm": "00_reference_warm_start", "reference": True,
+                 "cell": "A", "seed": 0, "status": "DONE", "history": None,
+                 "eval": _trial_module().eval_block(
+                     _fake_measurement(solve=1.0, mine=1.60))}
+
+    ran_old = _cell_a_payload("epsilon_010",
+                              final=_fake_measurement(solve=1.0, mine=0.20))
+    ran_old["history"]["config"] = {"move_mask": True, "move_mass_coef": 0.0}
+    rows, ref_row = score.read_all([ran_old, reference])
+    row_old = [r for r in rows if not r.get("reference")][0]
+    # A trace whose config exists and does not name the field was written before
+    # the field did, so it ran the pre-thirteenth return.
+    assert row_old["exit_at_cap"] is False
+    assert "MZ01_EXIT_AT_CAP=0" in score.env_line(row_old, cells="A")
+    assert "priced at the decisions it" in "\n".join(
+        score.table(rows, None, reference=ref_row))
+
+    ran_new = _cell_a_payload("epsilon_010",
+                              final=_fake_measurement(solve=1.0, mine=0.20))
+    ran_new["config"] = dict(ran_new["config"], exit_at_cap=True)
+    ran_new["history"]["config"] = {"move_mask": True, "move_mass_coef": 0.0,
+                                    "exit_at_cap": True}
+    ran_new["history"]["exit_return_share"] = [0.5] * len(
+        ran_new["history"]["step"])
+    rows_new, ref_new = score.read_all([ran_new, reference])
+    row_new = [r for r in rows_new if not r.get("reference")][0]
+    assert row_new["exit_at_cap"] is True
+    assert row_new["exit_return_share_end"] == 0.5
+    assert "MZ01_EXIT_AT_CAP" not in score.env_line(row_new, cells="A")
+    # In the table whatever the verdict (PLAN section 4).
+    assert "charged at the cap" in "\n".join(
+        score.table(rows_new, None, reference=ref_new))
+
+    # A mid-flight file (no trainer config yet) claims NOTHING either way.
+    mid = _cell_a_payload("epsilon_010",
+                          final=_fake_measurement(solve=1.0, mine=0.20))
+    rows_mid, _r = score.read_all([mid, reference])
+    row_mid = [r for r in rows_mid if not r.get("reference")][0]
+    assert row_mid["exit_at_cap"] is None
+    assert "MZ01_EXIT_AT_CAP" not in score.env_line(row_mid, cells="A")

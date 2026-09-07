@@ -208,6 +208,23 @@ Environment:
                      step as the DIAGNOSTIC that says whether the unmasked eval
                      will read the trained policy. Kept as a knob so the 08-30
                      recipe is reproducible rather than deleted.
+
+  ---- THIRTEENTH PASS, the exit priced at the cap (2026-09-08, D33). The
+  closed-action-space rerun held the action space and the policy collapsed
+  anyway: H5's guard ends an episode after three consecutive blocked moves and
+  the return charged that -2 a decision, so bumping a wall cost about -6 where
+  the honest solve through the mines cost about -28. Under Dr.GRPO's group-
+  relative advantage the wall was the best episode in EVERY group, and by step
+  75 farm_stopped was 1.00 and solve 0.00.
+  MZ01_EXIT_AT_CAP   "1" (DEFAULT) charges an episode that did not reach the
+                     goal `SCORE_STEP x cap` for its step term -- what
+                     CONTINUING would have cost -- instead of the decisions it
+                     actually took. The mine term and the goal term are
+                     unchanged, a SOLVED episode's return is unchanged to the
+                     bit, and `score` (the measurement) is unchanged on every
+                     episode: only the training return moves. "0" is the
+                     twelfth pass's return, bit for bit on a seed, and is
+                     reported as a deviation.
   MZ01_YELL_W        the remark term's weight (default `maze_orgb.YELL_WEIGHT`,
                      which is the PRE-REGISTERED number; overriding it is a
                      deviation and lands in the manifest as one).
@@ -287,6 +304,11 @@ THERMOSTAT_OFF = os.environ.get("MZ01_THERMOSTAT_OFF", "") == "1"
 # left. "0" reproduces 08-30 exactly and is reported as a deviation.
 MOVE_MASK = os.environ.get("MZ01_MOVE_MASK", "1") != "0"
 MOVE_MASS_COEF = os.environ.get("MZ01_MOVE_MASS_COEF", "").strip()
+# THIRTEENTH PASS. The price of an unsolved episode. Defaults ON for the same
+# reason `MZ01_MOVE_MASK` does: an exit that is cheaper than continuing is a
+# DEFECT and not an arm -- the rerun's own trace is the evidence -- so "0" is
+# the deviation and is reported as one.
+EXIT_AT_CAP = os.environ.get("MZ01_EXIT_AT_CAP", "1") != "0"
 ENTROPY_TARGET_PINNED = os.environ.get("MZ01_ENTROPY_TARGET", "").strip()
 PREFLIGHT_SOFT = os.environ.get("MZ01_PREFLIGHT_SOFT", "") == "1"
 SHARD = os.environ.get("MZ01_SHARD", "orgb").strip() or "orgb"
@@ -361,6 +383,9 @@ def build_config(maze_orgb, run_orgb):
         # so it is set here unconditionally rather than only when an env var
         # names it, and MZ01_MOVE_MASK=0 is the deviation.
         "move_mask": MOVE_MASK,
+        # THIRTEENTH PASS. The return is the recipe too, and for the same
+        # reason it is set unconditionally: MZ01_EXIT_AT_CAP=0 is the deviation.
+        "exit_at_cap": EXIT_AT_CAP,
     })
     if MOVE_MASS_COEF:
         cfg["move_mass_coef"] = float(MOVE_MASS_COEF)
@@ -736,6 +761,17 @@ def deviations(cfg, maze_orgb):
             "read only the four bare ids. This is the 08-30 recipe, and its "
             "erratum is that the policy's mass migrated to the space-prefixed "
             "twins where the objective could not see it.")
+    # THIRTEENTH PASS. An episode that ends early for less than continuing costs
+    # is the defect the rerun found, so running with the old price is the
+    # deviation and running with the new one is not.
+    if not cfg.get("exit_at_cap", True):
+        out.append(
+            "exit_at_cap=False: an episode that did not reach the goal pays "
+            "only for the decisions it TOOK, so H5's three-bump exit costs "
+            "about -6 against about -28 for the honest solve and is the best "
+            "episode in every Dr.GRPO group. This is the twelfth pass's "
+            "return, and its erratum is the seed-0 trace where farm_stopped "
+            "went 0.00 -> 1.00 and solve 1.00 -> 0.00 in 75 steps.")
     # 0.0 is `run_orgb.DEFAULT_CONFIG["move_mass_coef"]` as of this pass, in the
     # same style as the 300 and the 256 above: the registered number, named.
     if float(cfg.get("move_mass_coef") or 0.0) != 0.0:
