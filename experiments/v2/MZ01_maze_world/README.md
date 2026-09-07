@@ -149,10 +149,16 @@ MZ01_TRIAL_ARMS=epsilon_010,onpolicy_g6 MZ01_TRIAL_STEPS=80 \
 MZ01_TRIAL_EVAL_AT=40 MZ01_TRIAL_EVAL_N=128 MZ01_TRIAL_SEED=0 \
 MZ01_GROUP=6 MZ01_BATCH=4 MZ01_ENTROPY_COEF=0.1 \
 MZ01_MOVE_MASK=1 MZ01_MOVE_MASS_COEF=0.0 \
+MZ01_NAV_ADAPTER=/marimo/repo/experiments/v2/MZ01_maze_world/results/navigator/nav_nav48.pt \
+MZ01_NAV_JSON=/marimo/repo/experiments/v2/MZ01_maze_world/results/navigator/nav_nav48.json \
 MZ01_WARM_START=/marimo/repo/experiments/v2/MZ01_maze_world/results/orgb/warm_start.pt \
 MZ01_TRIAL_OUT=/marimo/repo/experiments/v2/MZ01_maze_world/results/closed_cellA_s0 \
   python3 /marimo/repo/scripts/mz01_explore_trial.py
 ```
+
+`MZ01_NAV_ADAPTER` is set explicitly because the default is `nav_shared.pt`
+and the gated navigator on every box is `nav_nav48.pt`; a launch that omits it
+aborts at the adapter check, after the model load.
 
 and the same line with `MZ01_TRIAL_SEED=1` and `..._s1` as the output
 directory. The reads land at 40 (`eval_at`) and 80 (`eval`); the thermostat is
