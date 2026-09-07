@@ -7,8 +7,10 @@ instruments in a second world where the first world's quirks cannot explain the
 answer.
 
 Read `SPEC.md` first (the binding pre-commitment), then `AGENT-NOTES.md`
-(every deviation and why), then `RESULTS-2026-08-29.md` (what has actually been
-measured). `PLAN-orgb-v2.md` is superseded by the pre-registration at the end of
+(every deviation and why), then `RESULTS-2026-08-29.md` and
+`RESULTS-2026-08-30.md` (what has actually been measured — read the 08-30 note
+to the end: its erratum of 2026-09-07 retracts its §4 mechanism).
+`PLAN-orgb-v2.md` is superseded by the pre-registration at the end of
 `PLAN-orgb-v2-CRITIQUE.md`, which is what `run_orgb.py` executes.
 
 Everything runs on a rented GPU box with the repo at `/marimo/repo`. Every
