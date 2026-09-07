@@ -1,0 +1,747 @@
+"""MZ01 R2: short arms that answer "can this RL learn at all?" -> traces.
+
+WHY THIS EXISTS, AND WHAT THE FIRST RUNS OF IT FOUND. Three shards trained with
+a dead move term: a warm-started navigator is a near-deterministic policy, so
+the six episodes sampled on a maze are the SAME episode, their returns are
+equal, `group_advantages` returns zeros and the move gradient is exactly
+nothing. This trial ran five arms against that on CELL D, at 40 steps and again
+at 80, and EVERY ONE OF THEM CAME BACK DEAD.
+
+THE READING, AND WHY THAT TRIAL ASKED THE WRONG CELL (tenth pass, 2026-08-29).
+`04_temperature_g6` STARTED at a zero-advantage fraction of 0.39 and ENDED at
+0.97 with an entropy of 0.001. The exploration happened; the RL deleted it.
+Under cell D the return prices no mine (`mine_cost=False`), so every deviation
+from the shortest path is strictly worse and a group holding one deviating
+episode hands it a NEGATIVE advantage -- the update sharpens the policy back to
+a point mass. ZERO ADVANTAGE IS CELL D'S EQUILIBRIUM, not cell D's failure, and
+a trial that ran only cell D and gated cell A behind an ALIVE D arm was asking a
+question with no answer.
+
+Under CELL A the mine is priced. A deviation that walks around one earns a
+POSITIVE advantage, so exploration only has to EXIST and the reward keeps the
+part of it that matters. That is what this trial now runs, and its arms are
+chosen to be exploration the gradient cannot switch off.
+
+THE ARMS FOR THE CELL-A RUN. All GROUP=6, and all with the THERMOSTAT OFF (the
+entropy coefficient held at MZ01_ENTROPY_COEF, default 0.1), so the four differ
+in exactly one thing: where the exploration comes from.
+
+  temperature_t15   the SAMPLER, drawn at T=1.5 and scored at 1.0.
+  temperature_t20   the same at T=2.0 -- the DOSE, since 1.5 broke the
+                    degeneracy at step 0 and could not hold it.
+  epsilon_010       the ACTION: 10 % of move words replaced by a uniformly
+                    drawn VALID move. A rate the policy gradient cannot reduce,
+                    because it is a property of the sampler and not of the
+                    policy's entropy.
+  epsilon_020       the same at 20 %.
+
+THE ARMS FOR THE CELL-D RUN (still the default, so the two committed trials stay
+re-runnable): `01_thermostat_g6`, `02_relative_g6`, `03_fixed_g6`,
+`04_temperature_g6`, `05_relative_g12` -- control first.
+
+WHAT IT IS NOT: no organism, no row, no ledger, no adapter. Nothing under
+`results/orgb/` is written, and every arm is discarded when the next one
+restores the warm start. It DOES take a short HELD-OUT measurement at the end of
+each arm (`MZ01_TRIAL_EVAL_N` mazes, greedy, placebo/novel/relearn/instruments
+all OFF), because "zadv fell" is not the cell-A question -- "did mine/ep fall
+while solve held" is -- and that is only answerable off the training pool.
+
+THE REFERENCE. The warm-started model is measured ONCE, before any arm, on the
+SAME mazes. It is the D-equivalent baseline (no RL at all) and it is what every
+cell-A arm is read against: the scorer's AVOIDS and RANDOMISED verdicts are both
+differences from it.
+
+COST of the cell-A run, at this trial's OWN measured 36-38 s/step at GROUP=6:
+
+    4 arms x 60 x ~37 s                                        = 148 min
+    ... but cell A under 20 % epsilon or T=2.0 wanders, and an episode's cap is
+    2x its shortest path, so an arm that stops solving runs up to TWICE the
+    decisions per step. At a realistic 1.35x that is                ~200 min
+    4 pre-flights at ~90 s (8 mazes x 6 episodes: about twice one RL
+      step's sampling, plus a forward-only re-score)               ~   6 min
+    5 held-out measurements (1 reference + 4 arms) at 128 mazes,
+      ONE pass each: ~13 rounds x 4 decode calls at width 32,
+      ~48 new tokens a call                                        ~  15 min
+    model load + the eval set + the pool                           ~  10 min
+    ------------------------------------------------------------------------
+    ~ 2.7 h at the nominal step, ~ 3.8 h with the lengthening priced in.
+
+    AT 80 STEPS the same arithmetic is 3.3 h / 4.7 h, and 4.7 h is outside the
+    ~4 h this was scoped at -- so THE DEFAULT IS 60, not the 80 first written.
+    Sixty is enough here in a way it was not for the D trial: every arm's
+    mechanism is live FROM STEP 0 (epsilon is a constant rate, the draw
+    temperature is a constant, and the entropy coefficient is HELD rather than
+    walked), so there is no slow controller for more steps to rescue -- which
+    was the entire reason the D trial carried a `slow_controller` note.
+    `MZ01_TRIAL_STEPS=80` is one environment variable away if the lease is long.
+
+Environment:
+  MZ01_REVISION      REQUIRED -- the exact weights, as for every driver here.
+  MZ01_MODEL         "4B" or "14B" (default 14B).
+  MZ01_TRIAL_STEPS   RL steps per arm (default 60; see the arithmetic above).
+  MZ01_TRIAL_ARMS    comma-separated arm names from the registry (default: the
+                     five D arms when MZ01_TRIAL_CELL is D, the four cell-A
+                     arms otherwise).
+  MZ01_TRIAL_SEED    the RL seed every arm runs (default 0).
+  MZ01_TRIAL_CELL    the cell every arm trains (default D, for backward
+                     compatibility with the two committed trials; the tenth
+                     pass's run sets it to A).
+  MZ01_TRIAL_CELL_2  the follow-up cell, run under the PICKED arm (default A).
+                     "" skips it, and it is SKIPPED AUTOMATICALLY when it equals
+                     MZ01_TRIAL_CELL -- running A again after A measures nothing.
+  MZ01_TRIAL_EVAL_N  held-out mazes in the per-arm measurement (default 128).
+  MZ01_EVAL_BATCH    prompts per decode call in that measurement (default 32).
+  MZ01_NO_PLACEBO / MZ01_NO_NOVEL
+                     the driver's knobs, DEFAULTED TO OFF here: a trial arm is
+                     not an organism and the graded claim is not being read.
+                     Set either to "0" to turn that pass back on.
+  MZ01_NAV_ADAPTER / MZ01_NAV_JSON / MZ01_WARM_START / MZ01_N / MZ01_FORMAT /
+  MZ01_BATCH / MZ01_GROUP / MZ01_CHUNK / MZ01_SAMPLE_BATCH / MZ01_ENTROPY_REL /
+  MZ01_ENTROPY_MIN / MZ01_ENTROPY_COEF / MZ01_SAMPLE_T / MZ01_EPSILON
+                     as in `scripts/mz01_orgb_driver.py`.
+  MZ01_TRIAL_OUT     where the traces go (default
+                     `experiments/v2/MZ01_maze_world/results/explore_trial`).
+
+Outputs:
+  results/explore_trial/{arm}.json    one per arm, rewritten ATOMICALLY after
+                                      every RL step, so an arm killed at step 59
+                                      of 60 is still readable
+  results/explore_trial/reference.json  the warm start's held-out measurement
+  results/explore_trial/{cell}_{arm}.json   the follow-up cell, if one runs
+  results/explore_trial/summary.json  the verdicts and the pick
+  mz01_explore_status.txt             the tail-able log, with DONE markers
+
+Read it with `python3 -S scripts/score_mz01_explore.py results/explore_trial`.
+"""
+
+import os
+import sys
+import time
+import traceback
+
+REPO = "/marimo/repo"
+sys.path.insert(0, f"{REPO}/src")
+sys.path.insert(0, f"{REPO}/experiments/v2/MZ01_maze_world")
+sys.path.insert(0, f"{REPO}/scripts")
+
+MODELS = {"4B": "Qwen/Qwen3-4B-Instruct-2507", "14B": "Qwen/Qwen3-14B"}
+
+MODEL_KEY = os.environ.get("MZ01_MODEL", "14B").strip()
+REVISION = os.environ.get("MZ01_REVISION", "").strip()
+FORMAT = os.environ.get("MZ01_FORMAT", "ascii").strip()
+GRID_N = int(os.environ.get("MZ01_N", "9"))
+BATCH = int(os.environ.get("MZ01_BATCH", "4"))
+GROUP = int(os.environ.get("MZ01_GROUP", "6"))
+CHUNK = int(os.environ.get("MZ01_CHUNK", "8"))
+SAMPLE_BATCH = os.environ.get("MZ01_SAMPLE_BATCH", "").strip()
+TRIAL_STEPS = int(os.environ.get("MZ01_TRIAL_STEPS", "60"))
+TRIAL_SEED = int(os.environ.get("MZ01_TRIAL_SEED", "0"))
+TRIAL_CELL = os.environ.get("MZ01_TRIAL_CELL", "D").strip() or "D"
+TRIAL_CELL_2 = os.environ.get("MZ01_TRIAL_CELL_2", "A").strip()
+EVAL_N = int(os.environ.get("MZ01_EVAL_N", "256"))
+# The HELD-OUT measurement at the end of each arm, and its decode width. 128 of
+# the SAME 256 the cells use, so the reference and every arm are read on
+# identical mazes and the differences the scorer takes are paired ones.
+TRIAL_EVAL_N = int(os.environ.get("MZ01_TRIAL_EVAL_N", "128"))
+EVAL_BATCH = int(os.environ.get("MZ01_EVAL_BATCH", "32"))
+# The driver's knobs, DEFAULTED OFF here. A trial arm is not an organism: the
+# placebo pass is the control for the GRADED claim and the novel pairings are
+# the transfer probe, and neither is being read. Two passes saved per arm.
+PLACEBO = os.environ.get("MZ01_NO_PLACEBO", "1") == "0"
+NOVEL = os.environ.get("MZ01_NO_NOVEL", "1") == "0"
+POOL = int(os.environ.get("MZ01_POOL", "256"))
+PREFLIGHT_MAZES = int(os.environ.get("MZ01_PREFLIGHT_EXPLORE_MAZES", "8"))
+NAV_ADAPTER = os.environ.get(
+    "MZ01_NAV_ADAPTER",
+    f"{REPO}/experiments/v2/MZ01_maze_world/results/navigator/nav_shared.pt").strip()
+NAV_JSON = os.environ.get("MZ01_NAV_JSON", "").strip()
+WARM_START = os.environ.get("MZ01_WARM_START", "").strip()
+OUT = os.environ.get(
+    "MZ01_TRIAL_OUT",
+    f"{REPO}/experiments/v2/MZ01_maze_world/results/explore_trial").strip()
+STATUS = f"{REPO}/mz01_explore_status.txt"
+
+# THE REGISTRY. Every arm this trial knows how to run, in one place, so
+# MZ01_TRIAL_ARMS is a SELECTION from a fixed list rather than a set of knobs
+# assembled on a command line -- an arm is a named recipe or it is not an arm.
+# Each entry may override the group, the draw temperature, the epsilon rate and
+# whether the thermostat runs; anything it leaves out is the environment's.
+#
+# `01_..05_` are the CELL-D arms of the first two trials, kept so those runs stay
+# re-runnable and so the committed traces stay meaningful. The four unnumbered
+# ones are the TENTH PASS's cell-A arms, and all four hold the thermostat still
+# so that they differ in exactly one thing: the exploration source.
+ARMS = (
+    {"name": "01_thermostat_g6", "mode": "thermostat_fixed_target",
+     "group": None, "note": "today's recipe, bit for bit -- the control"},
+    {"name": "02_relative_g6", "mode": "relative", "group": None,
+     "note": "the entropy TARGET: max(rel x measured, floor)"},
+    {"name": "03_fixed_g6", "mode": "fixed", "group": None,
+     "note": "the CONTROLLER off, the coefficient held still"},
+    {"name": "04_temperature_g6", "mode": "temperature", "group": None,
+     "note": "the SAMPLER: drawn hot, scored at 1.0"},
+    {"name": "05_relative_g12", "mode": "relative", "group": 12,
+     "note": "02 at twice the group -- the scaling check"},
+    # ---- tenth pass, the cell-A arms. GROUP=6, thermostat OFF. -------------
+    {"name": "temperature_t15", "mode": "temperature", "group": 6,
+     "sample_temperature": 1.5, "thermostat_off": True,
+     "note": "the SAMPLER at T=1.5, thermostat off"},
+    {"name": "temperature_t20", "mode": "temperature", "group": 6,
+     "sample_temperature": 2.0, "thermostat_off": True,
+     "note": "the SAMPLER at T=2.0 -- the dose, since 1.5 could not hold it"},
+    {"name": "epsilon_010", "mode": "epsilon", "group": 6, "epsilon": 0.10,
+     "note": "the ACTION: 10 % of move words replaced by a uniform VALID move"},
+    {"name": "epsilon_020", "mode": "epsilon", "group": 6, "epsilon": 0.20,
+     "note": "the ACTION at 20 %"},
+    # ---- eleventh pass, 2026-08-30: the DOSE-RESPONSE and its CONTROL. ------
+    #
+    # HH01 ran this same class of fix at 14B on a different codebase the same
+    # week and found a THRESHOLD, not a slope: epsilon-greedy rollout
+    # replacement at 0.10 installed the habit on 7 of 8 seeds where entropy
+    # bonuses (0.003-0.03) and draw temperature were 0-for-all, and 0.05 -- the
+    # same mechanism at half the rate -- did NOT. A dose that works and a dose
+    # that does not are worth more than a dose that works and a dose that works
+    # harder, because the pair is what distinguishes "epsilon is the lever" from
+    # "any perturbation would have done". So 0.05 is run here as the LOW dose,
+    # and 0.20 is left in the registry unrun by this brief.
+    #
+    # `onpolicy_g6` is the control the four tenth-pass arms did not have on cell
+    # A. Every one of them changes the SAMPLER; none of them is the same recipe
+    # with the sampler left alone. Without it, a live gradient on cell A could
+    # be epsilon OR it could be that cell A's priced mine gives the on-policy
+    # recipe a gradient cell D could never show -- which is exactly what
+    # RESULTS-2026-08-29.md section 3d predicts is possible. It is `fixed`
+    # (thermostat off, coefficient held at MZ01_ENTROPY_COEF) so that it differs
+    # from `epsilon_010` in EXACTLY ONE THING: the epsilon draw. `fixed` already
+    # resolves entropy_target to None, so `thermostat_off` is deliberately not
+    # set -- exploration_plan names that combination a no-op and would refuse to
+    # record it.
+    {"name": "epsilon_005", "mode": "epsilon", "group": 6, "epsilon": 0.05,
+     "note": "the ACTION at 5 % -- the LOW dose; HH01's 14B threshold sat "
+             "between this and 0.10"},
+    {"name": "onpolicy_g6", "mode": "fixed", "group": 6,
+     "note": "the CONTROL: no epsilon, no hot draw, thermostat off and the "
+             "coefficient held -- epsilon_010 minus its one change"},
+)
+ARM_NAMES = tuple(a["name"] for a in ARMS)
+# The five D arms for the D trial, the four tenth-pass cell-A arms for anything
+# else. A default that ignored the cell would run the thermostat arms on cell A,
+# where the finding is that the thermostat is not the lever.
+#
+# The eleventh pass's three arms are NOT in either default: they are a named
+# selection (MZ01_TRIAL_ARMS=epsilon_010,onpolicy_g6,epsilon_005) rather than a
+# new default, so the tenth pass's four-arm cell-A trial stays re-runnable from
+# its own committed command line.
+DEFAULT_ARMS = {True: ARM_NAMES[:5], False: ARM_NAMES[5:9]}[TRIAL_CELL == "D"]
+TRIAL_ARMS = [a.strip() for a in
+              os.environ.get("MZ01_TRIAL_ARMS",
+                             ",".join(DEFAULT_ARMS)).split(",")
+              if a.strip()]
+
+
+def say(m):
+    line = f"[{time.strftime('%H:%M:%S')}] {m}"
+    try:
+        with open(STATUS, "a") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
+    print(line, flush=True)
+
+
+def _hms(seconds):
+    if seconds is None:
+        return "n/a"
+    seconds = int(seconds)
+    return f"{seconds // 3600:d}h{(seconds % 3600) // 60:02d}m{seconds % 60:02d}s"
+
+
+def _scorer():
+    """`scripts/score_mz01_explore.py`, imported. ONE implementation of the
+    verdicts: the trial's own pick and the table a human reads afterwards must
+    not be able to disagree about which arm won."""
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "score_mz01_explore.py")
+    spec = importlib.util.spec_from_file_location("score_mz01_explore", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def eval_block(measurement):
+    """The held-out read, WITHOUT the records. -> a small dict, or None.
+
+    `measure_organism` returns every episode's whole record and they are the
+    bulk of an organism's result file. A trial arm is not an organism and its
+    file is rewritten after every RL step, so what is kept is the three numbers
+    the cell-A verdicts are written about -- `mine_step_rate`, `solve_rate` and
+    `detour_paid` by detour-cost bin -- plus the price table they come out of,
+    which is a dict of numbers and re-scorable on its own.
+    """
+    if not measurement:
+        return None
+    overall = (measurement.get("competence") or {})
+    return {
+        "n_mazes": measurement.get("n_mazes"),
+        "eval_batch_size": measurement.get("eval_batch_size"),
+        "cell": measurement.get("cell"),
+        "seed": measurement.get("seed"),
+        "order_seed": measurement.get("order_seed"),
+        "solve_rate": overall.get("solve_rate"),
+        "mine_step_rate": overall.get("mine_step_rate"),
+        "competence": overall,
+        "price": measurement.get("price"),
+        "note": ("greedy, ONE retry, the parse-stop OFF; placebo/novel/relearn/"
+                 "instruments are all OFF for the trial, so this is the mine "
+                 "pass alone and no graded claim is being read"),
+    }
+
+
+def arm_payload(arm, *, cell, seed, plan, preflight, history, status,
+                cfg, started_at, model_id, name=None, follow_up=False,
+                measurement=None):
+    """One arm's file. Everything the scorer needs and nothing it does not.
+
+    CRITIC PASS 2: `arm` is the FILE'S OWN NAME, not the arm definition's. The
+    follow-up cell is the picked arm run again on cell A and its file used to
+    carry the picked arm's name, so a human pointing the scorer at the directory
+    got two rows called `02_relative_g6` -- and `pick_arm` could return the
+    CELL A one, whose solve rate and zero-advantage fraction are not the numbers
+    the pick rule is written about. `follow_up` marks it and the scorer excludes
+    it from the pick.
+    """
+    return {
+        "arm": name or arm["name"],
+        "arm_base": arm["name"],
+        "follow_up": bool(follow_up),
+        "reference": False,
+        "mode": arm["mode"],
+        "arm_note": arm["note"],
+        "cell": cell,
+        "seed": seed,
+        "status": status,
+        "explore": plan,
+        "preflight_exploration": preflight,
+        "history": history,
+        # TENTH PASS. None until the arm's last step is done: the cell-A
+        # verdicts are about held-out behaviour and the training trace cannot
+        # answer them, so an arm killed mid-flight is honestly unverdictable
+        # rather than verdicted off its training pool.
+        "eval": eval_block(measurement),
+        "config": cfg,
+        "started_at": started_at,
+        # The one deviation every arm of this trial takes, named where the
+        # scorer and a human both read it: the pre-flight is SOFT for all five,
+        # because the control arm IS today's failing recipe and the refusing
+        # criterion is the number that says so.
+        "deviations": (
+            [f"EXPLORATION PRE-FLIGHT REPORTED, NOT APPLIED (soft): "
+             f"{(preflight or {}).get('soft_failures')} failed on the "
+             f"warm-started model"]
+            if (preflight or {}).get("soft_failures") else []),
+        "model_key": MODEL_KEY,
+        "model_id": model_id,
+        "revision": REVISION,
+        "trial_steps": TRIAL_STEPS,
+        "note": ("MZ01 R2 exploration trial: a SHORT arm from the shared warm "
+                 "start, no organism, no row, no ledger, no adapter. It answers "
+                 "whether the move term has any gradient at all, and on cell A "
+                 "whether that gradient buys avoidance."),
+    }
+
+
+def main():
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    from calibration import maze2, maze_orgb
+    from calibration.chat import chat_kwargs
+    from calibration.lora import (has_lora, inject_lora, lora_state_dict,
+                                  load_lora_state_dict)
+    from calibration.runner import derive_generator, git_sha
+    import run_orgb
+    import mz01_orgb_driver as drv
+
+    maze2.check_format(FORMAT)
+    if MODEL_KEY not in MODELS:
+        raise SystemExit(f"MZ01_MODEL must be one of {sorted(MODELS)}, "
+                         f"got {MODEL_KEY!r}")
+    if not REVISION:
+        raise SystemExit("MZ01_REVISION is required: a trial that picks the "
+                         "recipe for the real cells has to name its weights.")
+    bad = [a for a in TRIAL_ARMS if a not in ARM_NAMES]
+    if bad:
+        raise SystemExit(f"MZ01_TRIAL_ARMS has unknown arms {bad}; expected "
+                         f"{list(ARM_NAMES)}")
+    if not TRIAL_ARMS:
+        raise SystemExit("MZ01_TRIAL_ARMS selected no arms at all")
+    for cell in [TRIAL_CELL] + ([TRIAL_CELL_2] if TRIAL_CELL_2 else []):
+        if cell not in maze_orgb.CELL_SWITCHES:
+            raise SystemExit(f"unknown cell {cell!r}; expected "
+                             f"{list(maze_orgb.CELLS)}")
+    # TENTH PASS. The follow-up existed because the D trial could not answer the
+    # cell-A question and had to run one more arm to try. A trial whose ARMS
+    # ARE cell A has already asked it, and running A again under the picked A
+    # arm would measure the same recipe twice.
+    run_follow_up = bool(TRIAL_CELL_2) and TRIAL_CELL_2 != TRIAL_CELL
+    if not (NAV_ADAPTER and os.path.exists(NAV_ADAPTER)):
+        raise SystemExit(
+            f"the shared navigator's adapter is missing at {NAV_ADAPTER!r}. "
+            "The trial has to run on the base the cells run on, or its answer "
+            "is about a different policy.")
+    ws_path = WARM_START or f"{REPO}/experiments/v2/MZ01_maze_world/results/orgb/warm_start.pt"
+    if not os.path.exists(ws_path):
+        raise SystemExit(
+            f"the shared warm start is missing at {ws_path!r}. This trial must "
+            "NOT train one (M5: two warm starts put a different base under "
+            "different cells of one design, and the shards now running stand "
+            "on the existing file). Pull it, or point MZ01_WARM_START at it.")
+    os.makedirs(OUT, exist_ok=True)
+
+    model_id = MODELS[MODEL_KEY]
+    nav = drv.read_navigator(NAV_ADAPTER, NAV_JSON)
+    roles = {k: v for k, v in (nav["role_glyphs"] or {}).items()
+             if k in ("wall", "goal", "on_mine") and v}
+    if "on_mine" not in roles:
+        raise SystemExit(
+            "the navigator's result file carries no `on_mine` role glyph, so "
+            "this trial would render the cue with Glyphs() defaults -- a cue "
+            "the resident adapter was never trained under (critic 3).")
+
+    say(f"MZ01 R2 EXPLORE TRIAL: {model_id} @ {REVISION}; seed {TRIAL_SEED}; "
+        f"cell {TRIAL_CELL}; arms {TRIAL_ARMS}; {TRIAL_STEPS} steps x {BATCH} "
+        f"mazes x {GROUP} episodes; n={GRID_N}; fmt={FORMAT}")
+    say(f"  out {OUT}; warm start {ws_path}; navigator {NAV_ADAPTER} "
+        f"sha {(nav.get('adapter_sha256') or 'n/a')[:12]}")
+    est = 0.0
+    for name in TRIAL_ARMS:
+        arm = next(a for a in ARMS if a["name"] == name)
+        g = arm["group"] or GROUP
+        est += TRIAL_STEPS * 37.0 * (g / 6.0)
+    if run_follow_up:
+        # The UPPER bound: the follow-up runs at the picked arm's group, which
+        # is not known yet, so it is budgeted at the widest one on offer.
+        est += TRIAL_STEPS * 37.0 * 2
+    # ~90 s per GROUP=6 pre-flight (8 mazes x 6 episodes is about twice one RL
+    # step's sampling, plus a forward-only re-score), scaling in the group.
+    est += 90.0 * sum((next(a for a in ARMS if a["name"] == n)["group"] or GROUP)
+                      / 6.0 for n in TRIAL_ARMS)
+    est += 90.0 if run_follow_up else 0.0
+    # TENTH PASS: the held-out measurements, one per arm plus the reference.
+    # ~13 rounds x ceil(TRIAL_EVAL_N / EVAL_BATCH) decode calls of up to 48 new
+    # tokens; ~3 min at 128 mazes and width 32 on a 14B, measured against the
+    # navigator lease's own throughput and NOT against a datasheet.
+    n_evals = len(TRIAL_ARMS) + 1 + (1 if run_follow_up else 0)
+    est += 180.0 * n_evals
+    say(f"  projected {_hms(est)} at this trial's own measured 37 s/step "
+        f"(GROUP=6), scaling linearly in the group, with {n_evals} held-out "
+        f"measurements at {TRIAL_EVAL_N} mazes and every pre-flight -- an "
+        f"ESTIMATE, and an OPTIMISTIC one: an arm that stops solving runs up to "
+        f"TWICE the decisions per step (the episode cap is 2x the shortest "
+        f"path), which on cell A under 20 % epsilon or T=2.0 is the likely "
+        f"case, so read {_hms(est * 1.35)} as the padded line. Every arm "
+        f"records its own seconds_per_step")
+
+    tok = AutoTokenizer.from_pretrained(model_id, revision=REVISION)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id, revision=REVISION, dtype=torch.bfloat16).to("cuda")
+    model.eval()
+    device = next(model.parameters()).device
+    say(f"model resident; chat_kwargs {chat_kwargs(tok) or '{} (plain)'}")
+
+    if not has_lora(model):
+        inject_lora(model, target_modules=("q_proj", "v_proj"), r=16, alpha=32)
+    sd = torch.load(NAV_ADAPTER, map_location="cpu", weights_only=True)
+    load_lora_state_dict(model, sd)
+    sd = torch.load(ws_path, map_location="cpu", weights_only=True)
+    load_lora_state_dict(model, sd)
+    # THE BIT-EXACT RESTORE POINT. `lora_state_dict(cpu=True)` clones every
+    # adapter tensor and `load_lora_state_dict` copies them back IN PLACE -- the
+    # same pair `relearn_read` and the mid-cell checkpoint use -- so every arm
+    # starts from the same weights and not from "near enough".
+    warm_state = lora_state_dict(model, cpu=True)
+    say(f"warm start loaded ({len(warm_state)} tensors); every arm restores "
+        f"exactly these bytes before its first step")
+
+    eval_set, _ = maze2.generate_set(
+        EVAL_N, n=GRID_N, generator=derive_generator(0, "orgb", "eval"),
+        seed_range=run_orgb._EVAL_SEED_RANGE)
+    train_pool, _ = maze2.generate_set(
+        POOL, n=GRID_N, generator=derive_generator(0, "orgb", "train"),
+        seed_range=run_orgb._TRAIN_SEED_RANGE)
+    glyphs = maze2.format_glyphs(
+        maze2.glyphs_for_seed(TRIAL_SEED, counterbalance=True, **roles), FORMAT)
+    say(f"{len(eval_set)} held-out mazes, a {len(train_pool)}-maze pool, "
+        f"glyphs {glyphs.as_dict()}")
+
+    t0 = time.perf_counter()
+    results, done = {}, []
+    # THE MEASUREMENT SET. The FIRST `TRIAL_EVAL_N` of the held-out 256, so the
+    # reference and every arm are read on the identical mazes in the identical
+    # order -- the differences the cell-A verdicts take are paired ones.
+    eval_mazes = eval_set[:TRIAL_EVAL_N]
+
+    def measure(cell, tag):
+        """The held-out read. -> `measure_organism`'s dict.
+
+        `order_seed` is fixed at the trial's own seed for EVERY arm and for the
+        reference, so each arm is asked the same episode the same question --
+        D31 measured the word order alone swinging the modal move from `left`
+        92.4 % to `down` 70.1 %, and a difference across two order streams is
+        not a difference.
+        """
+        t_m = time.perf_counter()
+        out = maze_orgb.measure_organism(
+            model, tok, eval_mazes, cell=cell, seed=TRIAL_SEED, glyphs=glyphs,
+            fmt=FORMAT, batch_size=EVAL_BATCH, device=device,
+            order_seed=7000 + int(TRIAL_SEED),
+            placebo=PLACEBO, novel=NOVEL,
+            max_new_tokens=run_orgb.DEFAULT_CONFIG["max_new_tokens"])
+        comp = out["competence"]
+        say(f"  MEASURED {tag}: {len(eval_mazes)} mazes, solve "
+            f"{comp['solve_rate']:.3f}, mine/ep {comp['mine_step_rate']:.3f} "
+            f"in {_hms(time.perf_counter() - t_m)}")
+        return out
+
+    # ---- the REFERENCE: the warm start itself, measured once ---------------
+    # It is what cell A is compared to. Not an arm and never a candidate for the
+    # pick: no RL ran at all, so it has no trace, no zero-advantage fraction and
+    # no verdict -- it is the number the verdicts are differences FROM.
+    say(f"REFERENCE: the warm-started model on {len(eval_mazes)} held-out "
+        f"mazes, before any arm. Every cell-{TRIAL_CELL} verdict is a "
+        f"difference from this row.")
+    reference = None
+    try:
+        load_lora_state_dict(model, warm_state)
+        ref_m = measure(TRIAL_CELL, "reference (warm start)")
+        reference = {
+            "arm": "00_reference_warm_start", "arm_base": "reference",
+            "reference": True, "follow_up": False,
+            "mode": None, "arm_note": ("the warm-started model, no RL: the "
+                                       "D-equivalent baseline"),
+            "cell": TRIAL_CELL, "seed": TRIAL_SEED, "status": "DONE",
+            "explore": None, "preflight_exploration": None, "history": None,
+            "eval": eval_block(ref_m),
+            "config": {"group_size": None, "warm_start": ws_path},
+            "model_key": MODEL_KEY, "model_id": model_id, "revision": REVISION,
+        }
+        drv.write_payload(os.path.join(OUT, "reference.json"), reference)
+        say(f"  WROTE {os.path.join(OUT, 'reference.json')}")
+    except Exception:                                      # noqa: BLE001
+        # A missing reference costs the cell-A verdicts, not the traces: the
+        # arms still run and the scorer says NO-REFERENCE rather than guessing.
+        say("  !! REFERENCE MEASUREMENT FAILED:\n" + traceback.format_exc())
+
+    def run_arm(arm, cell, tag=None, pinned_target=None):
+        """One arm from the warm start. -> its payload (also on disk).
+
+        `pinned_target` is how the FOLLOW-UP cell gets the picked arm's EXACT
+        plan (critic pass 2). Re-deriving `relative`'s target from a second
+        pre-flight is deterministic on CPU but not on CUDA bf16, so cell A would
+        have trained under a target a hair from the one the trial picked -- and
+        under `MZ01_ENTROPY_TARGET` that hair is a different recipe to every
+        resume check in the programme. The pre-flight still RUNS (it is a
+        measurement of the same warm start under this arm's sampler); only the
+        target it resolves is pinned.
+        """
+        name = tag or arm["name"]
+        path = os.path.join(OUT, f"{name}.json")
+        group = arm["group"] or GROUP
+        # THE ARM'S OWN KNOBS, from the registry, falling back to the
+        # environment's. An arm is a NAMED recipe: `temperature_t20` means
+        # T=2.0 whatever MZ01_SAMPLE_T happens to be, or two arms of the same
+        # trial could silently be the same arm.
+        arm_t = float(arm.get("sample_temperature")
+                      or os.environ.get("MZ01_SAMPLE_T")
+                      or maze_orgb.SAMPLE_TEMPERATURE)
+        arm_eps = float(arm.get("epsilon")
+                        or os.environ.get("MZ01_EPSILON")
+                        or maze_orgb.EXPLORE_EPSILON_RATE)
+        arm_off = bool(arm.get("thermostat_off"))
+        load_lora_state_dict(model, warm_state)
+        started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        cfg = {"cell": cell, "seed": TRIAL_SEED, "steps": TRIAL_STEPS,
+               "n": GRID_N, "fmt": FORMAT, "batch_size": BATCH,
+               "group_size": group, "chunk_size": CHUNK,
+               "sample_batch_size": (int(SAMPLE_BATCH) if SAMPLE_BATCH
+                                     else None),
+               "pool_size": len(train_pool),
+               "eval_n": len(eval_mazes), "eval_batch_size": EVAL_BATCH,
+               "placebo": PLACEBO, "novel": NOVEL,
+               "warm_start": ws_path, "nav_adapter": NAV_ADAPTER,
+               "nav_adapter_sha256": nav.get("adapter_sha256"),
+               "role_glyphs": dict(roles), "git_sha": git_sha()}
+        say(f"ARM {name}: cell {cell} {maze_orgb.CELL_SWITCHES[cell]}, mode "
+            f"{arm['mode']}, GROUP={group} -- {arm['note']}")
+        pre = maze_orgb.preflight_exploration_check(
+            model, tok, eval_set[:PREFLIGHT_MAZES],
+            generator=derive_generator(0, "orgb", "explore"),
+            group_size=group, glyphs=glyphs, fmt=FORMAT, chunk_size=CHUNK,
+            sample_batch_size=cfg["sample_batch_size"], device=device,
+            temperature=1.0, explore_mode=arm["mode"],
+            entropy_coef=run_orgb.DEFAULT_CONFIG["entropy_coef"],
+            entropy_target=run_orgb.DEFAULT_CONFIG["entropy_target"],
+            entropy_rel=float(os.environ.get("MZ01_ENTROPY_REL")
+                              or maze_orgb.ENTROPY_REL),
+            entropy_min=float(os.environ.get("MZ01_ENTROPY_MIN")
+                              or maze_orgb.ENTROPY_MIN),
+            entropy_coef_fixed=float(os.environ.get("MZ01_ENTROPY_COEF")
+                                     or maze_orgb.ENTROPY_COEF_FIXED),
+            sample_temperature=arm_t, epsilon=arm_eps,
+            thermostat_off=arm_off,
+            pinned_target=pinned_target,
+            # SOFT, always: the trial's whole point is to run the arms that
+            # today's gate refuses, and the CONTROL is the one that fails it
+            # hardest -- it is today's recipe, and the refusing criterion is
+            # precisely the number that says today's recipe does not learn. A
+            # gate that stopped the control would stop the trial from measuring
+            # the thing it exists to measure. The refusal is logged and recorded
+            # as a deviation in every arm's payload instead.
+            soft=True)
+        for line in pre["lines"]:
+            say("  " + line)
+        plan = pre["plan"]
+
+        def on_step(step, history):
+            drv.write_payload(path, arm_payload(
+                arm, cell=cell, seed=TRIAL_SEED, plan=plan, preflight=pre,
+                history=history, status=f"RUNNING step {step + 1}/{TRIAL_STEPS}",
+                cfg=cfg, started_at=started, model_id=model_id,
+                name=name, follow_up=bool(tag)))
+
+        hist = maze_orgb.train_orgb_cell(
+            model, tok, cell=cell, seed=TRIAL_SEED, steps=TRIAL_STEPS,
+            n=GRID_N, batch_size=BATCH, group_size=group,
+            lr=run_orgb.DEFAULT_CONFIG["lr"], temperature=plan["temperature"],
+            yell_weight=run_orgb.DEFAULT_CONFIG["yell_weight"],
+            max_new_tokens=run_orgb.DEFAULT_CONFIG["max_new_tokens"],
+            entropy_coef=plan["entropy_coef"],
+            entropy_target=plan["entropy_target"],
+            explore_mode=plan["mode"], explore_knobs=plan["knobs"],
+            sample_temperature=plan["sample_temperature"],
+            epsilon=plan["epsilon"],
+            sample_batch_size=cfg["sample_batch_size"],
+            move_mass_coef=run_orgb.DEFAULT_CONFIG["move_mass_coef"],
+            chunk_size=CHUNK, train_pool=train_pool, glyphs=glyphs,
+            fmt=FORMAT, log_every=1,
+            # NO CHECKPOINT: an arm is a few dozen steps and is discarded
+            # whatever happens. A 126 MB write every 50 steps would buy nothing
+            # and would land in the results tree the puller mirrors.
+            ckpt_path=None, ckpt_every=0, on_step=on_step)
+        say(f"  ARM {name} trained in {_hms(hist['total_seconds'])} "
+            f"({hist['seconds_per_step']:.1f} s/step); zero-advantage groups "
+            f"mean {hist['zero_advantage_group_fraction_mean']}, train solve "
+            f"{hist['solve_rate'][-1]:.3f}, train mine/ep "
+            f"{hist['mine_step_rate'][-1]:.3f}, H {hist['policy_entropy'][-1]:.3f}, "
+            f"coef {hist['entropy_coef'][-1]:.4f}, eps replaced "
+            f"{hist['epsilon_replaced_fraction_mean']}")
+        # ---- THE HELD-OUT READ, at the end and only at the end -------------
+        # The training numbers above are on the POOL and under the arm's own
+        # sampler; an epsilon arm's training `mine_step_rate` includes the mines
+        # epsilon itself walked onto. The verdicts are about what the organism
+        # DOES, greedily, on mazes it never trained on.
+        meas = None
+        try:
+            meas = measure(cell, name)
+        except Exception:                                  # noqa: BLE001
+            say(f"  !! MEASUREMENT FAILED for {name}:\n"
+                + traceback.format_exc())
+        payload = arm_payload(
+            arm, cell=cell, seed=TRIAL_SEED, plan=plan, preflight=pre,
+            history=hist, status="DONE", cfg=cfg, started_at=started,
+            model_id=model_id, name=name, follow_up=bool(tag),
+            measurement=meas)
+        drv.write_payload(path, payload)
+        say(f"  WROTE {path}")
+        return payload
+
+    for name in TRIAL_ARMS:
+        arm = next(a for a in ARMS if a["name"] == name)
+        try:
+            results[name] = run_arm(arm, TRIAL_CELL)
+            done.append(name)
+        except Exception:                                  # noqa: BLE001
+            # ONE ARM MUST NOT COST THE OTHERS. An OOM at GROUP=12 is a real
+            # possible outcome of this trial and is itself an answer.
+            say(f"  !! ARM {name} FAILED:\n" + traceback.format_exc())
+            failed = {"arm": name, "arm_base": name, "follow_up": False,
+                      "reference": False,
+                      "mode": arm["mode"], "cell": TRIAL_CELL,
+                      "seed": TRIAL_SEED, "status": "FAILED",
+                      "error": traceback.format_exc(), "history": None,
+                      "eval": None}
+            results[name] = failed
+            drv.write_payload(os.path.join(OUT, f"{name}.json"), failed)
+        say(f"  progress {len(done)}/{len(TRIAL_ARMS)} arms, elapsed "
+            f"{_hms(time.perf_counter() - t0)}")
+
+    # ---- the summary, by the SAME code the human reads the table with -------
+    score = _scorer()
+    payloads = list(results.values()) + ([reference] if reference else [])
+    rows, ref_row = score.read_all(payloads)
+    pick = score.pick_arm(rows)
+    summary = {
+        "arms": rows,
+        "reference": ref_row,
+        "pick": pick,
+        "env_line": (score.env_line(pick, cells="A,C") if pick else None),
+        "env_lines": (score.env_lines(pick) if pick else None),
+        "steps": TRIAL_STEPS,
+        "cell": TRIAL_CELL,
+        "seed": TRIAL_SEED,
+        "eval_n": len(eval_mazes),
+        "bars": {"zero_advantage": score.ZERO_ADVANTAGE_BAR,
+                 "solve_drop": score.SOLVE_DROP_BAR,
+                 "mine_ratio": score.MINE_RATIO_BAR,
+                 "solve_band": score.SOLVE_BAND},
+    }
+    for line in score.table(rows, pick, reference=ref_row):
+        say("  " + line)
+    drv.write_payload(os.path.join(OUT, "summary.json"), summary)
+    say(f"WROTE {os.path.join(OUT, 'summary.json')}")
+
+    # ---- and the question the trial is actually for ------------------------
+    # SKIPPED when the arms already ran the follow-up cell: a cell-A trial has
+    # asked the cell-A question and running A again under the picked A arm is
+    # the same recipe twice.
+    if run_follow_up and pick:
+        arm = next(a for a in ARMS if a["name"] == pick["arm"])
+        # A mode that runs no thermostat has no target to pin and
+        # `exploration_plan` refuses one; every other mode pins the number the
+        # picked arm actually trained under.
+        pin = (None if not pick.get("entropy_target")
+               else pick.get("entropy_target"))
+        say(f"FOLLOW-UP: cell {TRIAL_CELL_2} under the picked arm "
+            f"{pick['arm']} -- 'the entropy moved' is not the question, "
+            f"'does mine/ep move' is"
+            + (f"; entropy target PINNED at {pin}" if pin is not None else ""))
+        try:
+            follow = run_arm(arm, TRIAL_CELL_2, tag=f"{TRIAL_CELL_2}_{pick['arm']}",
+                             pinned_target=pin)
+            summary["follow_up"] = score.read_arm(follow, reference=ref_row)
+            drv.write_payload(os.path.join(OUT, "summary.json"), summary)
+        except Exception:                                  # noqa: BLE001
+            say("  !! FOLLOW-UP FAILED:\n" + traceback.format_exc())
+    elif run_follow_up:
+        say(f"FOLLOW-UP SKIPPED: no arm was picked, so there is no recipe to "
+            f"run cell {TRIAL_CELL_2} under. That is the trial's answer and it "
+            f"is a NEGATIVE one: none of these arms gives the move term a "
+            f"gradient that survives at this scale.")
+    elif TRIAL_CELL_2:
+        say(f"FOLLOW-UP SKIPPED: the arms already trained cell {TRIAL_CELL}, "
+            f"which is the follow-up cell. Running it again under the picked "
+            f"arm would measure the same recipe twice.")
+
+    say(f"MZ01 EXPLORE TRIAL DONE arms={len(done)}/{len(TRIAL_ARMS)} "
+        f"pick={(pick or {}).get('arm')} elapsed={_hms(time.perf_counter() - t0)}")
+    for line in (summary["env_lines"] or []):
+        say("  RECOMMENDED: " + line)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        say("MZ01 EXPLORE TRIAL ERROR:\n" + traceback.format_exc())
+        raise

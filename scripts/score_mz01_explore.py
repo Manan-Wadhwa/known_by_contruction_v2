@@ -1,0 +1,610 @@
+#!/usr/bin/env python3
+"""Which exploration arm gave the move term a gradient? -> a table and a pick.
+
+WHAT IT READS. The files `scripts/mz01_explore_trial.py` writes under
+`results/explore_trial/`: one JSON per arm, each carrying that arm's resolved
+`explore` plan, `train_orgb_cell`'s whole per-step history and (from the tenth
+pass) its held-out `eval` block; plus `reference.json`, the warm-started model
+measured on the same mazes before any arm ran. Point it at the directory or at
+the files.
+
+WHAT IT ANSWERS. The trial exists because three shards trained with a DEAD MOVE
+TERM: a near-deterministic warm start makes a maze's sampled episodes identical,
+so every group advantage is exactly zero and the policy gradient is nothing at
+all. One number says whether an arm fixed that --
+`zero_advantage_group_fraction`, the share of maze groups whose returns were all
+the same -- and one number says what the fix cost: `solve_rate`.
+
+THERE ARE TWO VERDICT SETS, because there are two questions.
+
+CELL D (the first two trials, and any cell that is not A):
+
+    DEAD        zero-advantage groups still over ZERO_ADVANTAGE_BAR at the end.
+                The arm changed the thermostat and not the gradient.
+    RANDOMISED  the gradient is live but the solve rate FELL by more than
+                SOLVE_DROP_BAR against the arm's OWN start.
+    ALIVE       neither.
+
+CELL A (the tenth pass). Cell D's reward prices no mine, so any deviation from
+the shortest path is strictly worse and ZERO ADVANTAGE IS D'S EQUILIBRIUM -- a D
+arm can break the degeneracy at step 0 and be trained back to a point mass,
+which is exactly what `04_temperature_g6` did (zadv 0.39 -> 0.97, H 0.001).
+Under cell A the mine IS priced, so the question stops being "is there a
+gradient" and becomes "did the gradient buy avoidance, and at what price in
+competence". Both halves are read on the HELD-OUT measurement against the
+REFERENCE -- the warm-started model, no RL, on the identical mazes:
+
+    DEAD            zero-advantage groups over ZERO_ADVANTAGE_BAR at the end.
+    RANDOMISED      held-out solve fell more than SOLVE_BAND below the
+                    reference. Avoidance bought by destroying the policy is not
+                    a recipe.
+    AVOIDS          held-out `mine_step_rate` under MINE_RATIO_BAR x the
+                    reference's AND held-out solve within SOLVE_BAND of it.
+                    This is the arm the real cells should run.
+    ALIVE           a gradient, but not (yet) avoidance.
+    NO-REFERENCE    no reference row in the directory, so the two differences
+                    above cannot be taken. Nothing is guessed.
+    NO-MEASUREMENT  a trace but no held-out read (the arm was killed before the
+                    measurement, or the measurement raised).
+
+THE PICK, ON CELL A, is the AVOIDS arm with the highest held-out solve, ties to
+the LOWER off-policy fraction -- the arm that bought the same avoidance with the
+least deviation from the policy being scored. With no AVOIDS arm it is the ALIVE
+arm with the lowest held-out `mine_step_rate`: the arm closest to the answer,
+not the arm that moved most.
+
+THE PICK, ON CELL D, is the ALIVE arm with the highest end solve rate, then the
+lowest seconds per step, ties to `relative` -- the smallest deviation from the
+pre-registered recipe among the ones that work.
+
+The FOLLOW-UP file (the picked arm run again on another cell) and the REFERENCE
+file are read and printed but are never picked.
+
+THE OFF-POLICY FRACTION, which is the cell-A tie-break, is ONE number for two
+different mechanisms and it means "the share of decisions whose action did not
+come from the policy the loss scores". For an `epsilon` arm it is the MEASURED
+replacement share out of the trace (not the knob: a position with no valid move
+keeps its sample). For a `temperature` arm it is 1.0, because at T != 1 every
+draw comes from a policy other than the scored one. It is 0.0 on-policy.
+
+READ `slow_controller` BEFORE READING A `DEAD` VERDICT. An arm that acts through
+the thermostat only acts through a coefficient the controller walks up by
+`exp(0.05 * (target - H))` per step -- ~1.4 % a step at a target of 0.3 against
+a measured 0.02 -- so at 40 steps it is still at ~0.018 against the 0.1 the
+`fixed` arm starts at. Such an arm can read DEAD because the trial was short,
+not because the mode does not work, and the table says so on its own line. It
+does not arise on the cell-A arms, which all hold the coefficient still.
+
+START and END are WINDOW MEANS over the first and last fifth of the steps
+(at least one step), not single steps: at GROUP=6 a single step reads four
+groups, so its zero-advantage fraction takes only the values 0, .25, .5, .75, 1
+and one step decides nothing.
+
+Stdlib only, like `scripts/mz01_entropy_trace.py`: it runs under a bare
+`python3 -S` on the box, beside the trial, before anything has been pulled.
+
+Usage:
+    python3 scripts/score_mz01_explore.py experiments/v2/MZ01_maze_world/results/explore_trial
+    python3 scripts/score_mz01_explore.py --json results/explore_trial/*.json
+"""
+
+import json
+import os
+import sys
+
+# ---- the bars this file decides with. Each names its home.
+ZERO_ADVANTAGE_BAR = 0.80      # calibration.maze_orgb.ZERO_ADVANTAGE_BAR
+SOLVE_DROP_BAR = 0.10          # this file: "RANDOMISED" on cell D, above
+WINDOW_FRACTION = 5            # start/end windows are 1/5 of the steps
+RELATIVE_MODE = "relative"     # calibration.maze_orgb.EXPLORE_RELATIVE
+EPSILON_MODE = "epsilon"       # calibration.maze_orgb.EXPLORE_EPSILON
+# calibration.maze_orgb.ENTROPY_COEF_FIXED -- the `fixed` arm's coefficient, and
+# here the yardstick for "did the thermostat arm's controller get anywhere at
+# all before the horizon ran out". See `read_arm`'s `slow_controller`.
+COEF_REFERENCE = 0.1
+# ---- the two cell-A bars. This file, and the tenth pass's spec.
+# A quarter off the reference's mines. Not a significance test and not pretending
+# to be one: 128 mazes at one seed is a READING, and the design's own bands
+# (INVARIANCE_BAND 0.15 on a PAIRED difference) are what the real cells are
+# graded on. This bar exists to answer "is this arm worth 4 x 300 steps".
+MINE_RATIO_BAR = 0.75
+# ... while solve holds. 0.10 is the same width cell D's RANDOMISED uses, so the
+# two verdict sets price competence identically.
+SOLVE_BAND = 0.10
+CELL_A = "A"
+
+
+def _mean(xs):
+    xs = [float(x) for x in xs if x is not None]
+    return (sum(xs) / len(xs)) if xs else None
+
+
+def _window(series, *, end=False, n=None):
+    """The mean of the first (or last) fifth of a series. None if empty."""
+    vals = [x for x in (series or [])]
+    if not vals:
+        return None
+    k = max(1, len(vals) // WINDOW_FRACTION) if n is None else max(1, int(n))
+    return _mean(vals[-k:] if end else vals[:k])
+
+
+def detour_by_bin(price):
+    """`detour_paid` per detour-cost bin, out of `maze_orgb.price_table`.
+
+    The stored table splits every bin by the PRICE SIGN (is avoiding every mine
+    optimal here?), which is B4's primary read and the right one for a graded
+    claim. The trial is not making a graded claim -- it is asking whether an arm
+    is worth 4 x 300 steps -- so the two signs are recombined by their own
+    solved counts, which is exact: `sum(n_i * paid_i) / sum(n_i)`.
+    """
+    out = {}
+    for d, cell in sorted((price or {}).get("by_bin_and_price", {}).items(),
+                          key=lambda kv: (kv[0] == "None", kv[0])):
+        num = den = 0.0
+        for sign in ("avoid_optimal", "through_optimal"):
+            s = cell.get(sign) or {}
+            n, paid = s.get("n_solved"), s.get("detour_paid_solved")
+            if n and paid is not None:
+                num += float(n) * float(paid)
+                den += float(n)
+        out[str(d)] = {
+            "n": cell.get("n"),
+            "n_solved": int(den),
+            "detour_paid_solved": (num / den) if den else None,
+        }
+    return out
+
+
+def _eval_row(payload):
+    """The held-out block, as the three numbers the verdicts use. -> dict."""
+    ev = payload.get("eval") or {}
+    return {
+        "eval_n": ev.get("n_mazes"),
+        "eval_solve_rate": ev.get("solve_rate"),
+        "eval_mine_step_rate": ev.get("mine_step_rate"),
+        "detour_by_bin": detour_by_bin(ev.get("price")),
+    }
+
+
+def _off_policy_fraction(payload, plan, hist):
+    """The share of decisions whose action was not the scored policy's.
+
+    MEASURED where it can be: an epsilon arm records the realised replacement
+    share per step, and that is not the knob -- a position with no valid move
+    keeps its sample. Falls back to the plan's own resolved number, which is the
+    one place a mode name becomes a rate.
+    """
+    measured = (hist or {}).get("epsilon_replaced_fraction_mean")
+    if measured is not None and (plan or {}).get("mode") == EPSILON_MODE:
+        return float(measured)
+    stated = (plan or {}).get("off_policy_decision_fraction")
+    if stated is not None:
+        return float(stated)
+    if (plan or {}).get("epsilon"):
+        return float(plan["epsilon"])
+    return 1.0 if (plan or {}).get("off_policy") else 0.0
+
+
+def is_reference(payload):
+    """A reference file is a MEASUREMENT with no RL behind it."""
+    return bool(payload.get("reference"))
+
+
+def read_arm(payload, reference=None):
+    """One arm's file (or the trial's in-memory payload) -> one table row.
+
+    `reference` is the reference ROW (as returned by this function on the
+    reference file, or any dict carrying `eval_solve_rate` and
+    `eval_mine_step_rate`). It is only consulted for cell-A arms, whose two
+    verdicts are both differences from the warm start.
+    """
+    hist = payload.get("history") or {}
+    plan = payload.get("explore") or {}
+    steps = len(hist.get("step") or [])
+    solve_start = _window(hist.get("solve_rate"))
+    solve_end = _window(hist.get("solve_rate"), end=True)
+    zero_start = _window(hist.get("zero_advantage_group_fraction"))
+    zero_end = _window(hist.get("zero_advantage_group_fraction"), end=True)
+    drop = (None if solve_start is None or solve_end is None
+            else solve_start - solve_end)
+    ev = _eval_row(payload)
+    ref_solve = (reference or {}).get("eval_solve_rate")
+    ref_mine = (reference or {}).get("eval_mine_step_rate")
+    cell = payload.get("cell")
+
+    if is_reference(payload):
+        verdict = "REFERENCE"
+    elif payload.get("status") == "FAILED" or not steps:
+        verdict = "FAILED" if payload.get("status") == "FAILED" else "EMPTY"
+    elif zero_end is None:
+        verdict = "UNREADABLE"
+    elif zero_end > ZERO_ADVANTAGE_BAR:
+        # The one verdict both cells share, and it is first in both: an arm
+        # whose groups are still degenerate had no policy gradient to spend,
+        # whatever its held-out numbers happen to look like.
+        verdict = "DEAD"
+    elif cell == CELL_A:
+        if ev["eval_solve_rate"] is None or ev["eval_mine_step_rate"] is None:
+            verdict = "NO-MEASUREMENT"
+        elif ref_solve is None or ref_mine is None:
+            verdict = "NO-REFERENCE"
+        elif ref_solve - ev["eval_solve_rate"] > SOLVE_BAND:
+            verdict = "RANDOMISED"
+        elif (ev["eval_mine_step_rate"] < MINE_RATIO_BAR * ref_mine
+              and abs(ev["eval_solve_rate"] - ref_solve) <= SOLVE_BAND):
+            verdict = "AVOIDS"
+        else:
+            verdict = "ALIVE"
+    elif drop is not None and drop > SOLVE_DROP_BAR:
+        verdict = "RANDOMISED"
+    else:
+        verdict = "ALIVE"
+    # DEAD AT THIS HORIZON IS NOT THE SAME AS DEAD (critic pass 2). An arm whose
+    # mechanism is the THERMOSTAT acts through a coefficient the controller has
+    # to walk up: `log_coef += 0.05 * (target - H)`, so at a target of 0.3
+    # against a measured 0.02 the coefficient multiplies by e^0.014 per step and
+    # is still only ~0.018 at step 40 -- a sixth of what the `fixed` arm STARTS
+    # at. A short trial is therefore structurally unkind to `relative` and kind
+    # to the arms whose mechanisms are live from step 0, and a DEAD verdict on
+    # such an arm must not be read as a refutation of it. Flagged, never
+    # silently rescued: the answer to a slow arm is more steps, not a lower bar.
+    coef_start, coef_end = (_window(hist.get("entropy_coef")),
+                            _window(hist.get("entropy_coef"), end=True))
+    slow = bool(verdict == "DEAD" and coef_end is not None
+                and coef_start is not None and coef_end > coef_start
+                and coef_end < COEF_REFERENCE)
+    row = {
+        "arm": payload.get("arm"),
+        "arm_base": payload.get("arm_base") or payload.get("arm"),
+        # The follow-up cell is the picked arm run AGAIN on another cell, and
+        # the reference is the warm start with no RL at all. Both are in the
+        # directory and both are worth reading; neither is a candidate.
+        "follow_up": bool(payload.get("follow_up")),
+        "reference": is_reference(payload),
+        "mode": plan.get("mode") or payload.get("mode"),
+        "cell": cell,
+        "seed": payload.get("seed"),
+        "status": payload.get("status"),
+        "steps": steps,
+        "group_size": (payload.get("config") or {}).get("group_size"),
+        "entropy_start": _window(hist.get("policy_entropy")),
+        "entropy_end": _window(hist.get("policy_entropy"), end=True),
+        "entropy_target": plan.get("entropy_target"),
+        "coef_start": coef_start,
+        "coef_end": coef_end,
+        "slow_controller": slow,
+        "zero_adv_start": zero_start,
+        "zero_adv_end": zero_end,
+        "grad_norm_mean": _mean(hist.get("grad_norm") or []),
+        "solve_start": solve_start,
+        "solve_end": solve_end,
+        "solve_drop": drop,
+        "mine_per_ep_start": _window(hist.get("mine_step_rate")),
+        "mine_per_ep_end": _window(hist.get("mine_step_rate"), end=True),
+        "within_group_return_sd_end": _window(
+            hist.get("within_group_return_sd"), end=True),
+        "log_importance_ratio_mean": hist.get("log_importance_ratio_mean"),
+        "epsilon": plan.get("epsilon"),
+        "epsilon_replaced_fraction_mean":
+            hist.get("epsilon_replaced_fraction_mean"),
+        "off_policy_fraction": _off_policy_fraction(payload, plan, hist),
+        "thermostat_off": bool((plan.get("knobs") or {}).get("thermostat_off")
+                               or plan.get("entropy_target") is None),
+        "seconds_per_step": hist.get("seconds_per_step"),
+        "sample_temperature": plan.get("sample_temperature"),
+        "knobs": plan.get("knobs") or {},
+        "preflight_entropy": (payload.get("preflight_exploration")
+                              or {}).get("policy_entropy"),
+        # Whether this arm's OWN pre-flight would have refused it. The gate's
+        # one refusing criterion is measured on the warm start under the arm's
+        # sampler, so `temperature` and `epsilon` can clear it where `relative`
+        # and `fixed` (whose mechanism is the thermostat, invisible before step
+        # 1) cannot.
+        "preflight_hard_passed": (payload.get("preflight_exploration")
+                                  or {}).get("hard_passed"),
+        "verdict": verdict,
+    }
+    row.update(ev)
+    # The two differences the cell-A verdicts are, carried so the table and a
+    # re-score do not have to recompute them from two rows.
+    row["eval_solve_vs_reference"] = (
+        None if ev["eval_solve_rate"] is None or ref_solve is None
+        else ev["eval_solve_rate"] - ref_solve)
+    row["eval_mine_ratio_to_reference"] = (
+        None if ev["eval_mine_step_rate"] is None or not ref_mine
+        else ev["eval_mine_step_rate"] / ref_mine)
+    return row
+
+
+def read_all(payloads):
+    """-> (rows, reference_row). The reference is found FIRST and every other
+    row is read against it, because the cell-A verdicts are differences from
+    it and a row read without it would say NO-REFERENCE for no good reason."""
+    refs = [p for p in payloads if is_reference(p)]
+    ref_row = read_arm(refs[0]) if refs else None
+    rows = [read_arm(p, reference=ref_row) for p in payloads]
+    return rows, ref_row
+
+
+def pick_arm(rows, reference=None):
+    """The arm to run the real cells under, or None. See the docstring."""
+    cands = [r for r in rows
+             if not r.get("follow_up") and not r.get("reference")]
+    if not cands:
+        return None
+    if any(r.get("cell") == CELL_A for r in cands):
+        a_rows = [r for r in cands if r.get("cell") == CELL_A]
+        avoids = [r for r in a_rows if r["verdict"] == "AVOIDS"]
+        if avoids:
+            # Highest held-out solve; tie to the arm that bought it with the
+            # SMALLEST deviation from the policy the loss scores.
+            return sorted(avoids, key=lambda r: (
+                -round(r["eval_solve_rate"] or 0.0, 3),
+                round(r["off_policy_fraction"] or 0.0, 4),
+                r["arm"] or ""))[0]
+        alive = [r for r in a_rows
+                 if r["verdict"] == "ALIVE"
+                 and r["eval_mine_step_rate"] is not None]
+        if alive:
+            return sorted(alive, key=lambda r: (
+                round(r["eval_mine_step_rate"], 4), r["arm"] or ""))[0]
+        return None
+    alive = [r for r in cands if r["verdict"] == "ALIVE"]
+    if not alive:
+        return None
+
+    def key(r):
+        # Rounded before comparison so two arms that differ in the fourth
+        # decimal of a short trial's solve rate count as tied and the tie-break
+        # (cheapest step, then `relative`) is what decides -- rather than noise.
+        return (-round(r["solve_end"] or 0.0, 3),
+                round(r["seconds_per_step"] or 0.0, 1),
+                0 if r["mode"] == RELATIVE_MODE else 1,
+                r["arm"] or "")
+    return sorted(alive, key=key)[0]
+
+
+def env_line(row, cells="A,C"):
+    """The launch line for the real cells under this arm. -> str."""
+    if not row:
+        return ""
+    mode = row["mode"]
+    parts = [f"MZ01_EXPLORE={mode}"]
+    knobs = row.get("knobs") or {}
+    if mode == RELATIVE_MODE:
+        if "entropy_rel" in knobs:
+            parts.append(f"MZ01_ENTROPY_REL={knobs['entropy_rel']}")
+        if "entropy_min" in knobs:
+            parts.append(f"MZ01_ENTROPY_MIN={knobs['entropy_min']}")
+        if row.get("entropy_target") is not None:
+            # PINNED, not derived. The target is a function of a sampled
+            # measurement, so a second lease would derive a different one and
+            # both the mid-cell checkpoint and the shard's finished rows would
+            # refuse the recipe (see `maze_orgb.exploration_plan`).
+            parts.append(f"MZ01_ENTROPY_TARGET={row['entropy_target']}")
+    elif mode == "fixed":
+        coef = knobs.get("entropy_coef_fixed", row.get("coef_end"))
+        parts.append(f"MZ01_ENTROPY_COEF={coef}")
+    elif mode == "temperature":
+        parts.append(f"MZ01_SAMPLE_T={row.get('sample_temperature')}")
+    elif mode == EPSILON_MODE:
+        parts.append(f"MZ01_EPSILON={row.get('epsilon')}")
+        parts.append(f"MZ01_ENTROPY_COEF="
+                     f"{knobs.get('entropy_coef_fixed', COEF_REFERENCE)}")
+    # TENTH PASS. A thermostat mode whose controller was HELD STILL is a
+    # different recipe from the same mode with the controller running, and the
+    # driver has to be told which one to reproduce. `epsilon` and `fixed` run no
+    # thermostat by definition and need no flag.
+    if row.get("thermostat_off") and mode in (
+            "thermostat_fixed_target", RELATIVE_MODE, "temperature"):
+        parts.append("MZ01_THERMOSTAT_OFF=1")
+        parts.append(f"MZ01_ENTROPY_COEF="
+                     f"{knobs.get('entropy_coef_fixed', COEF_REFERENCE)}")
+    if row.get("group_size"):
+        parts.append(f"MZ01_GROUP={row['group_size']}")
+    # ONLY IF THIS ARM'S OWN PRE-FLIGHT WOULD REFUSE IT. `MZ01_PREFLIGHT_SOFT=1`
+    # is a recorded DEVIATION in the manifest, and a run that emits it when the
+    # gate would have passed records a deviation that did not happen. An arm
+    # whose mechanism is the thermostat cannot clear the gate -- the degeneracy
+    # is measured on the warm start, before the coefficient has moved at all --
+    # and must carry the flag; an arm that moves the SAMPLER or the ACTION can
+    # clear it. When the arm file carries no pre-flight verdict the flag is
+    # emitted, because the failure mode of guessing wrong in that direction is a
+    # stopped run and in the other it is an unrecorded deviation.
+    if not row.get("preflight_hard_passed"):
+        parts.append("MZ01_PREFLIGHT_SOFT=1")
+    parts.append(f"MZ01_CELLS={cells}")
+    return " ".join(parts)
+
+
+def env_lines(row):
+    """One line for A and one for C. -> [str, str].
+
+    Two lines rather than `MZ01_CELLS=A,C`, because the two cells are two boxes
+    in this programme's own shape and an operator copies one line per box.
+    """
+    return [env_line(row, cells="A"), env_line(row, cells="C")]
+
+
+def _f(x, spec="8.4f"):
+    return "     n/a" if x is None else format(float(x), spec)
+
+
+def _bin_table(rows, reference=None):
+    """`detour_paid` by detour-cost bin, every arm beside the reference."""
+    have = [r for r in rows if r.get("detour_by_bin")]
+    if reference and reference.get("detour_by_bin"):
+        have = [reference] + [r for r in have if r is not reference]
+    if not have:
+        return []
+    bins = []
+    for r in have:
+        for d in r["detour_by_bin"]:
+            if d not in bins:
+                bins.append(d)
+    bins.sort(key=lambda d: (d == "None", d))
+    lines = ["", "detour_paid (solved episodes) by detour-cost bin, held out:",
+             f"  {'arm':<24} " + " ".join(f"{('d=' + d):>10}" for d in bins)]
+    for r in have:
+        cells = []
+        for d in bins:
+            got = (r["detour_by_bin"].get(d) or {}).get("detour_paid_solved")
+            cells.append("       n/a" if got is None else f"{got:>10.3f}")
+        tag = "REFERENCE" if r.get("reference") else str(r["arm"])
+        lines.append(f"  {tag:<24} " + " ".join(cells))
+    ns = have[0]["detour_by_bin"]
+    lines.append("  n (solved) in the reference row: " + ", ".join(
+        f"d={d}: {(ns.get(d) or {}).get('n_solved')}" for d in bins))
+    lines.append("  the two price signs are recombined by their own solved "
+                 "counts; B4's primary read splits them and this does not.")
+    return lines
+
+
+def table(rows, pick=None, reference=None):
+    """The table, as lines. Shared by the trial driver and the CLI."""
+    order = sorted(rows, key=lambda r: (not r.get("reference"), r["arm"] or ""))
+    header = (
+        f"{'arm':<20} {'mode':<24} {'verdict':<14} {'H start':>8} "
+        f"{'H end':>8} {'target':>8} {'coef s':>8} {'coef e':>8} "
+        f"{'zadv s':>8} {'zadv e':>8} {'|g|':>9} {'tr solve':>8} "
+        f"{'tr mine':>8} {'ev solve':>8} {'ev mine':>8} {'mine/ref':>8} "
+        f"{'offpol':>7} {'s/step':>8}")
+    lines = [header, "-" * len(header)]
+    for r in order:
+        lines.append(
+            f"{str(r['arm']):<20} {str(r['mode']):<24} {r['verdict']:<14} "
+            f"{_f(r['entropy_start'])} {_f(r['entropy_end'])} "
+            f"{_f(r['entropy_target'])} {_f(r['coef_start'])} "
+            f"{_f(r['coef_end'])} {_f(r['zero_adv_start'])} "
+            f"{_f(r['zero_adv_end'])} {_f(r['grad_norm_mean'], '9.4f')} "
+            f"{_f(r['solve_end'])} {_f(r['mine_per_ep_end'])} "
+            f"{_f(r['eval_solve_rate'])} {_f(r['eval_mine_step_rate'])} "
+            f"{_f(r['eval_mine_ratio_to_reference'])} "
+            f"{_f(r['off_policy_fraction'], '7.3f')} "
+            f"{_f(r['seconds_per_step'], '8.1f')}")
+    lines.append("")
+    lines.append(f"DEAD = zero-advantage groups > {ZERO_ADVANTAGE_BAR:.2f} at "
+                 f"the end (the move term is still multiplying by zero). On "
+                 f"cell A: AVOIDS = held-out mine/ep < {MINE_RATIO_BAR:.2f} x "
+                 f"the reference's with solve within {SOLVE_BAND:.2f} of it; "
+                 f"RANDOMISED = solve fell more than {SOLVE_BAND:.2f} below the "
+                 f"reference; ALIVE = a gradient but not avoidance. On cell D: "
+                 f"RANDOMISED = solve fell more than {SOLVE_DROP_BAR:.2f} "
+                 f"against the arm's own start; ALIVE = neither.")
+    lines.append("`tr solve`/`tr mine` are the TRAINING pool under the arm's "
+                 "own sampler (an epsilon arm's `tr mine` includes the mines "
+                 "epsilon walked onto); `ev solve`/`ev mine` are the HELD-OUT "
+                 "greedy read and are what the cell-A verdicts use. `offpol` "
+                 "is the share of decisions whose action was not the scored "
+                 "policy's -- measured for epsilon, 1.0 at T != 1.")
+    lines.append("start/end are means over the first and last fifth of the "
+                 "steps, so one lucky step decides nothing.")
+    for r in order:
+        if r.get("reference"):
+            lines.append(
+                f"  {r['arm']}: the REFERENCE -- the warm-started model with NO "
+                f"RL at all, on the same held-out mazes. Every cell-A verdict "
+                f"is a difference from this row; it is never a candidate.")
+        if r.get("slow_controller"):
+            lines.append(
+                f"  {r['arm']}: DEAD AT THIS HORIZON, not necessarily dead -- "
+                f"its coefficient was still CLIMBING at the end "
+                f"({r['coef_start']:.4f} -> {r['coef_end']:.4f}) and had not "
+                f"reached the {COEF_REFERENCE} the `fixed` arm starts at. An "
+                f"arm whose mechanism is the thermostat needs the steps to walk "
+                f"there; {r['steps']} were run. The answer is more steps, not a "
+                f"lower bar.")
+        if r.get("follow_up"):
+            lines.append(
+                f"  {r['arm']}: the FOLLOW-UP cell ({r['cell']}) under the "
+                f"picked arm, not a candidate for the pick.")
+        if r["log_importance_ratio_mean"] is not None:
+            lines.append(
+                f"  {r['arm']}: mean log importance ratio "
+                f"{r['log_importance_ratio_mean']:.3f} per decision -- the "
+                "samples are OFF-POLICY by this much and the weight is NOT "
+                "applied (train_orgb_cell's IMPORTANCE WEIGHT paragraph)")
+        if r.get("epsilon_replaced_fraction_mean"):
+            lines.append(
+                f"  {r['arm']}: {r['epsilon_replaced_fraction_mean']:.3f} of "
+                f"decisions took a uniform VALID move instead of the policy's "
+                f"(the rate asked for was {r['epsilon']}); the weight is NOT "
+                "applied, the fraction is recorded")
+        if r["verdict"] in ("FAILED", "EMPTY", "UNREADABLE", "NO-MEASUREMENT",
+                            "NO-REFERENCE"):
+            lines.append(f"  {r['arm']}: {r['verdict']} -- status "
+                         f"{r['status']!r}, {r['steps']} steps in the trace, "
+                         f"held-out solve {r['eval_solve_rate']}")
+    lines.extend(_bin_table(order, reference=reference))
+    if pick:
+        lines.append("")
+        lines.append(f"PICK: {pick['arm']} ({pick['mode']}) -- {pick['verdict']}"
+                     f", held-out solve "
+                     f"{_f(pick['eval_solve_rate']).strip()}, mine/ep "
+                     f"{_f(pick['eval_mine_step_rate']).strip()} "
+                     f"({_f(pick['eval_mine_ratio_to_reference']).strip()} x "
+                     f"the reference), zero-advantage "
+                     f"{_f(pick['zero_adv_end']).strip()}, off-policy "
+                     f"{_f(pick['off_policy_fraction'], '.3f')}, "
+                     f"{_f(pick['seconds_per_step'], '.1f')} s/step")
+        for line in env_lines(pick):
+            lines.append("  " + line)
+    else:
+        lines.append("PICK: NONE -- no arm cleared the bar. That is the "
+                     "trial's (negative) answer, not a reason to lower one.")
+    return lines
+
+
+def _load(paths):
+    out = []
+    for p in paths:
+        if os.path.isdir(p):
+            for name in sorted(os.listdir(p)):
+                if name.endswith(".json") and name != "summary.json":
+                    out.append(os.path.join(p, name))
+        else:
+            out.append(p)
+    payloads = []
+    for path in out:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                blob = json.load(fh)
+        except (OSError, ValueError) as err:
+            print(f"!! {path}: cannot be read ({err!r})")
+            continue
+        if isinstance(blob, dict) and "arm" in blob:
+            payloads.append(blob)
+        elif isinstance(blob, dict) and blob.get("arms"):
+            print(f"(skipping {path}: it is a summary, not an arm)")
+    return payloads
+
+
+def main(argv):
+    as_json = "--json" in argv
+    paths = [a for a in argv if not a.startswith("--")]
+    if not paths:
+        print(__doc__.strip().splitlines()[-1])
+        return 2
+    payloads = _load(paths)
+    if not payloads:
+        print("no arm files found (the trial writes one JSON per arm under "
+              "results/explore_trial/)")
+        return 0
+    rows, reference = read_all(payloads)
+    pick = pick_arm(rows)
+    if as_json:
+        print(json.dumps({"arms": rows, "reference": reference, "pick": pick,
+                          "env_line": env_line(pick, cells="A,C"),
+                          "env_lines": env_lines(pick) if pick else None,
+                          "bars": {"zero_advantage": ZERO_ADVANTAGE_BAR,
+                                   "solve_drop": SOLVE_DROP_BAR,
+                                   "mine_ratio": MINE_RATIO_BAR,
+                                   "solve_band": SOLVE_BAND}}, indent=2))
+        return 0
+    for line in table(rows, pick, reference=reference):
+        print(line)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

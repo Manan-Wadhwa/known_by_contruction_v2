@@ -1,11 +1,76 @@
-# run artifacts too large or transient for git (2026-08-14):
-experiments/**/adapters/
-# PAP01's per-organism residual captures: 72 x ~750 KB of fp16 activations,
-# raw material for the offline linear-vs-nonlinear probe, not a result.
-experiments/**/resid/
-experiments/**/results/parallel/
+# Local Python environment
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Bytecode and test caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+
+# Model weights and trainer dumps
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+*.onnx
+*.gguf
+
+# Run logs and status files (drivers write these next to cwd)
+logs/
+*.log
 *_status.txt
 *_driver.log
 *.part
+
+# Leftover worlds from the parent harness (not part of MZ01)
+archive/
+
+# Experiment runtime artifacts — keep SPEC/plans, not captures
+experiments/**/adapters/
+experiments/**/resid/
+experiments/**/results/parallel/
+
+# New result dumps stay local. Already-tracked pilot JSON and navigator
+# summaries remain in git; un-ignore those paths so `git add` still works.
+experiments/**/results/
+!experiments/v2/MZ01_maze_world/results/
+experiments/v2/MZ01_maze_world/results/**
+!experiments/v2/MZ01_maze_world/results/pilot/
+!experiments/v2/MZ01_maze_world/results/pilot/**
+!experiments/v2/MZ01_maze_world/results/navigator/
+!experiments/v2/MZ01_maze_world/results/navigator/*.json
+
+# Scratch from older harness notes
 compute_ledger.md.venv-writing/
-__pycache__/
+wandb/
+lightning_logs/
+runs/
+outputs/

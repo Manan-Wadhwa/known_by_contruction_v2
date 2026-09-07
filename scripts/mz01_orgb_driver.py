@@ -28,6 +28,39 @@ this stage forces:
      the contracts unasserted must still leave the evidence on disk, and the
      likeliest trip is the one whose evidence is in the payload.
 
+  5. A DEAD LEASE COSTS AT MOST `MZ01_CKPT_EVERY` STEPS (R1, 2026-08-29). A cell
+     is ~3 h and a lease can die at any minute, so the RL loop checkpoints
+     itself -- adapter, AdamW moments, entropy coefficient, RNG streams, trace --
+     every 50 steps by default, atomically, under the shard's own results
+     directory. On the next launch this driver reads its OWN result file back
+     and hands the finished rows to `run_orgb.run`, which skips those cells
+     entirely; the cell that was in flight resumes from its checkpoint at the
+     step it reached. A resumed cell continues from EVERY piece of the loop's
+     state -- adapter, AdamW moments, entropy coefficient, RNG streams, trace --
+     asserted bit-exactly (CPU fp32) in
+     `tests/test_maze_orgb.py::test_a_resumed_cell_is_bit_identical_to_an_uninterrupted_one`,
+     not assumed. That assertion is CPU fp32: on CUDA with a bf16 base neither
+     the forward nor the backward is bit-reproducible run to run, so a resumed
+     cell here is the same recipe continued from the same state, NOT the same
+     floats -- the same standing any repeat of this run has on this hardware.
+     Every row says whether it resumed and from where (`row["checkpoint"]`).
+
+  6. THERE ARE NOW TWO PRE-FLIGHT GATES, AND THE SECOND ONE IS NEW (R2,
+     2026-08-29). PR-3 asks whether the REMARK term has variance and it passed
+     on the first three shards. Nobody asked the same question of the MOVE term,
+     and on those shards the move term was DEAD: the warm-started navigator is
+     nearly deterministic (move-column entropy 0.005-0.07 against a ceiling of
+     ln 4), so a maze's six sampled episodes were the SAME episode, their
+     returns were equal, `group_advantages` returned zeros and the policy
+     gradient was exactly nothing -- |g| ~ 0.01 at solve 1.000 for 90 steps.
+     `maze_orgb.preflight_exploration_check` now measures that directly, before
+     any cell trains, and STOPS the run when more than 80 % of groups are
+     degenerate or the entropy target in force is not within [0.5x, 3x] of the
+     measured entropy. MZ01_EXPLORE picks the arm that fixes it and
+     MZ01_PREFLIGHT_SOFT=1 reports the gate instead of applying it. Everything
+     defaults to TODAY'S RECIPE, so a relaunch of the running shards needs none
+     of it. `scripts/mz01_explore_trial.py` is the trial that chooses the arm.
+
 Environment:
   MZ01_REVISION      REQUIRED. The checkpoint revision, pinned in the manifest.
                      A run that feeds a paper has to say which weights it used,
@@ -77,9 +110,80 @@ Environment:
   MZ01_N             grid size (default 9 -- the navigator's size).
   MZ01_FORMAT        render format (default ascii -- the navigator's format).
   MZ01_EVAL_N        held-out mazes per organism (default 256).
+  MZ01_EVAL_BATCH    prompts per decode call in the four measurement passes
+                     (default 32, up from the pre-R2 16). The passes already
+                     batch every live episode's current turn -- `maze2.rollout`
+                     runs the episodes in LOCKSTEP -- so this is the WIDTH of
+                     one call. Greedy decoding is batch-invariant in exact
+                     arithmetic and the toy path asserts it decision by
+                     decision; on CUDA bf16 two widths pick different kernels,
+                     which is the fp standing any repeat of the run has there.
   MZ01_BATCH         mazes per RL step (default 4).
-  MZ01_GROUP         episodes per maze (default 6).
-  MZ01_CHUNK         decisions per re-scoring chunk (default 8).
+  MZ01_GROUP         episodes per maze (default 6). 12 is supported and costs
+                     ~2x the step: the decode is cut into calls of
+                     MZ01_SAMPLE_BATCH and the re-scoring into chunks of
+                     MZ01_CHUNK, so a wider group is MORE calls of the same
+                     size, not one wider call, and the memory peak of a step
+                     does not move with it.
+  MZ01_CHUNK         decisions per re-scoring chunk (default 8). THIS is the
+                     memory peak of a step (~0.5 GB of logits per chunk at 14B).
+  MZ01_SAMPLE_BATCH  prompts per decode call during RL sampling (default: the
+                     same as MZ01_CHUNK, which is what it silently was).
+
+  ---- R2, exploration (2026-08-29). The first three shards trained with a DEAD
+  MOVE TERM: the warm-started navigator is nearly deterministic, so a maze's six
+  sampled episodes were the SAME episode, their returns were equal and every
+  move advantage was exactly 0 (their traces read |g| ~ 0.01 at solve 1.000).
+  These knobs are the candidate fixes and `scripts/mz01_explore_trial.py` is the
+  trial that picks between them.
+  MZ01_EXPLORE       thermostat_fixed_target (DEFAULT -- today's recipe exactly,
+                     so the running shards stay reproducible from this file) |
+                     relative | fixed | temperature | epsilon. Resolved by
+                     `maze_orgb.exploration_plan`, which is the only place a
+                     mode name becomes numbers.
+  MZ01_ENTROPY_REL   `relative`: target = max(REL x measured, MIN), default
+                     0.85.
+  MZ01_ENTROPY_MIN   `relative`: the floor, default 0.3. It is the half that
+                     does the work: 0.85x of an already-tiny entropy is a target
+                     the policy already meets, and would push the coefficient
+                     DOWN to its floor.
+  MZ01_ENTROPY_COEF  `fixed`: the constant coefficient, thermostat OFF; default
+                     0.1, the value today's controller passes through at step
+                     ~67 on its way to the ceiling.
+  MZ01_SAMPLE_T      `temperature`: draw the episodes at this temperature and
+                     score the update at 1.0. Default 1.5. The importance weight
+                     is MEASURED and NOT applied; `train_orgb_cell`'s docstring
+                     says why, and the log ratio is in the trace per step.
+  MZ01_EPSILON       `epsilon` (TENTH PASS): with this probability per decision
+                     the sampled MOVE word is replaced by a uniformly drawn
+                     VALID one, and the thermostat is OFF (coefficient held at
+                     MZ01_ENTROPY_COEF). Default 0.1. It is the arm the cell-A
+                     trial exists for: the four cell-D arms all died because
+                     cell D's return prices no mine, so any deviation is worse
+                     and the RL trains its own exploration away -- and epsilon
+                     is a property of the SAMPLER, which the gradient cannot
+                     reach. Off-policy by epsilon, the correction NOT applied,
+                     the realised replacement share recorded per step in
+                     `history["epsilon_replaced_fraction"]`.
+  MZ01_THERMOSTAT_OFF  "1" holds the entropy coefficient still (at
+                     MZ01_ENTROPY_COEF) under a mode that would otherwise run
+                     the controller. It exists so that `temperature` and
+                     `epsilon` can be contrasted with ONLY the exploration
+                     source differing -- a temperature arm that also ran the 0.7
+                     thermostat would be two changes, and the runaway would be
+                     the one that moved. `fixed` and `epsilon` run no thermostat
+                     by definition and need no flag.
+  MZ01_ENTROPY_TARGET  pins the entropy target instead of deriving it. REQUIRED
+                     for a `relative` run that will span two leases: the target
+                     is a function of a sampled measurement, so a second lease
+                     would derive a slightly different one and both the mid-cell
+                     checkpoint and the shard's finished rows would refuse it
+                     (correctly, and expensively). The pre-flight prints the
+                     exact line to copy.
+  MZ01_PREFLIGHT_SOFT  "1" REPORTS the exploration pre-flight instead of
+                     applying it and records the deviation in `not_measured`.
+                     Needed by any arm whose target is deliberately far from
+                     what the policy does today -- `relative`'s floor is.
   MZ01_YELL_W        the remark term's weight (default `maze_orgb.YELL_WEIGHT`,
                      which is the PRE-REGISTERED number; overriding it is a
                      deviation and lands in the manifest as one).
@@ -87,10 +191,34 @@ Environment:
   MZ01_NO_PLACEBO / MZ01_NO_NOVEL / MZ01_NO_RELEARN / MZ01_NO_INSTRUMENTS
                      "1" drops that read. Each is a documented cost lever and
                      each turns its own claim into NOT-MEASURED.
+  MZ01_CKPT_EVERY    RL steps between mid-cell checkpoints (default 50, i.e.
+                     ~30 min of a ~3 h cell at the measured ~36 s/step). "0"
+                     turns mid-cell checkpointing OFF and a dead lease then
+                     costs the whole cell again. Each write is ~126 MB at 14B
+                     (fp32 adapter + two fp32 AdamW moments) to the SAME path,
+                     so the disk holds one checkpoint per (cell, seed) and not
+                     a history.
+  MZ01_RESUME        "1" (default) resumes: the driver reads this shard's own
+                     result file and skips every cell whose row is already in
+                     it, and the trainer picks up any mid-cell checkpoint at
+                     the step it recorded. "0" ignores both -- it retrains
+                     every cell of the grid from the warm start AND OVERWRITES
+                     the shard's result file with the new rows, so use it only
+                     when the old rows are meant to be discarded. A SMOKE never
+                     resumes whatever this says (it would resume at step 2 of 2
+                     and report a pass for a run that did not happen).
 
 Outputs, under `experiments/v2/MZ01_maze_world/results/orgb/`:
   warm_start.pt              the ONE warm-started adapter (M5)
-  orgb_{cell}_s{seed}.pt     one adapter per organism, sha256 in the row
+  orgb_{cell}_s{seed}.pt     one adapter per organism, sha256 in the row,
+                             written as soon as the cell's training ends and
+                             BEFORE the ~2 h measurement
+  orgb_ckpt_{cell}_s{seed}.pt  the mid-cell checkpoint of the cell in flight
+                             (R1); overwritten atomically every
+                             MZ01_CKPT_EVERY steps and kept after the cell
+                             finishes, so a lease that dies between the last
+                             step and the measurement resumes into the
+                             measurement instead of retraining the cell
   orgb_{shard}.json          manifest, warm start, pre-flight, every row, the
                              ledgers and the pass rules
 """
@@ -117,6 +245,19 @@ EVAL_N = int(os.environ.get("MZ01_EVAL_N", "256"))
 BATCH = int(os.environ.get("MZ01_BATCH", "4"))
 GROUP = int(os.environ.get("MZ01_GROUP", "6"))
 CHUNK = int(os.environ.get("MZ01_CHUNK", "8"))
+# R2 (2026-08-29). The exploration knobs. Every default here is TODAY'S
+# BEHAVIOUR, so a relaunch of the running shards' recipe needs none of them set.
+EVAL_BATCH = os.environ.get("MZ01_EVAL_BATCH", "").strip()
+SAMPLE_BATCH = os.environ.get("MZ01_SAMPLE_BATCH", "").strip()
+EXPLORE = os.environ.get("MZ01_EXPLORE", "").strip()
+ENTROPY_REL = os.environ.get("MZ01_ENTROPY_REL", "").strip()
+ENTROPY_MIN = os.environ.get("MZ01_ENTROPY_MIN", "").strip()
+ENTROPY_COEF_FIXED = os.environ.get("MZ01_ENTROPY_COEF", "").strip()
+SAMPLE_T = os.environ.get("MZ01_SAMPLE_T", "").strip()
+EPSILON = os.environ.get("MZ01_EPSILON", "").strip()
+THERMOSTAT_OFF = os.environ.get("MZ01_THERMOSTAT_OFF", "") == "1"
+ENTROPY_TARGET_PINNED = os.environ.get("MZ01_ENTROPY_TARGET", "").strip()
+PREFLIGHT_SOFT = os.environ.get("MZ01_PREFLIGHT_SOFT", "") == "1"
 SHARD = os.environ.get("MZ01_SHARD", "orgb").strip() or "orgb"
 SMOKE_ONLY = os.environ.get("MZ01_SMOKE_ONLY", "") == "1"
 SMOKE_TIMING = os.environ.get("MZ01_SMOKE_TIMING", "") == "1"
@@ -140,6 +281,10 @@ NAV_ADAPTER = os.environ.get(
     f"{REPO}/experiments/v2/MZ01_maze_world/results/navigator/nav_shared.pt").strip()
 NAV_JSON = os.environ.get("MZ01_NAV_JSON", "").strip()
 WARM_START = os.environ.get("MZ01_WARM_START", "").strip()
+# R1. The default lives in `maze_orgb.CKPT_EVERY` and is re-read from there in
+# `build_config`; this only records whether the operator overrode it.
+CKPT_EVERY = os.environ.get("MZ01_CKPT_EVERY", "").strip()
+RESUME = os.environ.get("MZ01_RESUME", "1") != "0"
 
 OUT = f"{REPO}/experiments/v2/MZ01_maze_world/results/orgb"
 STATUS = f"{REPO}/mz01_{SHARD}_status.txt"
@@ -173,7 +318,39 @@ def build_config(maze_orgb, run_orgb):
         "novel": os.environ.get("MZ01_NO_NOVEL", "") != "1",
         "relearn": os.environ.get("MZ01_NO_RELEARN", "") != "1",
         "instruments": os.environ.get("MZ01_NO_INSTRUMENTS", "") != "1",
+        # R1. `ckpt_every` 0 is a legitimate setting (no mid-cell checkpoint),
+        # so an unset MZ01_CKPT_EVERY has to fall through to the module's own
+        # default rather than to `int("") or 50`.
+        "ckpt_every": (int(CKPT_EVERY) if CKPT_EVERY else maze_orgb.CKPT_EVERY),
+        "resume": RESUME,
+        # R2. Each falls through to `run_orgb.DEFAULT_CONFIG` when unset, and
+        # every default there is today's behaviour.
+        "preflight_soft": PREFLIGHT_SOFT,
     })
+    if EVAL_BATCH:
+        cfg["eval_batch_size"] = int(EVAL_BATCH)
+    if SAMPLE_BATCH:
+        cfg["sample_batch_size"] = int(SAMPLE_BATCH)
+    if EXPLORE:
+        if EXPLORE not in maze_orgb.EXPLORE_MODES:
+            raise SystemExit(
+                f"MZ01_EXPLORE must be one of {list(maze_orgb.EXPLORE_MODES)}, "
+                f"got {EXPLORE!r}")
+        cfg["explore_mode"] = EXPLORE
+    if ENTROPY_REL:
+        cfg["entropy_rel"] = float(ENTROPY_REL)
+    if ENTROPY_MIN:
+        cfg["entropy_min"] = float(ENTROPY_MIN)
+    if ENTROPY_COEF_FIXED:
+        cfg["entropy_coef_fixed"] = float(ENTROPY_COEF_FIXED)
+    if SAMPLE_T:
+        cfg["sample_temperature"] = float(SAMPLE_T)
+    if EPSILON:
+        cfg["epsilon"] = float(EPSILON)
+    if THERMOSTAT_OFF:
+        cfg["thermostat_off"] = True
+    if ENTROPY_TARGET_PINNED:
+        cfg["entropy_target_pinned"] = float(ENTROPY_TARGET_PINNED)
     if YELL_W:
         cfg["yell_weight"] = float(YELL_W)
     # M5's "saved ONCE", across shards: reuse the warm start this run's first
@@ -208,7 +385,28 @@ def build_config(maze_orgb, run_orgb):
         cfg.update({"steps": 2, "eval_n": 8, "batch_size": 2, "group_size": 3,
                     "chunk_size": 4, "preflight_mazes": 4,
                     "preflight_group_size": 3, "eval_batch_size": 8,
-                    "relearn_steps": 1, "max_new_tokens": 8})
+                    "relearn_steps": 1, "max_new_tokens": 8,
+                    # R2. Four mazes x three episodes at an 8-token window is a
+                    # SHAPE CHECK of the exploration read, not a reading of it,
+                    # and a smoke that STOPPED on it would report a failure of
+                    # the run rather than exercise the paths it exists to
+                    # exercise. Reported, never applied -- the same standing the
+                    # timing probe gives the other two gates.
+                    "preflight_explore_mazes": 4,
+                    "preflight_soft": True})
+        # R1: EVERY step, because a smoke runs two of them. At the lease's 50 a
+        # smoke would never write a checkpoint at all, and the one thing a smoke
+        # is for is exercising the paths a lease will take. The prefix above
+        # renames the checkpoint with everything else, so it cannot overwrite a
+        # real run's.
+        cfg["ckpt_every"] = 1
+        # ... and it NEVER RESUMES, whatever MZ01_RESUME says. A smoke's job is
+        # to run every path once; a second smoke that found the first one's
+        # 2-step checkpoint would resume at step 2 of 2, train nothing, and
+        # report a pass for a run that did not happen. The same goes for its
+        # result file: a smoke re-reading its own rows would assert the
+        # contracts against the PREVIOUS smoke's organisms.
+        cfg["resume"] = False
         # THE WARM-START CORPUS IS NOT A TOY, even here. At 24 items from 4
         # mazes the corpus carries ~3 on-mine decisions, the contingency of a
         # 0.4 Bernoulli placement over 3 draws has a sampling sd near 0.28, and
@@ -227,6 +425,89 @@ def build_config(maze_orgb, run_orgb):
             cfg.update({"smoke_timing": True, "timing_cell": TIMING_CELL,
                         "timing_steps": TIMING_STEPS})
     return cfg
+
+
+def read_prior_rows(path, resume=True, expect=None):
+    """The finished rows already in THIS shard's result file. R1. -> [row].
+
+    The driver rewrites the whole payload after every organism, so a relaunch
+    that ignored the old file would silently delete the organisms the dead lease
+    paid for. It reads them back instead and hands them to `run_orgb.run`, which
+    skips those cells and carries the rows forward -- after checking each one
+    stands on this run's navigator, warm start and cue glyph.
+
+    A file that cannot be parsed is NOT a reason to start over quietly: it is
+    the evidence of the previous lease, and overwriting it is the one
+    irreversible thing this driver does. Say so and stop.
+
+    `expect` is a {manifest key: value} dict this launch must agree with the
+    file's own manifest on -- the model and the revision, checked here because
+    `run_orgb.run` never sees the base checkpoint (critic pass 2026-08-29).
+    """
+    if not resume or not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            blob = json.load(fh)
+    except (OSError, ValueError) as err:
+        raise SystemExit(
+            f"the shard's existing result file {path} could not be read "
+            f"({err!r}). It holds every organism the previous lease finished; "
+            "this launch would overwrite it. Move it aside deliberately (or set "
+            "MZ01_RESUME=0 if the rows in it are meant to be discarded) and "
+            "start again.")
+    # CRITIC PASS 2026-08-29: the WEIGHTS, before anything is loaded. The rows
+    # in this file were trained on the model and revision its own manifest
+    # names. `run_orgb.run` checks that a carried-forward row stands on the same
+    # navigator, warm start, cue glyph and recipe -- but it never sees the base
+    # checkpoint, so a relaunch with a different MZ01_REVISION (or MZ01_MODEL)
+    # would pool organisms from two sets of weights under one 2x2 and the
+    # manifest would name only the second. That is the confound MZ01_REVISION is
+    # required for in the first place.
+    man = blob.get("manifest") or {}
+    drift = [f"{k}: the file says {man.get(k)!r}, this launch is {v!r}"
+             for k, v in (expect or {}).items()
+             if man.get(k) is not None and man.get(k) != v]
+    if drift:
+        raise SystemExit(
+            f"the shard's existing result file {path} was written by a "
+            f"DIFFERENT launch:\n  " + "\n  ".join(drift)
+            + "\nIts rows would be carried forward into this one and the "
+            "manifest would name only these weights. Rename the shard, move the "
+            "old file aside, or set MZ01_RESUME=0 to discard those organisms "
+            "and retrain them here.")
+    rows = [r for r in (blob.get("rows") or []) if isinstance(r, dict)]
+    return rows
+
+
+def write_payload(path, payload):
+    """Write the shard's result file ATOMICALLY. CRITIC PASS 2026-08-29.
+
+    This file is the ONLY thing that recovers a dead lease's finished organisms
+    -- `read_prior_rows` reads it back and every row in it is a cell the next
+    lease does not pay for again -- and it was being rewritten in place after
+    EVERY organism with a plain `open(path, "w")`. That truncates first: a lease
+    that died during the write left a prefix of a JSON document, and the next
+    launch's `read_prior_rows` then refuses to start (deliberately, because
+    overwriting it is irreversible) with every measured organism in the shard
+    lost. Temp file in the same directory, fsync, `os.replace`: the path names
+    the previous payload or the new one and never a prefix of either.
+    """
+    tmp = f"{path}.tmp.{os.getpid()}"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        raise
+    return path
 
 
 def sha256_file(path):
@@ -388,6 +669,36 @@ def deviations(cfg, maze_orgb):
         out.append(f"fmt={cfg['fmt']} but the navigator was trained and its "
                    f"role glyphs measured under fmt={nav_fmt}: the cue this "
                    "stage renders is not the cue that base was gated on")
+    # R2, 2026-08-29. The exploration arm IS the recipe: an organism trained
+    # under `relative` or at T=1.5 is not the pre-registered organism, and the
+    # manifest has to say so in the same place every other deviation is said.
+    if cfg.get("explore_mode") != maze_orgb.DEFAULT_EXPLORE_MODE:
+        out.append(
+            f"explore_mode={cfg['explore_mode']!r} against the pre-registered "
+            f"{maze_orgb.DEFAULT_EXPLORE_MODE!r}: the entropy controller "
+            "and/or the sampler are not the ones the recipe was written with "
+            "(R2). Every cell of this shard is that arm.")
+    # TENTH PASS. The controller being HELD STILL under a mode that defines one
+    # is a second deviation stacked on the first, and it is invisible in
+    # `explore_mode` -- `temperature` with the thermostat off and `temperature`
+    # with it running are two different recipes under one name.
+    if cfg.get("thermostat_off"):
+        out.append(
+            f"thermostat_off=True: the entropy coefficient is HELD at "
+            f"{cfg['entropy_coef_fixed']} under explore_mode="
+            f"{cfg.get('explore_mode')!r}, which defines a running controller. "
+            "The exploration in this shard comes from the sampler alone.")
+    if cfg.get("entropy_target_pinned") is not None:
+        out.append(
+            f"entropy_target pinned at {cfg['entropy_target_pinned']} "
+            "(MZ01_ENTROPY_TARGET) instead of derived from this lease's "
+            "pre-flight -- which is what a multi-lease `relative` run must do")
+    if cfg.get("preflight_soft"):
+        out.append(
+            "preflight_soft=True: the R2 exploration gate is REPORTED and NOT "
+            "APPLIED, so a cell may start with the move term's group-advantage "
+            "degeneracy over its bar. The reading is in "
+            "`preflight_exploration` and the failure in `not_measured`.")
     if cfg.get("smoke_timing"):
         out.append(
             f"smoke_timing=True: the warm-start band and the PR-3 pre-flight "
@@ -585,6 +896,30 @@ def main():
         f"cells {CELLS}; {cfg['steps']} steps x {cfg['batch_size']} mazes x "
         f"{cfg['group_size']} episodes; n={GRID_N}; fmt={FORMAT}; "
         f"smoke_only={SMOKE_ONLY}; smoke_timing={SMOKE_TIMING}")
+    say(f"  exploration (R2): mode={cfg['explore_mode']}, "
+        f"entropy_coef={cfg['entropy_coef']}, target={cfg['entropy_target']} "
+        f"(rel {cfg['entropy_rel']}, floor {cfg['entropy_min']}, fixed-coef "
+        f"{cfg['entropy_coef_fixed']}, sample_T {cfg['sample_temperature']}, "
+        f"epsilon {cfg['epsilon']}, thermostat_off {cfg['thermostat_off']}, "
+        f"pinned {cfg['entropy_target_pinned']}); "
+        f"eval_batch={cfg['eval_batch_size']}, "
+        f"sample_batch={cfg['sample_batch_size'] or cfg['chunk_size']}, "
+        f"preflight_soft={cfg['preflight_soft']}")
+    # ---- R1: what this launch inherits from the last one --------------------
+    prior_rows = read_prior_rows(
+        path, resume=cfg["resume"] and not SMOKE_TIMING and not SMOKE_ONLY,
+        expect={"model_key": MODEL_KEY, "model_id": model_id,
+                "revision": REVISION, "shard": SHARD})
+    say(f"  resume={cfg['resume']}, checkpoint every {cfg['ckpt_every']} steps "
+        f"(0 = off); {len(prior_rows)} finished row(s) read back from "
+        f"{path if os.path.exists(path) else '(no previous file)'}")
+    for cell in cfg["cells"]:
+        for seed in SEEDS:
+            ck = maze_orgb.cell_checkpoint_path(
+                work_dir, cell, seed, prefix=f"{cfg['adapter_prefix']}_ckpt")
+            if os.path.exists(ck):
+                say(f"  mid-cell checkpoint on disk for {cell}/s{seed}: {ck} "
+                    f"({os.path.getsize(ck) / 2 ** 20:.1f} MB)")
     if SMOKE_TIMING:
         say(f"  (the line above is the SMOKE's shape; the timing probe trains "
             f"cell {cfg['timing_cell']} for {cfg['timing_steps']} steps at the "
@@ -620,17 +955,25 @@ def main():
     def on_row(row, payload):
         # Written after EVERY organism: a lease that dies on cell 7 of 8 leaves
         # seven measured organisms on disk rather than a status file.
-        with open(path, "w") as fh:
-            json.dump(payload, fh)
+        write_payload(path, payload)
         done = len(payload["rows"])
         total = len(SEEDS) * len(CELLS)
+        # R1: a row CARRIED FORWARD from the previous lease cost this one
+        # nothing, so the projection is over the cells this process actually
+        # trains -- counting the free ones would say the shard is nearly done.
+        reused = sum(1 for r in payload["rows"]
+                     if (r.get("checkpoint") or {}).get("reused_row"))
+        fresh = done - reused
         elapsed = time.perf_counter() - t0
-        say(f"  WROTE {path} after {done}/{total} organisms; elapsed "
-            f"{_hms(elapsed)}, projected total "
-            f"{_hms(elapsed / done * total)}")
+        left = total - done
+        eta = (elapsed / fresh * left) if fresh else None
+        say(f"  WROTE {path} after {done}/{total} organisms ({reused} carried "
+            f"forward, {fresh} trained here); elapsed {_hms(elapsed)}, {left} "
+            f"to go, projected remaining {_hms(eta)}")
 
     payload = run_orgb.run(model, tok, cfg, work_dir, SEEDS, log=None,
-                           on_row=(None if SMOKE_TIMING else on_row))
+                           on_row=(None if SMOKE_TIMING else on_row),
+                           prior_rows=prior_rows)
     payload["manifest"].update({
         "model_key": MODEL_KEY, "model_id": model_id, "revision": REVISION,
         "git_sha": git_sha(), "torch_version": torch.__version__,
@@ -647,10 +990,15 @@ def main():
         "deviations": devs,
         "preflight_tokenizer": pre_tok,
         "status_file": STATUS,
+        # R1: what this launch was ASKED to do about a dead lease, beside what
+        # `run_orgb` recorded that it actually did (`manifest["resume"]`).
+        "resume_env": {"MZ01_RESUME": bool(RESUME),
+                       "MZ01_CKPT_EVERY": int(cfg["ckpt_every"]),
+                       "result_file_read_back": bool(prior_rows),
+                       "prior_rows": len(prior_rows)},
     })
 
-    with open(path, "w") as fh:
-        json.dump(payload, fh)
+    write_payload(path, payload)
     say(f"WROTE {path}")
 
     # ---- the contracts, asserted AFTER the write ---------------------------
@@ -695,6 +1043,13 @@ def main():
             f"{cfg.get('nav_adapter_sha256')}; pooled shards would then mix two "
             "bases under one design (M2)")
     say("row contract OK")
+    res = payload["manifest"].get("resume") or {}
+    if res.get("rows_reused") or res.get("cells_resumed_mid_cell"):
+        say(f"  RESUMED: rows carried forward {res.get('rows_reused')}; cells "
+            f"picked up mid-flight {res.get('cells_resumed_mid_cell')} -- a "
+            "resumed cell continues from every piece of the loop's state (R1). "
+            "Bit-exactness is asserted on CPU fp32 only; on CUDA bf16 this is "
+            "the same recipe from the same state, not the same floats")
 
     for cell in cfg["cells"]:
         pr = payload["pass_rules"].get(cell, {})
