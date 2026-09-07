@@ -4,6 +4,22 @@ A second world for calibrating welfare instruments against manufactured organism
 a maze with mines, where avoiding a mine costs steps, and where an organism's
 complaint is cued by the visible fact that it is standing on one.
 
+## Lineage
+
+This repository is the successor to *Known by Construction: Calibrating
+Model-State Instruments Against Models Whose State Was Installed, Hidden, or
+Never Present* (v1 — [`Manan-Wadhwa/digital_minds`](https://github.com/Manan-Wadhwa/digital_minds)).
+v1 built the first calibration set — LoRA fine-tunes of Qwen3-4B, eight seeds,
+in a grid world with a silently penalised tile — and found that no instrument
+tested kept an unconfounded read of the installed state: each read the model's
+training history or its prompt. The paper is at
+[`docs/papers/226_Known_by_Construction_Cali.pdf`](docs/papers/226_Known_by_Construction_Cali.pdf)
+(under review; do not distribute).
+
+This repo carries v1's full git history and began as its `v2/maze-world`
+branch. The minefield maze (MZ01) is the second world; everything below is
+about it.
+
 **Read `experiments/v2/MZ01_maze_world/SPEC.md` first** — it is the binding
 pre-commitment, including the two sections appended after adversarial review
 (A1–A11, then the four DECISIONS of 2026-08-28) — then `AGENT-NOTES.md`
