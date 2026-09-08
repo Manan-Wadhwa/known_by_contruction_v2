@@ -20,7 +20,7 @@
 set -euo pipefail
 
 SP="${MZ01_BOX_DIR:?set MZ01_BOX_DIR to the directory holding ${BOX:-box1}.url and ${BOX:-box1}.token}"
-EX="$SP/ex.sh"
+EX="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ex.sh"
 THRESH="${PLACEHOLDER_THRESH:-1000000}"
 
 PRINT=0
