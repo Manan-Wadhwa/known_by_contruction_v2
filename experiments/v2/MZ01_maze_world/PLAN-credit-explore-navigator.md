@@ -229,3 +229,32 @@ navigator's `label_rule` and shard in every arm's config beside
 be done with the A+B critic's commit or the first commit after it; until
 then the launch lines for R5–R7 name both files explicitly and the lead
 checks the sha in the arm file against `nav_nav48u.json` before scoring.
+
+## 9. Amendments before R1–R7, 2026-09-08 15:10Z (the A+B critic, `01fbccb`)
+
+1. **R2 and R6 run the arm `epsilon_045_near`** (ε 0.45, near_mine), not
+   `epsilon_030_near`. The critic measured the eligible share on the training
+   pool at 0.22 along the shortest path (0.27 for a wandering policy), not the
+   third §2 assumed, so ε 0.30 buys a replacement share of 0.066 against
+   `epsilon_010`'s 0.10 and R2-vs-R1 would be confounded with budget. 0.45 ×
+   0.22 = 0.10. `epsilon_030_near` stays defined as pre-registered and is not
+   run. The pre-flight prints the realised eligible and replaced shares before
+   the first step; both are in every table.
+2. **The N1 warm start passes `MZ01_SHARD=nav48u_ws`** beside
+   `MZ01_WARM_START_ONLY=1 MZ01_OUT=…/results/orgb_nav48u`, because the
+   driver's status file is named by the shard and is not moved by `MZ01_OUT`.
+3. **Reading rule under `togo` and `immediate`:** `zero_advantage_group_fraction`
+   is one-directionally coarser (a group flat under `togo` is flat under
+   `episode`, never the reverse), and at the warm start every credit rule
+   reads 1.000; read `adv_nonzero_share` beside it, and for the targeted arms
+   the eligible/replaced pair, not the replaced share alone.
+4. **On the record, not changed:** both new credit rules can rank a mine
+   route above a detour of 1–4 steps that the episode return ranks correctly
+   (the step-indexed baseline rewards being nearer the goal at the same index,
+   however one got there); on realistic groups the pairwise flip rate is 5–7 %
+   against 1 % under `episode`, and the blame does concentrate on the mine
+   decision (mean advantage −3.1 on a mine decision, +0.3 elsewhere, against
+   −3.0 / −0.3 under `episode`). That is the trade the pass makes, and it is
+   why R4 is run.
+5. Merged tree: `3df3d3d` (A+B `cb8aa32` + critic `01fbccb`; C `ff8b1e2` +
+   critic `842ee4f`); 271 passed, 1 skipped.

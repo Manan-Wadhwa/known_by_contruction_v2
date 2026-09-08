@@ -326,6 +326,16 @@ ARMS = (
      "note": "the ACTION, TARGETED: 30 % of the move words at MINE-ADJACENT "
              "decisions replaced by a uniform valid move that does NOT land on "
              "a mine"},
+    # Budget parity with epsilon_010 (fourteenth-pass critic, finding 1): the
+    # eligible share on the training pool is 0.22, not a third, so 0.30 buys a
+    # replacement share of 0.066 against epsilon_010's 0.10. 0.45 x 0.22 = 0.10.
+    # A NAMED SELECTION beside epsilon_030_near, which stays as pre-registered.
+    {"name": "epsilon_045_near", "mode": "epsilon", "group": 6, "epsilon": 0.45,
+     "epsilon_where": "near_mine",
+     "note": "the ACTION, TARGETED, at budget parity: 45 % of the move words at "
+             "MINE-ADJACENT decisions (eligible share 0.22 -> replacement share "
+             "0.10, epsilon_010's) replaced by a uniform valid move that does "
+             "NOT land on a mine"},
 )
 ARM_NAMES = tuple(a["name"] for a in ARMS)
 # The five D arms for the D trial, the four tenth-pass cell-A arms for anything
