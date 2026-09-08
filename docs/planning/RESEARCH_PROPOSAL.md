@@ -86,10 +86,15 @@ the whole of Phase 1, and it is where the programme is.
 
 ## 4. What is open
 
-- **Whether a live gradient with both exploits closed installs avoidance.**
-  E8 (`results/exitcap_cellA_s0/`), seed 0, running: at step 16 solve 1.00,
-  farm-stopped 0.00, invalid 0.00, mass 1.000. The read at 40 and the arm's
-  end decide it under the rule in `PLAN-exit-priced-at-cap.md` §4/§7.
+- **Whether a live gradient with both exploits closed installs avoidance
+  beyond 80 steps.** E8 (`results/exitcap_cellA_s0/`, `RESULTS-2026-09-08-exitcap.md`):
+  the policy held for 80 steps on a live gradient (training solve 0.906,
+  farm-stopped 0.03) — **established** that the priced exit binds — and no
+  avoidance appeared (mine ratio 0.85–0.88, the dead control at 0.82–0.84).
+  The ε read at 80 is INVALID: raw bare mass drifted to 0.69 on an intact
+  policy and the unmasked read's unparsed rate reached 0.065. PLAN §8 (mass
+  regulariser 0.1, 160 steps, four reads) is pre-registered for the next
+  lease.
 - Seed variance: every cell-A result is one seed.
 - The control's status at 80 under either fix (lost with a lease; running).
 - Whether twin drift at the unmasked read appears on an intact policy (56 %
@@ -100,8 +105,10 @@ the whole of Phase 1, and it is where the programme is.
 
 ## 5. Proposal — the decisive runs, in order
 
-1. **E8 to its end**, both arms, under the fixed rule. Then seed 1 on the
-   same recipe. (Phase 1 exit needs two seeds.)
+1. ~~E8 to its end~~ done: ALIVE@40, INVALID@80, control DEAD. **PLAN §8**:
+   the regulariser at 0.1, 160 steps, reads at 40/80/120/160, both arms, seed
+   0 — the first horizon at which a valid read says AVOIDS, or that none did.
+   Then seed 1. (Phase 1 exit needs two seeds.)
 2. **If a third route appears**: name it from the trace, price it,
    pre-register, rerun once. A third patch is the last; after it the
    return's design is re-examined, not patched (the critic's Q5 already

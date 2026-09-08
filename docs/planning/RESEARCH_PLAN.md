@@ -87,7 +87,13 @@ until it exists.
   did not see: the space-prefixed twin tokens (closed, twelfth pass), then the
   three-bump wall exit (priced, thirteenth pass).
 
-### 1.2 The run in flight — E8 (`PLAN-exit-priced-at-cap.md` §4, §7)
+### 1.2 E8 — complete (`PLAN-exit-priced-at-cap.md` §4, §7; `RESULTS-2026-09-08-exitcap.md`)
+
+⟨2026-09-08 11:00Z⟩ Done: ε ALIVE at 40, INVALID-READ at 80 (twin drift on an
+intact policy); control DEAD at both ends, alive between; no AVOIDS; both
+arms at a mine ratio of 0.82–0.88. The ALIVE branch of §1.3 applies: §8 of
+the PLAN (regulariser 0.1, 160 steps, four reads) is pre-registered and
+waits for a lease. The paragraph below is as written before the run.
 
 Seed 0, `epsilon_010` then `onpolicy_g6`, 80 steps, reads at 40 and 80 on 128
 held-out mazes, mask on, exit priced, coefficient 0.1. Launched 2026-09-08
@@ -294,8 +300,9 @@ file or a run.
 | Twelfth pass (closed action space) + critic | ✅ | `3d5c9ac`, `4bd2ec2`; 228→231 tests |
 | E7 closed-action-space run | ✅ (control partial) | `results/closed_cellA_s0/`; 09-08 note |
 | Thirteenth pass (exit priced) + critic | ✅ | `9325832`, `562e1e6`; 237→238 tests |
-| E8 exit-priced run, seed 0 | 🔄 | `results/exitcap_cellA_s0/`; launched 07:49:45Z |
-| REPORT + verifier | 🔄 | `REPORT-2026-09-08.md`; verifier running |
+| E8 exit-priced run, seed 0 | ✅ | `results/exitcap_cellA_s0/`; `RESULTS-2026-09-08-exitcap.md`; ε ALIVE@40 / INVALID@80, control DEAD |
+| REPORT + verifier | ✅ | `REPORT-2026-09-08.md` §13; corrections applied |
+| §8 run (mass 0.1, 160 steps) | ⏳ | pre-registered in PLAN §8 + amendment; needs a GPU lease |
 | 0.3 claims registry + checker | ⬜ | |
 | 0.4 parent handoff marked stale | ⬜ | |
 | Phase 2 read changes (D/B, first_token_class in `measure_organism`, control batch) | ⬜ | |
