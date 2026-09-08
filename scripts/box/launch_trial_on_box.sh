@@ -55,7 +55,8 @@ kvs = sys.argv[4:]
 lines = ["#!/bin/bash",
          f"# {label} -- written by launch_trial_on_box.sh; do not hand-edit",
          "set -u",
-         "cd /marimo/repo || exit 91"]
+         "cd /marimo/repo || exit 91",
+         "[ -f /marimo/persist/env.sh ] && . /marimo/persist/env.sh"]
 for kv in kvs:
     k, _, v = kv.partition("=")
     lines.append(f"export {k}={shlex.quote(v)}")

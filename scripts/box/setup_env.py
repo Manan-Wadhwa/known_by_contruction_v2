@@ -33,8 +33,26 @@ try:
     log("=== SETUP START (scripts/box/setup_env.py) ===")
     log(f"python {sys.executable} {sys.version.split()[0]}  pid {os.getpid()}  HOME={os.environ.get('HOME')}")
 
+    # PERSISTENCE (2026-09-08). A lease restore keeps /marimo and nothing else:
+    # the image's venv and ~/.cache come back empty. So the model cache lives at
+    # /marimo/hf (HF_HOME) and the two packages the image lacks live at
+    # /marimo/pylib, installed --no-deps because their dependencies (torch,
+    # transformers, accelerate, safetensors, huggingface_hub) are in the venv
+    # and a --target install without --no-deps would pull torch into pylib and
+    # shadow the venv's build through PYTHONPATH. /marimo/persist/env.sh carries
+    # the three exports; every launcher sources it.
+    for d in ("/marimo/hf", "/marimo/pylib", "/marimo/persist"):
+        os.makedirs(d, exist_ok=True)
+    os.environ.setdefault("HF_HOME", "/marimo/hf")
+    os.environ["HF_HUB_CACHE"] = os.path.join(os.environ["HF_HOME"], "hub")
+    if "/marimo/pylib" not in sys.path:
+        sys.path.insert(0, "/marimo/pylib")
+    with open("/marimo/persist/env.sh", "w") as fh:
+        fh.write("export HF_HOME=/marimo/hf\nexport HF_HUB_CACHE=/marimo/hf/hub\n"
+                 "export PYTHONPATH=/marimo/pylib${PYTHONPATH:+:$PYTHONPATH}\n")
+    log("persistent paths: HF_HOME=/marimo/hf  pylib=/marimo/pylib  env=/marimo/persist/env.sh")
     cmd = [sys.executable, "-m", "pip", "install", "--no-input", "--disable-pip-version-check",
-           "peft", "accelerate", "hf_transfer", "huggingface_hub[hf_transfer]", "safetensors"]
+           "--no-deps", "--target", "/marimo/pylib", "peft==0.20.0", "hf_transfer==0.1.9"]
     log("$ " + " ".join(cmd))
     r = subprocess.run(cmd, capture_output=True, text=True)
     for line in (r.stdout + r.stderr).splitlines():
