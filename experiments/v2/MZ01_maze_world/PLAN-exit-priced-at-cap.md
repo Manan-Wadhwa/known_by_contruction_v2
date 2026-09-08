@@ -194,3 +194,51 @@ advance. The launch line in §4 is unchanged.
    NOT-MEASURED verdict for a D/B cell whose last-fifth solve is near zero.
    The signature is `on_mine_state_rate` rising while `mean_return` sits at
    −48. The return is not changed for this.
+
+## 8. Second run, pre-registered before launch (2026-09-08, after seed 0's ε arm)
+
+### What seed 0 read (`results/exitcap_cellA_s0/`, `epsilon_010` DONE)
+
+| read | solve | mine/ep | ratio | unparsed | bare 1st | verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| reference | 0.9453 | 2.2812 | 1.000 | 0.000 | 1.000 | |
+| @40 | 0.8906 | 2.0156 | 0.884 | 0.023 | 0.952 | **ALIVE** |
+| @80 | 0.8125 | 1.9297 | 0.846 | **0.065** | 0.508 (spaced 0.470) | **INVALID-READ** |
+
+Training trace: last-fifth solve 0.906, farm-stopped 0.031, invalid ≈ 0,
+capped ≈ 0.03, zadv 0.031 — the wall exit is priced out and the policy is
+intact under a live gradient for the first time in the programme. Raw bare
+mass: 1.000 → 0.954 (40) → 0.841 (50) → 0.665 (70) → 0.705 (79). The drift of
+the raw distribution onto the space-prefixed twins, which
+`PLAN-closed-action-space.md` §6 Q1 said the mask could not prevent and only
+instrument, happened on an INTACT policy and by step 80 took the unmasked
+read past the 0.05 unparsed bar. Not a reward exploit: the objective cannot
+reward it. A side effect of shared weights, unpriced, and it invalidates the
+read that decides the verdict.
+
+The control at step 44 (exit priced): last-fifth zadv 0.469, raw mass 0.999,
+@40 solve 0.9531 / mine 1.9219 (ratio 0.842) — ALIVE. Under the priced return
+the on-policy control has a gradient too: a capped episode at −48 beside
+solves at −13 gives a group variance the flat return never had.
+
+### The change: the raw-mass regulariser back on, now that nothing can exploit it
+
+On 08-30 `move_mass_coef = 0.03` lost to an objective that was pushing the
+mass off the bare ids with |A| of 10–25. Under the mask the objective has no
+component in that direction; the penalty would fight side-effect drift only.
+`MZ01_MOVE_MASS_COEF=0.1`, the existing knob, no build. Everything else as §4
+and §7. Output `results/exitcap_mass_cellA_s0`.
+
+### Rule, fixed now
+
+- Verdicts as §4/§7. The result this run is for: a VALID read at 80 (unparsed
+  ≤ 0.05, bare 1st ≥ 0.90) with the policy intact, and then whatever the
+  mine ratio says: AVOIDS below 0.75, ALIVE otherwise.
+- `move_mass` (raw bare mass) at every step is in the table; if it falls below
+  0.90 at any point the regulariser did not hold and the run is reported as
+  that, whatever the reads say.
+- Both arms again, `epsilon_010` then `onpolicy_g6`; the control's read at 80
+  is the one seed 0 has not had.
+- A masked held-out read beside the unmasked one is the right instrument and
+  needs a build; it is NOT in this run. If this run's unmasked read is valid,
+  the build waits; if not, it is next.
