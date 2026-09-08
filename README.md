@@ -20,6 +20,12 @@ This repo carries v1's full git history and began as its `v2/maze-world`
 branch. The minefield maze (MZ01) is the second world; everything below is
 about it.
 
+**Where the programme stands:** `docs/planning/RESEARCH_PROPOSAL.md`
+(established / refuted / open, and the decisive runs in order); the operative
+plan with its status board is `docs/planning/RESEARCH_PLAN.md`; every
+experiment, its inferred result and the verifier's check are in
+`experiments/v2/MZ01_maze_world/REPORT-2026-09-08.md`.
+
 **Read `experiments/v2/MZ01_maze_world/SPEC.md` first** — it is the binding
 pre-commitment, including the two sections appended after adversarial review
 (A1–A11, then the four DECISIONS of 2026-08-28) — then `AGENT-NOTES.md`
