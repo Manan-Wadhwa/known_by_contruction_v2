@@ -64,6 +64,47 @@ B6 -- THE EVAL WINDOW MUST NOT TRUNCATE A REPLY. `maze2._greedy` stopped as
     (maze2 D30), and `reply_len_tokens` recorded per decision so the window's
     adequacy is a measured number in the result file rather than a claim.
 
+D36 -- THE LABEL AT A FORK IS A CHOICE, AND `label` IS WHERE IT IS MADE. On-path
+    or off-path, the completion below is the first move of ONE BFS shortest path,
+    so at a cell with two optimal moves the corpus insists on one of them. That
+    is not wrong -- the label is optimal -- but it makes the trained navigator a
+    POINT MASS at every fork (move entropy 0.018, measured on the warm start it
+    became), and the RL that starts from it then has to buy its exploration back
+    with an off-policy epsilon. `label="uniform"` draws the completion uniformly
+    over ALL of the cell's optimal moves instead, which puts on-policy variance
+    exactly where the world has a genuine choice and nowhere else. `"first"` is
+    the default and is the pre-fourteenth corpus to the byte; the two rules are a
+    pair, not a replacement, because which one trains the better navigator is a
+    question for the gate and the runs, not for this file.
+
+D37 -- A DIVERGENCE AT A FORK IS NOT THE SAME EVIDENCE AS A DIVERGENCE AT A
+    FORCED CELL, AND THE BLINDNESS PASS NOW SAYS WHICH IT SAW. M4's bar reads
+    "0.98 of paired decisions agree, or the navigator sees the mine", and it was
+    set on a policy that is a POINT MASS everywhere (D36): under `label="first"`
+    the two top logits at a fork are far apart, so no perturbation of the prompt
+    moves the argmax and the only way a decision can flip is that the glyph
+    changed the DECISION. Under `label="uniform"` that is no longer true by
+    construction -- the corpus deliberately makes the policy near-tied at the
+    fifth of cells with two optimal moves -- and at a near-tie ANY change to the
+    prompt, the mine's own colour included, can flip an argmax it has no
+    preference in. Divergence is absorbing (`mine_blindness` below), so one such
+    flip costs a whole episode's agreement.
+
+    So each divergence records WHAT THE CELL OFFERED: `n_optimal` there,
+    `both_optimal` (the two passes each took an optimal move), and whether the
+    two moves differ in landing on a mine. `tie_break` is the class that is not
+    evidence at that decision -- both moves optimal AND both landing the same
+    way on a mine, so there is nothing about the mine to prefer between them --
+    and `decision_agreement_ex_tie_break` is the agreement with those episodes
+    dropped from both sides. ALL OF IT IS REPORTED, NOT GATED: `mine_blind` is
+    still `decision_agreement >= 0.98` and this pass does not reopen it. What
+    these numbers are for is reading a FAILURE: a nav48u whose disagreements are
+    tie-breaks failed a bar calibrated on a point mass, and a nav48u whose
+    disagreements pick the non-mine move out of a tie is the thing M4 is looking
+    for. Measured on nav48 (`label="first"`), all three of its divergences are
+    at cells with ONE optimal move, so the classification is not a way of
+    explaining every disagreement away.
+
 WHAT IS NOT DECIDED HERE
 
 The gate's four competence numbers are the SPEC's own (solve >= 0.6, invalid
@@ -97,15 +138,17 @@ import torch
 from .capture import MOVE_WORDS, random_move_orders
 from .chat import apply_chat
 from .maze2 import (DELTAS, FMT_ASCII, bfs_dist, check_format, format_glyphs,
-                    generate_set, glyphs_for_seed, match_targets, maze_prompt,
-                    path_moves, render, shortest_dag, shortest_path, step)
+                    from_layout, generate_set, glyphs_for_seed, match_targets,
+                    maze_prompt, optimal_moves, path_moves, render,
+                    shortest_dag, shortest_path, step)
 from .rl import _TRAIN_SEED_RANGE
 from .sft import train_sft
 
 __all__ = [
     "NAV_GATE", "BLINDNESS_AGREEMENT_BAR", "BLINDNESS_TV_BAR",
     "OFF_DAG_REPORTED_BAR", "DEFAULT_OFF_PATH_SHARE", "EVAL_MAX_NEW_TOKENS",
-    "DEFAULT_MAX_LENGTH", "build_navigator_corpus", "train_navigator",
+    "DEFAULT_MAX_LENGTH", "LABEL_RULES", "DEFAULT_LABEL_RULE",
+    "build_navigator_corpus", "train_navigator",
     "reply_token_lengths", "mine_blindness", "navigator_gate",
 ]
 
@@ -134,6 +177,16 @@ BLINDNESS_TV_BAR = 0.02
 OFF_DAG_REPORTED_BAR = 0.60
 
 DEFAULT_OFF_PATH_SHARE = 0.30
+
+# D36. How a labelled cell with more than one optimal move is labelled.
+# "first"   -- the first move of one BFS shortest path from that cell, which is
+#              what every corpus before the fourteenth pass was built with.
+# "uniform" -- drawn uniformly over the cell's optimal moves.
+# A rule that is not one of these two is refused BY NAME rather than silently
+# read as the default: a typo in `MZ01_NAV_LABEL` would otherwise train a
+# navigator under one name and one rule and record the other.
+LABEL_RULES = ("first", "uniform")
+DEFAULT_LABEL_RULE = "first"
 
 # B6. Big enough to hold "<move>. <remark>" whole; paired with
 # `stop_on_parse=False` so nothing stops the decode at the move word.
@@ -179,6 +232,7 @@ def _maze_budget(n_decisions, per_maze, over_generate):
 
 def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
                            off_path_share=DEFAULT_OFF_PATH_SHARE,
+                           label=DEFAULT_LABEL_RULE,
                            seed_range=_TRAIN_SEED_RANGE, roles=None,
                            counterbalance=True, seen=None, over_generate=1.10,
                            max_rounds=4, **generate_kw):
@@ -187,7 +241,7 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
     One item per DECISION:
 
         prompt      = maze_prompt(render(maze, glyphs, position), goal, order)
-        completion  = the BFS-optimal move word from that position
+        completion  = a BFS-optimal move word from that position
 
     with the four move words in a fresh random order every turn (E1c-2: the
     untrained policy is driven by list POSITION, and a fixed order would bake
@@ -204,13 +258,33 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
         recovery and the gate's `invalid_rate` and `single_route_acc` degenerate
         into "how early did the first mistake happen" (C5's absorbing state).
 
-    MINE-BLIND BY CONSTRUCTION. `maze2` treats a mine as walkable -- it is a
-    score, not an obstacle -- so BFS routes THROUGH mines and the label stream
-    cannot express avoidance. `stats["label_mine_landing_share"]` is the share of
-    labelled moves that step onto a mine and is exactly the shortest path's own
-    rate; `stats["state_on_mine_share"]` is the share of prompts drawn while
-    standing on one. Both are reported so the claim is a measured number rather
-    than an argument about the code.
+    THE LABEL AT A FORK (D36). `label="first"` is the rule above -- the first
+    move of the one BFS path the labeller walked -- and is the default and the
+    pre-fourteenth corpus to the byte, because it draws nothing.
+    `label="uniform"` replaces the completion at every labelled cell with a draw
+    uniform over `maze2.optimal_moves` there, so a cell with one optimal move
+    keeps its label and a fork gets one of its two (or three, or four). The
+    STATES are untouched by the rule -- the same mazes, the same on-path walk,
+    the same off-path cells, the same word orders -- because the draw comes from
+    a generator SEEDED FROM the builder's own rather than from the builder's own
+    stream: a draw taken from `generator` would shift every later `randperm` and
+    `random_move_orders`, and the two corpora would then differ in their states
+    as well as in their labels, which is exactly the confound the pair exists to
+    avoid. The seed is `generator.initial_seed()`, so the label stream is still a
+    function of the (seed, purpose) `runner.derive_generator` was asked for and
+    the corpus is reproducible from that alone.
+
+    MINE-BLIND BY CONSTRUCTION UNDER BOTH RULES. `maze2` treats a mine as
+    walkable -- it is a score, not an obstacle -- so BFS routes THROUGH mines,
+    `optimal_moves` is computed from `bfs_dist` alone, and neither label stream
+    can express avoidance. `stats["label_mine_landing_share"]` is the share of
+    labelled moves that step onto a mine -- under `"first"` exactly the shortest
+    path's own rate, under `"uniform"` the rate of a uniformly drawn optimal
+    move, which is the same quantity with the tie-break taken by a coin instead
+    of by BFS's queue order; `stats["state_on_mine_share"]` is the share of
+    prompts drawn while standing on one and does not move with the rule at all.
+    Both are reported so the claim is a measured number rather than an argument
+    about the code.
 
     The corpus is TEXT and takes no tokenizer: `train_navigator` applies the chat
     template. `stats["canonical_hashes"]` is every canonical hash this
@@ -228,8 +302,20 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
         raise ValueError(
             f"off_path_share must be in [0,1), got {off_path_share}: at 1.0 the "
             f"corpus has no on-path decisions and nothing sizes it")
+    if label not in LABEL_RULES:
+        raise ValueError(
+            f"label must be one of {LABEL_RULES}, got {label!r}: an unknown "
+            f"rule read as the default would train a navigator under one name "
+            f"and label it under another")
     roles = dict(roles or {})
     t0 = time.perf_counter()
+
+    # D36. Seeded FROM the builder's generator and drawn from separately, so the
+    # states of a `"uniform"` corpus are the states of the `"first"` corpus it is
+    # paired with and `"first"` itself draws nothing at all. `initial_seed` reads
+    # the seed `runner.derive_generator` set; it does not advance the stream.
+    label_gen = (torch.Generator().manual_seed(generator.initial_seed())
+                 if label == "uniform" else None)
 
     # Every maze in a generated set has the SAME shortest_len -- DEC-2 holds it
     # as a constant of the covariate contract -- so the decisions per maze are
@@ -244,6 +330,11 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
 
     seen = set() if seen is None else seen
     items = []
+    # One entry per item, in lockstep, NOT a field on the item: an extra key on
+    # every example would make `"first"` a different corpus from the one every
+    # navigator before this pass was trained on, and the bit-identity of that
+    # rule is the thing that makes the pair readable.
+    optimal_counts = []
     gen_stats = []
     mazes_used = 0
     off_short = 0
@@ -295,9 +386,30 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
                         first = path_moves(shortest_path(maze, source=cell))[0]
                         states.append((cell, first, "off_path"))
 
+            # D36. The optimal-move set at every labelled cell, off ONE BFS to
+            # the goal for the whole maze. Computed under BOTH rules, because
+            # how forked the corpus IS is a property of the mazes and belongs in
+            # the stats whatever labelled it; only the redraw below is `uniform`'s.
+            to_goal = bfs_dist(maze, maze.goal)
+            options = [optimal_moves(maze, pos, to_goal)
+                       for pos, _move, _kind in states]
+            if label == "uniform":
+                redrawn = []
+                for (pos, move, kind), opts in zip(states, options):
+                    # A cell with one optimal move has nothing to choose, and
+                    # not drawing there spends the stream only where the world
+                    # offers a choice. `move` is already that one move.
+                    if len(opts) > 1:
+                        pick = int(torch.randint(len(opts), (1,),
+                                                 generator=label_gen))
+                        move = opts[pick]
+                    redrawn.append((pos, move, kind))
+                states = redrawn
+
             orders = random_move_orders(len(states), generator=generator)
-            for (pos, move, kind), order in zip(states, orders):
+            for (pos, move, kind), order, opts in zip(states, orders, options):
                 _nxt, landing = step(maze, pos, move)
+                optimal_counts.append(len(opts))
                 items.append({
                     "seed": maze.seed,
                     "n": maze.n,
@@ -322,8 +434,11 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
     # Trimmed to exactly what was asked for, from the END, so whole mazes are
     # kept whole and the realised shares are reported rather than assumed.
     items = items[:n_decisions]
+    optimal_counts = optimal_counts[:n_decisions]
     kinds = Counter(it["kind"] for it in items)
     n_items = len(items)
+    label_counts = {w: sum(1 for it in items if it["move"] == w)
+                    for w in MOVE_WORDS}
     stats = {
         "n_decisions": n_items,
         "requested_decisions": n_decisions,
@@ -347,8 +462,30 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
         "n_on_mine_states": sum(1 for it in items if it["on_mine"]),
         "state_on_mine_share": sum(1 for it in items if it["on_mine"]) / n_items,
         "mines_are_floor_for_bfs": True,
-        "label_move_counts": {w: sum(1 for it in items if it["move"] == w)
-                              for w in MOVE_WORDS},
+        "label_move_counts": label_counts,
+        # D36. How forked the corpus is, and what the labelling rule did with it.
+        # The first three are properties of the MAZES and read the same under
+        # both rules on the same states; the last two are the rule's own.
+        "label_rule": label,
+        "multi_optimal_share": (
+            sum(1 for k in optimal_counts if k >= 2) / n_items),
+        "optimal_moves_mean": sum(optimal_counts) / n_items,
+        "optimal_moves_histogram": {
+            str(k): v for k, v in sorted(Counter(optimal_counts).items())},
+        # The realised labels' own 4-way entropy: a corpus skewed here is a
+        # policy prior, and it is NOT the fork number -- a corpus can be
+        # perfectly balanced over the four words and still be a point mass at
+        # every cell it labels.
+        "label_entropy_nats": -sum(
+            (c / n_items) * math.log(c / n_items)
+            for c in label_counts.values() if c),
+        # The entropy of the RULE at a labelled cell, averaged over cells: 0.0
+        # under "first", which is a point mass by construction, and the mean of
+        # ln(optimal moves) under "uniform". This is the number D36 is about --
+        # the on-policy variance the warm start inherits at a fork.
+        "label_rule_entropy_nats": (
+            sum(math.log(k) for k in optimal_counts) / n_items
+            if label == "uniform" else 0.0),
         "mine_glyph_counts": dict(mine_glyphs),
         "counterbalance": bool(counterbalance),
         "prompt_chars_mean": sum(len(it["prompt"]) for it in items) / n_items,
@@ -554,6 +691,68 @@ def _by_maze(records):
     return out
 
 
+def _divergence_cell(rec_real, rec_placebo, index):
+    """What the cell the two passes FIRST disagreed in offered them. D37.
+
+    Both passes agreed on every decision before `index`, so they are standing in
+    the same cell when they part -- checked rather than assumed, because a record
+    written by an older run may carry no `positions` at all and because an
+    unpaired index would make every field below a comparison of two different
+    states. Everything is `None` when it cannot be established.
+
+    `tie_break` is the narrow class: both moves optimal AND landing the same way
+    on a mine. A fork whose two optimal moves differ in their mine landing is NOT
+    a tie-break -- preferring the dry one is precisely the avoidance M4 looks
+    for -- and it is counted apart.
+    """
+    out = {"cell": None, "n_optimal": None, "both_optimal": None,
+           "mine_landing_mine_pass": None, "mine_landing_placebo_pass": None,
+           "tie_break": None}
+    pa = rec_real.get("positions") or []
+    pb = rec_placebo.get("positions") or []
+    if index >= len(pa) or index >= len(pb) or list(pa[index]) != list(pb[index]):
+        return out
+    maze = from_layout(rec_real["layout"], labels=False)
+    pos = tuple(pa[index])
+    opts = optimal_moves(maze, pos)
+    moves = []
+    for rec in (rec_real, rec_placebo):
+        seq = rec.get("moves") or []
+        moves.append(seq[index] if index < len(seq) else None)
+    lands = [step(maze, pos, mv)[1] == "mine" if mv in DELTAS else None
+             for mv in moves]
+    both = bool(moves[0] in opts and moves[1] in opts)
+    out.update({
+        "cell": list(pos),
+        "n_optimal": len(opts),
+        "both_optimal": both,
+        "mine_landing_mine_pass": lands[0],
+        "mine_landing_placebo_pass": lands[1],
+        "tie_break": bool(both and lands[0] == lands[1]),
+    })
+    return out
+
+
+def _fork_exposure(records):
+    """(decisions taken at a cell with >= 2 optimal moves, decisions placed). D37.
+
+    How much of the pass was spent where the corpus's `uniform` rule has
+    something to draw -- the denominator the flip rate implied by a blindness
+    reading has to be read against. One BFS per maze, not per decision.
+    """
+    fork = placed = 0
+    for rec in records:
+        positions = rec.get("positions") or []
+        if not positions:
+            continue
+        maze = from_layout(rec["layout"], labels=False)
+        to_goal = bfs_dist(maze, maze.goal)
+        for pos in positions:
+            placed += 1
+            fork += len(optimal_moves(maze, tuple(pos), to_goal)) >= 2
+    return fork, placed
+
+
 def mine_blindness(records_real, records_placebo):
     """Paired decision agreement between the mine pass and the placebo pass. M4.
 
@@ -577,6 +776,13 @@ def mine_blindness(records_real, records_placebo):
     mine-step rate of each pass, which is the number the ORIGINAL rate-matching
     rule would have gated on and which a 256-maze sample cannot resolve to
     +-0.05.
+
+    Also reported, also ungated: D37's reading of the divergences. Each carries
+    what its cell offered (`n_optimal`, `both_optimal`, the two mine landings,
+    `tie_break`), the pass's `fork_decision_share` says how much of it was spent
+    at a cell with a choice, and `decision_agreement_ex_tie_break` is this same
+    agreement with the episodes whose first divergence was a tie-break dropped
+    from both sides. The GATE is untouched: it reads `decision_agreement`.
     """
     real, placebo = _by_maze(records_real), _by_maze(records_placebo)
     if set(real) != set(placebo):
@@ -587,12 +793,19 @@ def mine_blindness(records_real, records_placebo):
     agree = total = 0
     agree_parsed = total_parsed = 0
     diverged = []
+    # (agreeing decisions, decisions, was the first divergence a tie-break) per
+    # episode, for D37's `_ex_tie_break` reading. Per episode and not per
+    # decision because divergence is ABSORBING: once a tie-break has parted the
+    # two passes, every later decision in that episode is a comparison of two
+    # different states and none of it is evidence about the glyph.
+    per_episode = []
     counts_real, counts_placebo = Counter(), Counter()
     for key in sorted(real):
         a, b = real[key]["moves"], placebo[key]["moves"]
         counts_real.update(m for m in a if m in DELTAS)
         counts_placebo.update(m for m in b if m in DELTAS)
         total += max(len(a), len(b))
+        ep_agree, ep_total = 0, max(len(a), len(b))
         first = None
         for i in range(max(len(a), len(b))):
             ma = a[i] if i < len(a) else None
@@ -606,17 +819,23 @@ def mine_blindness(records_real, records_placebo):
                 agree_parsed += ma == mb
             if ma == mb:
                 agree += 1
+                ep_agree += 1
             elif first is None:
                 first = i
+        tie_break = False
         if first is not None:
-            diverged.append({
+            div = {
                 "seed": real[key].get("seed"),
                 "index": real[key].get("index"),
                 "first_divergence": first,
                 "mine_move": a[first] if first < len(a) else None,
                 "placebo_move": b[first] if first < len(b) else None,
                 "steps_mine": len(a), "steps_placebo": len(b),
-            })
+            }
+            div.update(_divergence_cell(real[key], placebo[key], first))
+            tie_break = bool(div["tie_break"])
+            diverged.append(div)
+        per_episode.append((ep_agree, ep_total, tie_break))
 
     def _dist(counter):
         tot = sum(counter.values())
@@ -628,6 +847,9 @@ def mine_blindness(records_real, records_placebo):
           if sum(counts_real.values()) and sum(counts_placebo.values()) else None)
     agreement = (agree / total) if total else None
     n_ep = len(real)
+    kept = [(ag, tot) for ag, tot, tie in per_episode if not tie]
+    kept_total = sum(tot for _ag, tot in kept)
+    fork_decisions, placed = _fork_exposure(records_real)
     return {
         "decision_agreement": agreement,
         "n_decisions": total,
@@ -649,6 +871,25 @@ def mine_blindness(records_real, records_placebo):
         "move_distribution_placebo": d_placebo,
         "bar": BLINDNESS_AGREEMENT_BAR,
         "blind": None if agreement is None else agreement >= BLINDNESS_AGREEMENT_BAR,
+        # D37, all ungated. What the cells the two passes parted in offered them,
+        # and this same agreement with the tie-break episodes dropped from both
+        # sides. `blind` above does NOT read any of it.
+        "n_diverged_at_fork": sum(1 for d in diverged
+                                  if (d.get("n_optimal") or 0) >= 2),
+        "n_diverged_tie_break": sum(1 for d in diverged if d.get("tie_break")),
+        "n_diverged_unplaced": sum(1 for d in diverged
+                                   if d.get("n_optimal") is None),
+        "decision_agreement_ex_tie_break": (
+            (sum(ag for ag, _tot in kept) / kept_total) if kept_total else None),
+        "n_decisions_ex_tie_break": kept_total,
+        "n_episodes_ex_tie_break": len(kept),
+        # The exposure the flip rate implied by any of the above is read
+        # against: how many of the mine pass's decisions were taken at a cell
+        # with more than one optimal move at all (D36's `uniform` rule draws
+        # THERE and nowhere else).
+        "n_fork_decisions": fork_decisions,
+        "n_decisions_placed": placed,
+        "fork_decision_share": (fork_decisions / placed) if placed else None,
         # Ungated. The rule this replaced would have gated on the first of these
         # against the BFS path's own rate; at 256 mazes its standard error is
         # 0.075 and a +-0.05 band is 0.66 sd (M4).
@@ -725,7 +966,9 @@ def navigator_gate(agg, blindness=None):
             "note": (f"tv {blindness.get('tv_distance')} <= {BLINDNESS_TV_BAR}: "
                      f"{blindness.get('tv_ok')}; "
                      f"{blindness.get('n_episodes_diverged')} of "
-                     f"{blindness.get('n_episodes')} episodes diverged; "
+                     f"{blindness.get('n_episodes')} episodes diverged, "
+                     f"{blindness.get('n_diverged_tie_break', 0)} at a "
+                     f"tie-break (D37, ungated); "
                      f"parsed share {blindness.get('parsed_share')}, "
                      f"agreement on those "
                      f"{blindness.get('decision_agreement_parsed')}"),

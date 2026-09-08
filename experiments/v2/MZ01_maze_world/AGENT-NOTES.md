@@ -2684,3 +2684,346 @@ suffice is already almost there: the rows carry `epsilon_eligible` and
 `epsilon_replaced` per decision, so recording the POOL SIZE beside them would
 make the importance weight computable after the fact. Recommended for a later
 pass, not built here.
+
+# Fourteenth pass, part C, 2026-09-08: the navigator's label at a fork (D36)
+
+Built against `PLAN-credit-explore-navigator.md` §3, in an isolated worktree on
+`fourteenth-c`. Parts A and B (per-decision credit, targeted ε) are a separate
+build in the main tree and this one touches none of their files. No box was
+contacted, no result file was touched, and `SPEC.md`, `PLAN-*.md` and
+`RESULTS-*.md` are unedited. Nothing here is a result: N1 — the nav48u training
+run the knob exists for — is pre-registered in the PLAN's §4 and has not run.
+
+## The finding this pass is a fix for
+
+The warm start's move entropy is **0.018 nats**. That is not what an RL run
+starts from because the imitation was too good; it is what it starts from
+because the CORPUS was a point mass. `build_navigator_corpus` labels every cell
+with the first move of ONE BFS shortest path, and at a cell where two moves are
+equally optimal the corpus insists on one of them for no reason at all — BFS's
+queue order, which is `MOVE_WORDS`' order, which is an artefact of a `for` loop.
+Three passes of RL have then spent their whole exploration budget buying that
+variance back off-policy: ε replaces a move at a uniformly random decision with
+a uniformly random valid move, which is a worse draw at a fork (it can pick the
+move that walks away from the goal) and a pointless one everywhere else.
+
+A navigator whose labels are uniform over the optimal moves has the variance
+**where the world has a genuine choice and nowhere else**, on-policy, at no cost
+to optimality: every label it can draw is still a shortest-path move.
+
+## D36 — the label at a fork is drawn, not taken
+
+`label ∈ {"first", "uniform"}` on `build_navigator_corpus`, default `"first"` =
+today, `MZ01_NAV_LABEL` in the driver. Under `"uniform"` the completion at a
+labelled cell is drawn uniformly from `maze2.optimal_moves(maze, cell)` — the
+moves whose landing cell's BFS distance to the goal is one less than the cell's.
+A cell with one optimal move keeps the label it had; only a fork draws.
+
+**The states are NOT the rule's to move.** The draw comes from a generator
+*seeded from* the builder's own (`torch.Generator().manual_seed(
+generator.initial_seed())`), not from the builder's own stream. A draw taken
+from `generator` would shift every later `randperm` and `random_move_orders`,
+and the two corpora would then differ in WHICH off-path cells they teach and in
+what order the four words are listed — E1c-2's own artefact — as well as in the
+labels. On the toy pair below every prompt, position, order and kind is equal
+item for item (`test_uniform_redraws_the_label_at_a_fork_and_moves_nothing_else`
+asserts it field by field), so nav48u minus nav48 is the labels and nothing
+else. The seed is still the `(seed, purpose)` `runner.derive_generator` was
+asked for, so the corpus is reproducible from the same argument it always was.
+This is a deviation from the PLAN's literal "from the corpus builder's own
+generator"; it keeps the PLAN's own next sentence ("every other property of the
+corpus are unchanged"), which the literal reading breaks.
+
+**`"first"` is the pre-fourteenth corpus to the byte**, because it draws nothing
+and the optimal-move sets it computes go into the STATS and not into the items.
+Asserted against a digest of the 96-decision n=7 toy corpus recorded from the
+tree at `8894ce5` before the first edit
+(`7d6128c5…`, `test_the_first_label_rule_is_the_pre_fourteenth_corpus_to_the_byte`),
+with the same test asserting the claim is not vacuous — that corpus has forked
+cells, so a rule change CAN move it.
+
+**`maze2.optimal_moves(maze, pos, dist=None)`** is where the set is computed,
+beside `unique_correct_move`, which is now written in terms of it (`optimal_moves`
+returning exactly one). Same predicate, same order, so `single_route_acc`'s
+tie-break rule cannot drift from the labeller's; brute-forced against a second
+route — `shortest_path` lengths from the cell and from each neighbour — rather
+than against itself.
+
+## What else moved with it
+
+- **Five corpus stats**, in the JSON under `corpus` and printed by the driver
+  and the scorer: `label_rule`, `multi_optimal_share` (share of labelled cells
+  with ≥ 2 optimal moves), `optimal_moves_mean`, `optimal_moves_histogram`, and
+  two entropies. `label_entropy_nats` is the realised labels' own 4-way entropy
+  — a skew here is a policy prior — and it is NOT the fork number: a corpus can
+  be perfectly balanced over the four words and still be a point mass at every
+  cell it labels. `label_rule_entropy_nats` is the entropy of the RULE at a
+  labelled cell averaged over cells: 0.0 under `"first"` by construction, and
+  mean ln|optimal moves| under `"uniform"`. The first three are properties of
+  the MAZES and read the same under both rules on the same states, which is how
+  a reader can tell that a `uniform` run whose corpus had no forks would be
+  nav48 under another name.
+- **`label_rule` in the manifest as well as in `corpus`**, and in the scorer's
+  header line. Two navigators trained under the two rules differ in nothing else
+  a reader can see — same gate, same bars, same shape of file — and the shard
+  name is a string a human types. A file written before the knob has no field
+  and ran `"first"`; the scorer says so rather than printing `n/a`.
+- **The driver refuses an unknown `MZ01_NAV_LABEL` by name, before the model is
+  loaded**, and `build_navigator_corpus` raises on one too. A typo that fell
+  through to the default would spend ~1.7 h training nav48's corpus under
+  nav48u's name, and every later table would carry the wrong claim.
+
+## The corpus stats on the toy, measured
+
+200 mazes at n=9 (3 400 decisions, `off_path_share=0.3`,
+`derive_generator(0, "test")`), the two rules on the same states:
+
+| | `first` | `uniform` |
+| --- | --- | --- |
+| labelled cells with ≥ 2 optimal moves | 0.1947 | 0.1947 |
+| mean optimal moves per labelled cell | 1.1971 | 1.1971 |
+| histogram of optimal moves | 1: 2738, 2: 655, 3: 6, 4: 1 | (same states) |
+| label entropy, 4-way marginal | 1.3780 nats | 1.3718 nats |
+| the RULE's entropy at a labelled cell | **0.0** | **0.1359 nats** |
+| labelled moves landing on a mine | 0.1079 | 0.1091 |
+| states standing on a mine | 0.1103 | 0.1103 |
+
+**About a fifth of the corpus is a fork**, and the draw moved **345 of 3 400
+labels (0.1015)** — 52.1 % of the 662 forked cells, which is the coin. Read the
+last two rows against M4: the label stream is still mine-blind by construction
+under both rules (`optimal_moves` is computed from `bfs_dist` alone and BFS
+routes THROUGH mines), and what moves by 0.0012 is the tie-break being taken by
+a coin instead of by the queue. `state_on_mine_share` does not move at all,
+because the STATES do not.
+
+The marginal entropy barely moves (1.3780 → 1.3718) and that is the point of
+recording both: the number this pass is about is the third one, which is 0 under
+`"first"` whatever the corpus looks like from outside.
+
+## What is expected of the trained navigator, and NOT asserted
+
+The PLAN's §3 lists these as expected, not asserted, and this build asserts none
+of them. They are what N1's result file should be read for:
+
+- **Move-column entropy at fork cells near ln 2 = 0.693.** The corpus's own
+  rule entropy is 0.136 nats averaged over ALL labelled cells; at the forked
+  fifth alone it is ln 2 (or ln 3, ln 4 on the seven cells that have them). What
+  the trained navigator does with it is a fact about 3 epochs of SFT on 48 000
+  decisions, not about the corpus, and the imitation could easily average the
+  two labels into a preference for one of them.
+- **`single_route_acc` unchanged.** A single-route maze has no fork on its
+  route, so on those decisions the two corpora are the same corpus. The gate's
+  four competence numbers are unchanged and are not reopened here.
+- **The placebo (mine-blindness) pass unchanged.** It is a PAIRED, greedy,
+  decision-by-decision comparison of the same navigator on the same mazes with
+  one glyph swapped, so it does not care what the navigator's policy is — only
+  whether the mine glyph moves it. A uniform-labelled navigator that has learned
+  a 50/50 preference at forks still decodes GREEDILY at eval, which is
+  deterministic, so the pairing has no new noise. The one thing to watch is the
+  self-agreement CONTROL: a navigator whose two top logits are near-tied at a
+  fifth of its decisions is closer to the boundary where bf16 batch composition
+  flips an argmax, so `self_control.decision_agreement` is the ceiling to read
+  nav48u's blindness against — which is exactly what that pass was added for.
+
+## Suite
+
+`238 passed, 1 skipped` → `246 passed, 1 skipped`, CPU,
+`timeout 900 .venv/bin/python -m pytest tests/ -q -p no:cacheprovider`. Eight
+tests added: two on `maze2.optimal_moves` (hand-built forks; the brute-force
+agreement with `shortest_path` lengths and with `unique_correct_move`) and six
+on the rule (the byte-identical `"first"` digest, every drawn label optimal read
+out of the PROMPT, the pairing field by field, the five stats recomputed, the
+refusal by name, and the `MZ01_NAV_LABEL` knob end to end into the result file).
+Two existing tests gained assertions: the driver's payload carries `label_rule`
+in both places, and the scorer's output names it in the header and in the corpus
+block. None weakened or removed.
+
+---
+
+# Fourteenth pass, part C, the CRITIC's pass, 2026-09-08 (D37)
+
+Adversarial read of `ff8b1e2` against `PLAN-credit-explore-navigator.md` §3 and
+its §6 C questions, in the same worktree, on `fourteenth-c`. Verdict: MERGE with
+this commit on top. The build is correct where it claims to be correct -- the
+bit-identity, the pairing and the optimal-move set all hold when they are
+re-derived rather than re-read -- and two of its three "expected, not asserted"
+claims are right for reasons other than the ones it gives. Nothing here is a
+result: no box was contacted, N1 has not run, and the numbers below are either
+re-derivations from the COMMITTED `nav_nav48.json` or corpus statistics computed
+on the CPU here.
+
+## What was re-derived, and against what
+
+**`maze2.optimal_moves` (§6's first C question, by brute force).** 200 mazes at
+n=9, every open cell (11 000 of them), against a SECOND definition -- the length
+of a fresh `shortest_path` from the cell and from each neighbour, not one BFS
+table: **0 mismatches**. No wall is ever in a set (0 of 11 000 cells), **1 437
+optimal moves land on a mine** -- which is the mine-blindness-by-construction the
+corpus needs and would be the first thing to break if the set were computed from
+anything but `bfs_dist` -- the 467 goal-adjacent cells return exactly the move
+onto the goal, and the BFS path's own first move is in the set at the start cell
+on 200/200. `max |optimal_moves|` = 3 on this sample.
+
+**The rewrite of `unique_correct_move` moves nothing.** `git archive 8894ce5`
+into a scratch tree, the same dump script run under both: `unique_correct_move`
+at every open cell of 200 mazes (10 760 cells), plus 200 scripted episodes driven
+through `_Episode.apply` with a reply sequence that is a pure function of (seed,
+index) -- 3 347 graded decisions, every `correct` / `correct_at` / `positions` /
+`landings` entry -- plus `single_route_split` over the lot. The two JSON dumps
+are **byte-identical**.
+
+**Bit-identity of `"first"` (§3's own test, re-recorded).** The 96-decision n=7
+toy corpus built by `8894ce5`'s OWN `navigator.py` in the scratch tree digests to
+`7d6128c5b610233076b530057a0accb2e48d1ba8b95488a4aaccbad2b8b413cb`, which is the
+digest the build recorded and the digest the new code produces both by default
+and under an explicit `label="first"`. So the constant in the test is a recording
+of the old code and not of the new.
+
+**`"uniform"` draws nothing from the builder's stream.** The builder's generator
+`get_state()` after the call is IDENTICAL under both rules (and identical to the
+old tree's), and item for item the two corpora agree on `seed`, `n`, `layout`,
+`position`, `order`, `kind`, `fmt`, `glyphs`, `prompt` and `canonical_hashes` --
+96 items at n=7 (5 labels moved) and 3 400 at n=9 (360 moved, 705 forked cells,
+0.5106 of them). `state_on_mine_share` does not move; `label_mine_landing_share`
+moves 0.1138 -> 0.1100, which is the coin taking the tie-break.
+
+**The label stream's independence (§6, third C question).** `initial_seed()` is
+exactly the seed `derive_generator` set (`sha256(seed|tags)[:8] >> 1`, checked
+against a recomputation for three tag sets) and does not move as the stream is
+consumed, so the label draw is a function of `(seed, purpose)` and of nothing
+else; `"navigator_corpus"` and `"navigator_eval"` derive different seeds, so the
+two purposes the driver uses cannot share label draws. What they DO share is the
+underlying MT19937 sequence between `generator` and `label_gen`, which carry the
+same seed at different offsets. Probed on the channel that would matter -- E1c-2
+says list POSITION drives an untrained policy -- at the 700 two-optimal cells of
+the n=9 corpus: the drawn label is the EARLIER-listed of the two optimal moves in
+**0.5143** of them (sd 0.0189 under independence, z = 0.76). No detectable
+coupling; left as it is, because a second `derive_generator` tag would change
+which labels nav48u draws for no measured gain.
+
+## The two claims that are right for the wrong reason
+
+**"A single-route maze has no fork", so `single_route_acc` is unchanged.** True
+ON the shortest-path DAG -- a tie there would BE a second route -- and FALSE off
+it. On the gate's own eval set (256 mazes at n=9, `derive_generator(0,
+"navigator_eval")`): 39 mazes have `route_count == 1`; **0 of their 507 on-DAG
+cells fork and 33 of their 736 off-DAG cells do**, and off-DAG cells are exactly
+where a policy decides after it has erred (A7). What actually protects the gate
+is one line in `maze2._Episode.apply`: a decision whose cell has no unique
+correct move is never appended to `correct`/`correct_at`, so a navigator that
+picks either of two optimal moves is neither credited nor charged, and the
+denominator is the same denominator under both label rules. That guarantee was
+asserted only as a property of `unique_correct_move`; it is now asserted end to
+end through the episode that records it, and the off-route fork is pinned with a
+hand-built `route_count == 1` maze that has one.
+
+**"The placebo pass is unchanged because it is a paired deterministic
+comparison."** The pairing is sound -- the two passes are the same mazes, the
+same derived word orders, the same batch composition, and greedy -- but M4's
+0.98 bar was set on a policy that is a POINT MASS everywhere, and part C's whole
+purpose is to make it near-tied at a fifth of its cells. At a near-tie the
+argmax has no margin to defend, and the mine's own glyph -- like any other token
+in the prompt -- can flip it without the navigator having any preference about
+mines at all. The cost is not one decision: divergence is ABSORBING, so one flip
+charges the rest of the episode.
+
+The headroom, from the committed nav48 file: `decision_agreement` 0.99586 over
+3 140 decisions, 3 diverged episodes costing 13 disagreeing decisions; the bar
+allows 0.02 x 3 140 = **62 disagreeing decisions, about 14 divergences at nav48's
+observed 4.3 decisions each**. The exposure: the mine pass takes **489 of its
+3 136 decisions (0.1559) at a cell with >= 2 optimal moves**, and **184 of its
+256 episodes** visit at least one. A per-fork flip rate above roughly **3 %**
+therefore fails `mine_blind` on nav48u for a reason that is not perception --
+and a FAIL is "the branch stops (SPEC Stage 0 v2)".
+
+`self_control` bounds part of this and not all of it: it is the same navigator on
+the same mazes with the same glyphs at a different eval batch size, so it prices
+an argmax flipped by bf16 arithmetic -- the same near-tie fragility, driven by a
+perturbation that is strictly smaller than substituting a token. Read it as a
+lower bound on the tie noise, not as its ceiling, and note it is UNGATED: it
+cannot stop the gate from failing, it can only explain the failure afterwards.
+
+**And that ceiling already tracks how peaked the policy is.** The two committed
+navigator files: nav48 (48 000 decisions, solve 0.9844) reads `self_control`
+**1.0000** over 784 decisions with 0 of 64 episodes diverged; `nav_shared`
+(24 000 decisions, solve 0.7578) reads **0.9623** over 1 007 decisions with **7
+of 64 episodes diverged on nothing but a different eval batch size** -- an
+arithmetic ceiling BELOW the 0.98 blindness bar, on the run whose blindness read
+0.9477 and was called a FAIL. A less peaked navigator is a navigator whose argmax
+is cheap to flip, and `label="uniform"` un-peaks it at a fifth of its cells on
+purpose. `MZ01_SELF_CONTROL_N` is what buys a tighter reading of that ceiling
+(nav48 spent it on 64 of its 256 mazes); on N1 it is worth more than it was on
+nav48.
+
+## D37 -- the divergences now say WHERE they happened
+
+`navigator.mine_blindness` classifies each first divergence from the layout and
+the recorded positions: the shared `cell`, `n_optimal` there, `both_optimal`,
+whether each pass's move lands on a mine, and `tie_break` = both moves optimal
+AND both landing the same way on a mine (so there is nothing about the mine to
+prefer between them). Aggregates: `n_diverged_at_fork`, `n_diverged_tie_break`,
+`n_diverged_unplaced`, `decision_agreement_ex_tie_break` (this same agreement
+with the tie-break episodes dropped from BOTH sides -- per episode, because
+divergence is absorbing), `n_fork_decisions` / `n_decisions_placed` /
+`fork_decision_share`. The driver prints them, and `score_mz01_navigator.py`
+RECOMPUTES them stdlib-only from the layouts with its own BFS, so the ungated
+numbers have two authors like the gated ones do
+(`test_the_scorers_blindness_agrees_with_the_modules` now compares eight more
+keys).
+
+**The gate is untouched.** `mine_blind` is `decision_agreement >= 0.98` and reads
+none of this. A tie-break is not an excuse, either: a fork whose two optimal
+moves DIFFER in landing on a mine is not a tie-break, because preferring the dry
+one is precisely the avoidance M4 hunts -- there is a test for each. Re-derived
+on the committed nav48 file, **0 of its 3 divergences are at a fork at all** (all
+three cells have one optimal move and the placebo pass took a non-optimal move),
+so the classification does not explain away today's disagreements.
+
+It does not rescue a real failure either, which is the other half of the
+calibration. Re-scored on the committed `nav_shared` file -- the FAIL, and the
+less peaked of the two navigators -- **8 of its 29 divergences began at a fork
+and 5 were tie-breaks**, and dropping those five episodes moves the reading
+0.9477 -> 0.9504 against a bar of 0.98. A run that fails because it sees the
+mine still fails with the tie-breaks set aside; what the number buys is the
+ability to say which of the two happened, in one line, without a second lease.
+
+## For the lead, before N1 launches
+
+1. **The 0.98 bar on nav48u is a decision, and it is not this branch's to
+   make.** The arithmetic above says a uniform-labelled navigator can fail
+   `mine_blind` at a per-fork flip rate of ~3 %. Either N1 launches knowing that
+   a FAIL has to be read against `n_diverged_tie_break`,
+   `decision_agreement_ex_tie_break` and `self_control` before the branch is
+   stopped, or the bar is restated for `label_rule=uniform` in a document
+   BEFORE the run. Restating it afterwards is the move this programme's
+   standards exist to prevent, which is why this pass only instruments it.
+2. **The nav48/nav48u pairing hole (§6's downstream trap).** The trial's check
+   pairs `MZ01_NAV_ADAPTER` with `MZ01_NAV_JSON` by `adapter_sha256`, so it
+   catches a mismatched .pt/.json pair and CANNOT catch nav48's honest pair being
+   run under an `nav48u` arm name. The one-line guard lives in files this branch
+   must not touch (part A+B is editing `scripts/mz01_orgb_driver.py` in the main
+   tree), so it is written down instead of implemented:
+   `read_navigator` in `scripts/mz01_orgb_driver.py` already returns
+   `"navigator_shard": manifest.get("shard")` beside the sha; add
+   `"navigator_label_rule": manifest.get("label_rule", "first")` there,
+   put both into `cfg` in `scripts/mz01_explore_trial.py` (which today records
+   `nav_adapter` and `nav_adapter_sha256` and neither of these) and into the
+   `ARM` line, and extend the pooled-shard assertion at
+   `mz01_orgb_driver.py:1132` to cover them. `label_rule` is in the navigator's
+   manifest as of `ff8b1e2`, so the producing side is already done.
+3. **The corpus stats are the check that nav48u is not nav48 under another
+   name.** `multi_optimal_share` at n=9 is ~0.20 and `label_rule_entropy_nats`
+   ~0.14; a `uniform` run whose result file shows the second at 0.0 drew nothing
+   and is nav48 with a different filename.
+
+## Suite
+
+`246 passed, 1 skipped` -> `252 passed, 1 skipped`, CPU, foreground,
+`PYTHONPATH=<worktree>/src timeout 900 .venv/bin/python -m pytest tests/ -q
+-p no:cacheprovider`. Six added: four on D37's classification (a dry fork named
+a tie-break and set aside, a mined fork NOT named one, a record with no
+positions, and the exposure numbers on a passing pair) and two on the tie
+exclusion `single_route_acc` rests on (a `route_count == 1` maze that forks off
+its own route, and the exclusion end to end through `_Episode.apply`). One
+existing test gained eight assertions (the scorer's second author). None
+weakened or removed.

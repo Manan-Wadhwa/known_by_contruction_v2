@@ -862,6 +862,118 @@ def test_single_route_accuracy_only_counts_unambiguous_decisions():
                    < dg[pos]) == 1
 
 
+# A unique start->goal route with a LOOP hanging off it. The corridor down
+# column 0 is the only route (any detour into the right-hand block has to come
+# back through the cell it left by), but (0,4) sits on the loop and is two
+# equally short ways from the goal.
+LOOP_OFF_ROUTE = """
+S#...
+.#.#.
+.#.#.
+.....
+G####
+"""
+
+
+def test_a_route_count_one_maze_can_still_fork_off_its_own_route():
+    """The premise `single_route_acc` is defended with, and its real defence.
+
+    The fourteenth pass's part C reasons that a `uniform` label cannot move
+    `single_route_acc` because "a single-route maze has no fork". That is true
+    ON THE DAG -- a tie there would BE a second route -- and false off it: a
+    loop hanging off the corridor forks, and once a policy has erred it decides
+    in exactly those cells (A7's own point). What actually protects the gate is
+    one line in `_Episode.apply`: a decision with no unique correct move is not
+    entered into `correct` at all, so a navigator that picks either of two
+    optimal moves is neither credited nor charged. Measured on the gate's own
+    eval set (256 mazes at n=9): 39 have route_count == 1, 0 of their 507 on-DAG
+    cells fork, and 33 of their 736 off-DAG cells do.
+    """
+    maze = from_layout(LOOP_OFF_ROUTE)
+    assert maze.labels["route_count"] == 1
+    dag, _length = maze2.shortest_dag(maze)
+    for pos in dag:
+        assert len(maze2.optimal_moves(maze, pos)) <= 1, (
+            f"{pos} forks ON the DAG of a route_count==1 maze")
+    forks = [p for p in maze.open_cells()
+             if p not in dag and len(maze2.optimal_moves(maze, p)) >= 2]
+    assert forks == [(0, 4)], forks
+    for pos in forks:
+        assert maze2.unique_correct_move(maze, pos) is None
+
+
+def test_a_tied_decision_is_never_entered_into_the_graded_denominator():
+    """The same guarantee end to end, through the episode that records it.
+
+    `correct` and `correct_at` are what `single_route_acc` and A7's split are
+    computed from, and the exclusion happens where the decision is recorded --
+    not in the scorer, which cannot see a decision that was never written down.
+    """
+    maze = from_layout(CORRIDOR)
+    assert len(maze2.optimal_moves(maze, maze.start)) == 2
+    ep = maze2._Episode(0, maze)
+    ep.apply("right", retry_enabled=False)      # from the FORK at the start
+    assert ep.correct == [] and ep.correct_at == []
+    ep.apply("right", retry_enabled=False)      # from (0,1), which is forced
+    assert ep.correct == [True] and ep.correct_at == [1]
+    assert len(ep.positions) == 2, "both decisions are still in the record"
+
+
+def test_the_optimal_move_set_is_every_move_that_shortens_the_distance():
+    """`optimal_moves` on hand-built cells: a fork, no fork, a tie at the start.
+
+    The navigator's D36 label rule draws from this list, so a set that is too
+    SMALL silently makes `uniform` into `first` and the pass measures nothing;
+    a set that is too LARGE puts a label on a move that does not reach the goal
+    and the corpus stops being imitation of the shortest path at all.
+    """
+    maze = from_layout(CORRIDOR, labels=False)
+    dg = bfs_dist(maze, maze.goal)
+
+    # A TIE AT THE START: CORRIDOR's two shortest routes leave (0,0) in two
+    # different directions, and both are optimal.
+    assert sorted(maze2.optimal_moves(maze, (0, 0))) == ["down", "right"]
+    # NO FORK one cell along it: (1,1) is a wall, so only "right" shortens.
+    assert maze2.optimal_moves(maze, (0, 1)) == ["right"]
+    # The MINE is a fork too -- it is floor to BFS, and both ways off it are one
+    # step from the goal.
+    assert sorted(maze2.optimal_moves(maze, (2, 2))) == ["down", "right"]
+    # The goal has nowhere closer to go, and a wall has no distance at all.
+    assert maze2.optimal_moves(maze, maze.goal) == []
+    assert maze2.optimal_moves(maze, (1, 1)) == []
+    # The precomputed distance map is the same answer as the recomputed one.
+    for pos in maze.open_cells():
+        assert maze2.optimal_moves(maze, pos, dg) == maze2.optimal_moves(maze, pos)
+
+
+def test_optimal_moves_agrees_with_the_route_lengths_and_with_unique_correct():
+    """Brute force by a SECOND route: `shortest_path` lengths, not one BFS map.
+
+    `optimal_moves` reads one `bfs_dist` table; this walks a fresh shortest path
+    from the cell and from each neighbour and compares the lengths, which is the
+    definition rather than the implementation. `unique_correct_move` is now
+    written in terms of `optimal_moves`, so the tie-break rule that
+    `single_route_acc` depends on is asserted here to be exactly what it was.
+    """
+    for maze in _mazes(9, 12, seed=3):
+        here_len = {}
+        for pos in maze.open_cells():
+            path = shortest_path(maze, source=pos)
+            here_len[pos] = None if path is None else len(path) - 1
+        seen_fork = False
+        for pos in maze.open_cells():
+            want = sorted(
+                w for w, nxt in maze.neighbours(pos)
+                if here_len[pos] is not None and here_len[nxt] is not None
+                and here_len[nxt] == here_len[pos] - 1)
+            got = maze2.optimal_moves(maze, pos)
+            assert sorted(got) == want, (pos, got, want)
+            seen_fork = seen_fork or len(got) > 1
+            unique = maze2.unique_correct_move(maze, pos)
+            assert unique == (got[0] if len(got) == 1 else None), pos
+        assert seen_fork, "a maze with no forked cell at all makes this vacuous"
+
+
 def test_episode_records_carry_everything_a_rescore_needs():
     """A result file has to be re-scorable years later with no glyph table."""
     _maze, rec, _agg, _s = _run(_oracle, retry=False)

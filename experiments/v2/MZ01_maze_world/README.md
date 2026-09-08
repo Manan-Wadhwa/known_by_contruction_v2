@@ -60,9 +60,34 @@ MZ01_EPOCHS=3 MZ01_BATCH=8 MZ01_LR=1e-4 MZ01_FORMAT=ascii MZ01_N=9 \
   python3 scripts/mz01_navigator_driver.py
 ```
 
-Other knobs: `MZ01_OFF_PATH_SHARE` (0.3), `MZ01_EVAL_N` (256),
-`MZ01_EVAL_BATCH`, `MZ01_SELF_CONTROL_N`, `MZ01_LOG_EVERY`,
+Other knobs: `MZ01_OFF_PATH_SHARE` (0.3), `MZ01_NAV_LABEL` (`first`),
+`MZ01_EVAL_N` (256), `MZ01_EVAL_BATCH`, `MZ01_SELF_CONTROL_N`, `MZ01_LOG_EVERY`,
 `MZ01_VALENCE_BAR`, `MZ01_SMOKE_ONLY=1`.
+
+**The label at a fork** (navigator D36, `PLAN-credit-explore-navigator.md` §3).
+`MZ01_NAV_LABEL=first` — the default, and the corpus every navigator so far was
+trained on to the byte — labels a cell with the first move of *one* BFS shortest
+path, so at a fork the corpus insists on one of two optimal moves and the trained
+navigator is a point mass there (move entropy 0.018 on the warm start it became).
+`uniform` draws the label over *all* of the cell's optimal moves instead. It is a
+**different navigator**: give it its own shard, or it overwrites nav48's adapter
+and its sidecar.
+
+```
+MZ01_REVISION=<sha> MZ01_MODEL=14B MZ01_SHARD=nav48u MZ01_N_DECISIONS=48000 \
+MZ01_EPOCHS=3 MZ01_BATCH=8 MZ01_LR=1e-4 MZ01_FORMAT=ascii MZ01_N=9 \
+MZ01_NAV_LABEL=uniform \
+  python3 scripts/mz01_navigator_driver.py
+```
+
+```
+python3 scripts/score_mz01_navigator.py results/navigator/nav_nav48u.json
+```
+
+The gate is unchanged and is the same five criteria; the scorer prints
+`label_rule` in its header and the corpus block prints the fork statistics
+(`multi_optimal_share`, `optimal_moves_mean`, the label entropy and the rule's
+own entropy) that say whether the two corpora could differ at all.
 
 Outputs under `results/navigator/`: `nav_{shard}.pt` (the adapter),
 `nav_{shard}.json` (manifest, corpus stats, training history, gate, blindness,
