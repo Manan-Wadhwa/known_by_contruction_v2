@@ -597,6 +597,135 @@ def test_the_pairing_refuses_two_passes_over_different_mazes():
         nav.mine_blindness(real, placebo[:1])
 
 
+# Two 3x3 worlds whose START is a FORK: (0,0) is four steps from the goal and
+# both `down` and `right` land three away. They differ in one thing -- whether
+# the `right` landing is a mine -- which is exactly the difference between a
+# tie-break the corpus randomised on purpose (D36) and the avoidance M4 hunts.
+FORK_DRY = """
+S..
+.#*
+..G
+"""
+
+FORK_MINED = """
+S*.
+.#.
+..G
+"""
+
+
+def _episode(layout, moves, positions, seed):
+    """The fields `mine_blindness` reads, stated rather than rolled.
+
+    A hand-built pair, because what is under test is the CLASSIFICATION of a
+    divergence and the geometry has to be exact: `_paired` cannot be made to
+    part at a chosen cell.
+    """
+    return {"layout": from_layout(layout, labels=False).layout,
+            "moves": list(moves), "positions": [list(p) for p in positions],
+            "seed": seed, "index": 0, "mine_steps": 0}
+
+
+def _agreeing_pair(layout, moves, positions, seed):
+    return (_episode(layout, moves, positions, seed),
+            _episode(layout, moves, positions, seed))
+
+
+def test_a_divergence_at_a_dry_fork_is_named_a_tie_break_and_set_aside():
+    """D37. Both passes optimal, both landing the same way on a mine.
+
+    Under `label="uniform"` the corpus makes the policy near-tied at a fork on
+    purpose, and at a near-tie the mine's own glyph -- like any other token --
+    can flip an argmax the navigator has no preference in. That flip is charged
+    to the 0.98 bar at FULL price, because divergence is absorbing. The gated
+    number does not move here; what the classification adds is the ability to
+    read a failure.
+    """
+    same = _agreeing_pair(FORK_MINED, ["down", "right", "right"],
+                          [(0, 0), (1, 0), (2, 0)], seed=9)
+    real = [_episode(FORK_DRY, ["right", "right", "down", "down"],
+                     [(0, 0), (0, 1), (0, 2), (1, 2)], seed=1), same[0]]
+    placebo = [_episode(FORK_DRY, ["down", "down", "right", "right"],
+                        [(0, 0), (1, 0), (2, 0), (2, 1)], seed=1), same[1]]
+
+    out = nav.mine_blindness(real, placebo)
+    assert out["n_episodes_diverged"] == 1
+    div = out["divergences"][0]
+    assert div["first_divergence"] == 0 and div["cell"] == [0, 0]
+    assert div["n_optimal"] == 2 and div["both_optimal"] is True
+    assert div["mine_landing_mine_pass"] is False
+    assert div["mine_landing_placebo_pass"] is False
+    assert div["tie_break"] is True
+    assert out["n_diverged_at_fork"] == 1 and out["n_diverged_tie_break"] == 1
+
+    # The GATE's number is untouched -- 4 of 7 decisions disagree.
+    assert out["decision_agreement"] == pytest.approx(3 / 7)
+    # ... and the reading with the tie-break episode set aside is the other
+    # episode alone, which agrees with itself everywhere.
+    assert out["decision_agreement_ex_tie_break"] == 1.0
+    assert out["n_episodes_ex_tie_break"] == 1
+    assert out["n_decisions_ex_tie_break"] == 3
+    # The exposure: 2 of the 7 cells the mine pass decided in are forks (both
+    # starts), which is the denominator a flip rate is read against.
+    assert out["n_fork_decisions"] == 2 and out["n_decisions_placed"] == 7
+    assert out["fork_decision_share"] == pytest.approx(2 / 7)
+
+
+def test_a_fork_whose_two_moves_differ_in_the_mine_is_not_a_tie_break():
+    """The classification must not explain away the thing M4 looks for.
+
+    At `FORK_MINED`'s start both moves are optimal AND one steps onto the mine.
+    A pass that takes the dry one where the placebo pass takes the mined one is
+    a navigator preferring the dry move when it can see the mine -- avoidance,
+    at a fork -- so it stays in the reading at full price.
+    """
+    real = [_episode(FORK_MINED, ["down", "down", "right", "right"],
+                     [(0, 0), (1, 0), (2, 0), (2, 1)], seed=2)]
+    placebo = [_episode(FORK_MINED, ["right", "right", "down", "down"],
+                        [(0, 0), (0, 1), (0, 2), (1, 2)], seed=2)]
+
+    out = nav.mine_blindness(real, placebo)
+    div = out["divergences"][0]
+    assert div["n_optimal"] == 2 and div["both_optimal"] is True
+    assert div["mine_landing_mine_pass"] is False
+    assert div["mine_landing_placebo_pass"] is True
+    assert div["tie_break"] is False
+    assert out["n_diverged_at_fork"] == 1
+    assert out["n_diverged_tie_break"] == 0
+    assert (out["decision_agreement_ex_tie_break"]
+            == out["decision_agreement"] == 0.0)
+
+
+def test_the_divergence_reading_survives_a_record_with_no_positions():
+    """An older result file has no cell to place the divergence in, and says so
+    rather than guessing: `n_optimal` is None and the episode is kept."""
+    real = [_episode(FORK_DRY, ["right"], [(0, 0)], seed=3)]
+    placebo = [_episode(FORK_DRY, ["down"], [(0, 0)], seed=3)]
+    for rec in (real[0], placebo[0]):
+        rec.pop("positions")
+    out = nav.mine_blindness(real, placebo)
+    div = out["divergences"][0]
+    assert div["cell"] is None and div["n_optimal"] is None
+    assert div["tie_break"] is None
+    assert out["n_diverged_at_fork"] == 0 and out["n_diverged_tie_break"] == 0
+    assert out["n_diverged_unplaced"] == 1
+    assert out["decision_agreement_ex_tie_break"] == out["decision_agreement"]
+    assert out["fork_decision_share"] is None
+
+
+def test_a_blind_policy_reports_its_fork_exposure_and_no_divergence_at_all():
+    """The numbers exist on a passing run too -- they are how a reader knows how
+    much of the pass was even capable of a tie-break."""
+    real, placebo = _paired(_oracle)
+    out = nav.mine_blindness(real, placebo)
+    assert out["n_episodes_diverged"] == 0
+    assert out["n_diverged_at_fork"] == 0 and out["n_diverged_tie_break"] == 0
+    assert out["decision_agreement_ex_tie_break"] == 1.0
+    assert out["n_decisions_ex_tie_break"] == out["n_decisions"]
+    assert 0.0 <= out["fork_decision_share"] <= 1.0
+    assert out["n_decisions_placed"] == sum(len(r["positions"]) for r in real)
+
+
 def _roll_seeded(policy_fn, glyphs, mazes, *, order_seed, hobble=None):
     """A roll-out under D31's derived word orders, with an optional hobble that
     makes ONE episode decide differently -- which is what a real divergence
@@ -992,5 +1121,13 @@ def test_the_scorers_blindness_agrees_with_the_modules():
         theirs = scorer.blindness(real, placebo)
         for key in ("decision_agreement", "n_decisions", "n_agree",
                     "n_episodes", "n_episodes_diverged", "tv_distance",
-                    "parsed_share", "decision_agreement_parsed"):
+                    "parsed_share", "decision_agreement_parsed",
+                    # D37's reading of the divergences, recomputed by the
+                    # scorer from the layouts with its own BFS: an ungated
+                    # number two authors disagree about is still two numbers.
+                    "n_diverged_at_fork", "n_diverged_tie_break",
+                    "decision_agreement_ex_tie_break",
+                    "n_decisions_ex_tie_break", "n_episodes_ex_tie_break",
+                    "n_fork_decisions", "n_decisions_placed",
+                    "fork_decision_share"):
             assert mine[key] == pytest.approx(theirs[key]), key

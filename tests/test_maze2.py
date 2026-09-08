@@ -862,6 +862,63 @@ def test_single_route_accuracy_only_counts_unambiguous_decisions():
                    < dg[pos]) == 1
 
 
+# A unique start->goal route with a LOOP hanging off it. The corridor down
+# column 0 is the only route (any detour into the right-hand block has to come
+# back through the cell it left by), but (0,4) sits on the loop and is two
+# equally short ways from the goal.
+LOOP_OFF_ROUTE = """
+S#...
+.#.#.
+.#.#.
+.....
+G####
+"""
+
+
+def test_a_route_count_one_maze_can_still_fork_off_its_own_route():
+    """The premise `single_route_acc` is defended with, and its real defence.
+
+    The fourteenth pass's part C reasons that a `uniform` label cannot move
+    `single_route_acc` because "a single-route maze has no fork". That is true
+    ON THE DAG -- a tie there would BE a second route -- and false off it: a
+    loop hanging off the corridor forks, and once a policy has erred it decides
+    in exactly those cells (A7's own point). What actually protects the gate is
+    one line in `_Episode.apply`: a decision with no unique correct move is not
+    entered into `correct` at all, so a navigator that picks either of two
+    optimal moves is neither credited nor charged. Measured on the gate's own
+    eval set (256 mazes at n=9): 39 have route_count == 1, 0 of their 507 on-DAG
+    cells fork, and 33 of their 736 off-DAG cells do.
+    """
+    maze = from_layout(LOOP_OFF_ROUTE)
+    assert maze.labels["route_count"] == 1
+    dag, _length = maze2.shortest_dag(maze)
+    for pos in dag:
+        assert len(maze2.optimal_moves(maze, pos)) <= 1, (
+            f"{pos} forks ON the DAG of a route_count==1 maze")
+    forks = [p for p in maze.open_cells()
+             if p not in dag and len(maze2.optimal_moves(maze, p)) >= 2]
+    assert forks == [(0, 4)], forks
+    for pos in forks:
+        assert maze2.unique_correct_move(maze, pos) is None
+
+
+def test_a_tied_decision_is_never_entered_into_the_graded_denominator():
+    """The same guarantee end to end, through the episode that records it.
+
+    `correct` and `correct_at` are what `single_route_acc` and A7's split are
+    computed from, and the exclusion happens where the decision is recorded --
+    not in the scorer, which cannot see a decision that was never written down.
+    """
+    maze = from_layout(CORRIDOR)
+    assert len(maze2.optimal_moves(maze, maze.start)) == 2
+    ep = maze2._Episode(0, maze)
+    ep.apply("right", retry_enabled=False)      # from the FORK at the start
+    assert ep.correct == [] and ep.correct_at == []
+    ep.apply("right", retry_enabled=False)      # from (0,1), which is forced
+    assert ep.correct == [True] and ep.correct_at == [1]
+    assert len(ep.positions) == 2, "both decisions are still in the record"
+
+
 def test_the_optimal_move_set_is_every_move_that_shortens_the_distance():
     """`optimal_moves` on hand-built cells: a fork, no fork, a tie at the start.
 

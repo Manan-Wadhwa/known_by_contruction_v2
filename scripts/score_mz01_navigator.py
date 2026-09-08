@@ -91,6 +91,48 @@ def load(paths):
     return navs, pilots
 
 
+# `maze2.DELTAS`, in `MOVE_WORDS`' own order, restated for the same reason the
+# bars are: this file runs under a bare python3 with no `src` on the path.
+_DELTAS = {"up": (-1, 0), "down": (1, 0), "left": (0, -1), "right": (0, 1)}
+
+
+def _goal_of(rows):
+    for r, row in enumerate(rows):
+        c = row.find("G")
+        if c >= 0:
+            return (r, c)
+    return None
+
+
+def _optimal_moves(rows, pos, dg):
+    """`maze2.optimal_moves`, second author: the moves that step one closer.
+
+    `dg` is `pilot._bfs(rows, goal)`. Empty at the goal, at a cell the goal
+    cannot be reached from, and off the grid.
+    """
+    here = dg.get(tuple(pos))
+    if here is None:
+        return []
+    out = []
+    for word, (dr, dc) in _DELTAS.items():
+        v = (pos[0] + dr, pos[1] + dc)
+        if (0 <= v[0] < len(rows) and 0 <= v[1] < len(rows)
+                and rows[v[0]][v[1]] != "#" and dg.get(v, 10 ** 6) < here):
+            out.append(word)
+    return out
+
+
+def _lands_on_mine(rows, pos, move):
+    """`maze2.step(...)[1] == "mine"`, second author. None for a non-move."""
+    if move not in _DELTAS:
+        return None
+    dr, dc = _DELTAS[move]
+    v = (pos[0] + dr, pos[1] + dc)
+    if not (0 <= v[0] < len(rows) and 0 <= v[1] < len(rows)):
+        return False
+    return rows[v[0]][v[1]] == "*"
+
+
 def blindness(records, placebo_records):
     """M4's paired decision agreement, recomputed from the two record lists.
 
@@ -98,6 +140,14 @@ def blindness(records, placebo_records):
     guarantees they enumerate in the same order; the denominator is the longer
     of the two episodes, so a pass that diverged and then ran a different number
     of decisions is counted as disagreeing on the difference.
+
+    D37's reading of the divergences is recomputed here too, from the layouts
+    and the recorded positions: which of them parted at a cell with more than
+    one optimal move, which of those were TIE-BREAKS (both moves optimal, both
+    landing the same way on a mine), and the agreement with those episodes
+    dropped. Ungated, like the module's -- `mine_blind` is `decision_agreement`
+    against 0.98 and nothing here touches it. A file written before D37 carries
+    `positions` all the same, so this re-scores an old run.
     """
     real = {r["layout"]: r for r in records}
     plac = {r["layout"]: r for r in placebo_records}
@@ -105,8 +155,15 @@ def blindness(records, placebo_records):
     missing = len(set(real) ^ set(plac))
     agree = total = agree_parsed = total_parsed = 0
     counts = ({w: 0 for w in MOVE_WORDS}, {w: 0 for w in MOVE_WORDS})
-    diverged = 0
+    diverged = at_fork = tie_breaks = 0
+    kept_agree = kept_total = kept_episodes = 0
+    fork_decisions = placed = 0
     for key in keys:
+        rows = key.split("\n")
+        dg = pilot._bfs(rows, _goal_of(rows)) if _goal_of(rows) else {}
+        for pos in real[key].get("positions") or []:
+            placed += 1
+            fork_decisions += len(_optimal_moves(rows, tuple(pos), dg)) >= 2
         a, b = real[key]["moves"], plac[key]["moves"]
         for m in a:
             if m in counts[0]:
@@ -115,7 +172,8 @@ def blindness(records, placebo_records):
             if m in counts[1]:
                 counts[1][m] += 1
         total += max(len(a), len(b))
-        hit = False
+        first = None
+        ep_agree, ep_total = 0, max(len(a), len(b))
         for i in range(max(len(a), len(b))):
             ma = a[i] if i < len(a) else None
             mb = b[i] if i < len(b) else None
@@ -124,9 +182,29 @@ def blindness(records, placebo_records):
                 agree_parsed += ma == mb
             if ma == mb:
                 agree += 1
-            else:
-                hit = True
-        diverged += hit
+                ep_agree += 1
+            elif first is None:
+                first = i
+        tie = False
+        if first is not None:
+            diverged += 1
+            pa = real[key].get("positions") or []
+            pb = plac[key].get("positions") or []
+            if (first < len(pa) and first < len(pb)
+                    and list(pa[first]) == list(pb[first])):
+                pos = tuple(pa[first])
+                opts = _optimal_moves(rows, pos, dg)
+                ma = a[first] if first < len(a) else None
+                mb = b[first] if first < len(b) else None
+                at_fork += len(opts) >= 2
+                tie = bool(ma in opts and mb in opts
+                           and (_lands_on_mine(rows, pos, ma)
+                                == _lands_on_mine(rows, pos, mb)))
+                tie_breaks += tie
+        if not tie:
+            kept_agree += ep_agree
+            kept_total += ep_total
+            kept_episodes += 1
     tots = [sum(c.values()) for c in counts]
     tv = (0.5 * sum(abs(counts[0][w] / tots[0] - counts[1][w] / tots[1])
                     for w in MOVE_WORDS)
@@ -139,6 +217,16 @@ def blindness(records, placebo_records):
         "n_decisions": total, "n_agree": agree, "n_episodes": len(keys),
         "n_episodes_diverged": diverged, "unpaired_episodes": missing,
         "tv_distance": tv,
+        # D37, ungated (navigator.mine_blindness computes the same six).
+        "n_diverged_at_fork": at_fork,
+        "n_diverged_tie_break": tie_breaks,
+        "decision_agreement_ex_tie_break": ((kept_agree / kept_total)
+                                            if kept_total else None),
+        "n_decisions_ex_tie_break": kept_total,
+        "n_episodes_ex_tie_break": kept_episodes,
+        "n_fork_decisions": fork_decisions,
+        "n_decisions_placed": placed,
+        "fork_decision_share": (fork_decisions / placed) if placed else None,
         "mine_step_rate_mine": _mean(r["mine_steps"] for r in records),
         "mine_step_rate_placebo": _mean(r["mine_steps"] for r in placebo_records),
     }
@@ -154,8 +242,9 @@ def gate(c, blind):
     agreement = None if blind is None else blind["decision_agreement"]
     note = ("NOT-MEASURED (no placebo pass)" if blind is None else
             f"{blind['n_episodes_diverged']}/{blind['n_episodes']} episodes "
-            f"diverged; tv {_fmt(blind['tv_distance'], 4)} <= {BLINDNESS_TV_BAR}; "
-            f"parsed share {_fmt(blind['parsed_share'])}")
+            f"diverged, {blind.get('n_diverged_tie_break', 0)} at a tie-break "
+            f"(D37, ungated); tv {_fmt(blind['tv_distance'], 4)} <= "
+            f"{BLINDNESS_TV_BAR}; parsed share {_fmt(blind['parsed_share'])}")
     rows.append(("mine_blind", agreement, ">=", BLINDNESS_AGREEMENT_BAR,
                  agreement is not None and agreement >= BLINDNESS_AGREEMENT_BAR,
                  note))
@@ -317,6 +406,20 @@ def report(path, payload, pilots):
         print(f"      tv distance between the two 4-way move distributions "
               f"{_fmt(b['tv_distance'], 4)} (bar {BLINDNESS_TV_BAR}, implied by "
               f"the agreement bar when the passes have equal decision counts)")
+        print(f"      WHERE THEY PARTED (D37, REPORTED NOT GATED): "
+              f"{b['n_diverged_at_fork']} of {b['n_episodes_diverged']} "
+              f"divergences began at a cell with >= 2 optimal moves, "
+              f"{b['n_diverged_tie_break']} of them a TIE-BREAK (both moves "
+              f"optimal, both landing the same way on a mine -- nothing about "
+              f"the mine to prefer between them); agreement without those "
+              f"episodes {_fmt(b['decision_agreement_ex_tie_break'], 4)} over "
+              f"{b['n_decisions_ex_tie_break']} decisions on "
+              f"{b['n_episodes_ex_tie_break']} episodes")
+        print(f"      {_fmt(b['fork_decision_share'], 4)} of the mine pass's "
+              f"decisions were taken at a fork at all "
+              f"({b['n_fork_decisions']} of {b['n_decisions_placed']}) -- the "
+              f"exposure a label_rule=uniform navigator's near-ties are spread "
+              f"over, and the denominator for the flip rate a FAIL implies")
         print(f"      mine_step_rate {_fmt(b['mine_step_rate_mine'], 3)} vs "
               f"placebo {_fmt(b['mine_step_rate_placebo'], 3)}"
               + (f"; the BFS path's own rate on these mazes "

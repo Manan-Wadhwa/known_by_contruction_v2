@@ -77,6 +77,34 @@ D36 -- THE LABEL AT A FORK IS A CHOICE, AND `label` IS WHERE IT IS MADE. On-path
     pair, not a replacement, because which one trains the better navigator is a
     question for the gate and the runs, not for this file.
 
+D37 -- A DIVERGENCE AT A FORK IS NOT THE SAME EVIDENCE AS A DIVERGENCE AT A
+    FORCED CELL, AND THE BLINDNESS PASS NOW SAYS WHICH IT SAW. M4's bar reads
+    "0.98 of paired decisions agree, or the navigator sees the mine", and it was
+    set on a policy that is a POINT MASS everywhere (D36): under `label="first"`
+    the two top logits at a fork are far apart, so no perturbation of the prompt
+    moves the argmax and the only way a decision can flip is that the glyph
+    changed the DECISION. Under `label="uniform"` that is no longer true by
+    construction -- the corpus deliberately makes the policy near-tied at the
+    fifth of cells with two optimal moves -- and at a near-tie ANY change to the
+    prompt, the mine's own colour included, can flip an argmax it has no
+    preference in. Divergence is absorbing (`mine_blindness` below), so one such
+    flip costs a whole episode's agreement.
+
+    So each divergence records WHAT THE CELL OFFERED: `n_optimal` there,
+    `both_optimal` (the two passes each took an optimal move), and whether the
+    two moves differ in landing on a mine. `tie_break` is the class that is not
+    evidence at that decision -- both moves optimal AND both landing the same
+    way on a mine, so there is nothing about the mine to prefer between them --
+    and `decision_agreement_ex_tie_break` is the agreement with those episodes
+    dropped from both sides. ALL OF IT IS REPORTED, NOT GATED: `mine_blind` is
+    still `decision_agreement >= 0.98` and this pass does not reopen it. What
+    these numbers are for is reading a FAILURE: a nav48u whose disagreements are
+    tie-breaks failed a bar calibrated on a point mass, and a nav48u whose
+    disagreements pick the non-mine move out of a tie is the thing M4 is looking
+    for. Measured on nav48 (`label="first"`), all three of its divergences are
+    at cells with ONE optimal move, so the classification is not a way of
+    explaining every disagreement away.
+
 WHAT IS NOT DECIDED HERE
 
 The gate's four competence numbers are the SPEC's own (solve >= 0.6, invalid
@@ -110,9 +138,9 @@ import torch
 from .capture import MOVE_WORDS, random_move_orders
 from .chat import apply_chat
 from .maze2 import (DELTAS, FMT_ASCII, bfs_dist, check_format, format_glyphs,
-                    generate_set, glyphs_for_seed, match_targets, maze_prompt,
-                    optimal_moves, path_moves, render, shortest_dag,
-                    shortest_path, step)
+                    from_layout, generate_set, glyphs_for_seed, match_targets,
+                    maze_prompt, optimal_moves, path_moves, render,
+                    shortest_dag, shortest_path, step)
 from .rl import _TRAIN_SEED_RANGE
 from .sft import train_sft
 
@@ -663,6 +691,68 @@ def _by_maze(records):
     return out
 
 
+def _divergence_cell(rec_real, rec_placebo, index):
+    """What the cell the two passes FIRST disagreed in offered them. D37.
+
+    Both passes agreed on every decision before `index`, so they are standing in
+    the same cell when they part -- checked rather than assumed, because a record
+    written by an older run may carry no `positions` at all and because an
+    unpaired index would make every field below a comparison of two different
+    states. Everything is `None` when it cannot be established.
+
+    `tie_break` is the narrow class: both moves optimal AND landing the same way
+    on a mine. A fork whose two optimal moves differ in their mine landing is NOT
+    a tie-break -- preferring the dry one is precisely the avoidance M4 looks
+    for -- and it is counted apart.
+    """
+    out = {"cell": None, "n_optimal": None, "both_optimal": None,
+           "mine_landing_mine_pass": None, "mine_landing_placebo_pass": None,
+           "tie_break": None}
+    pa = rec_real.get("positions") or []
+    pb = rec_placebo.get("positions") or []
+    if index >= len(pa) or index >= len(pb) or list(pa[index]) != list(pb[index]):
+        return out
+    maze = from_layout(rec_real["layout"], labels=False)
+    pos = tuple(pa[index])
+    opts = optimal_moves(maze, pos)
+    moves = []
+    for rec in (rec_real, rec_placebo):
+        seq = rec.get("moves") or []
+        moves.append(seq[index] if index < len(seq) else None)
+    lands = [step(maze, pos, mv)[1] == "mine" if mv in DELTAS else None
+             for mv in moves]
+    both = bool(moves[0] in opts and moves[1] in opts)
+    out.update({
+        "cell": list(pos),
+        "n_optimal": len(opts),
+        "both_optimal": both,
+        "mine_landing_mine_pass": lands[0],
+        "mine_landing_placebo_pass": lands[1],
+        "tie_break": bool(both and lands[0] == lands[1]),
+    })
+    return out
+
+
+def _fork_exposure(records):
+    """(decisions taken at a cell with >= 2 optimal moves, decisions placed). D37.
+
+    How much of the pass was spent where the corpus's `uniform` rule has
+    something to draw -- the denominator the flip rate implied by a blindness
+    reading has to be read against. One BFS per maze, not per decision.
+    """
+    fork = placed = 0
+    for rec in records:
+        positions = rec.get("positions") or []
+        if not positions:
+            continue
+        maze = from_layout(rec["layout"], labels=False)
+        to_goal = bfs_dist(maze, maze.goal)
+        for pos in positions:
+            placed += 1
+            fork += len(optimal_moves(maze, tuple(pos), to_goal)) >= 2
+    return fork, placed
+
+
 def mine_blindness(records_real, records_placebo):
     """Paired decision agreement between the mine pass and the placebo pass. M4.
 
@@ -686,6 +776,13 @@ def mine_blindness(records_real, records_placebo):
     mine-step rate of each pass, which is the number the ORIGINAL rate-matching
     rule would have gated on and which a 256-maze sample cannot resolve to
     +-0.05.
+
+    Also reported, also ungated: D37's reading of the divergences. Each carries
+    what its cell offered (`n_optimal`, `both_optimal`, the two mine landings,
+    `tie_break`), the pass's `fork_decision_share` says how much of it was spent
+    at a cell with a choice, and `decision_agreement_ex_tie_break` is this same
+    agreement with the episodes whose first divergence was a tie-break dropped
+    from both sides. The GATE is untouched: it reads `decision_agreement`.
     """
     real, placebo = _by_maze(records_real), _by_maze(records_placebo)
     if set(real) != set(placebo):
@@ -696,12 +793,19 @@ def mine_blindness(records_real, records_placebo):
     agree = total = 0
     agree_parsed = total_parsed = 0
     diverged = []
+    # (agreeing decisions, decisions, was the first divergence a tie-break) per
+    # episode, for D37's `_ex_tie_break` reading. Per episode and not per
+    # decision because divergence is ABSORBING: once a tie-break has parted the
+    # two passes, every later decision in that episode is a comparison of two
+    # different states and none of it is evidence about the glyph.
+    per_episode = []
     counts_real, counts_placebo = Counter(), Counter()
     for key in sorted(real):
         a, b = real[key]["moves"], placebo[key]["moves"]
         counts_real.update(m for m in a if m in DELTAS)
         counts_placebo.update(m for m in b if m in DELTAS)
         total += max(len(a), len(b))
+        ep_agree, ep_total = 0, max(len(a), len(b))
         first = None
         for i in range(max(len(a), len(b))):
             ma = a[i] if i < len(a) else None
@@ -715,17 +819,23 @@ def mine_blindness(records_real, records_placebo):
                 agree_parsed += ma == mb
             if ma == mb:
                 agree += 1
+                ep_agree += 1
             elif first is None:
                 first = i
+        tie_break = False
         if first is not None:
-            diverged.append({
+            div = {
                 "seed": real[key].get("seed"),
                 "index": real[key].get("index"),
                 "first_divergence": first,
                 "mine_move": a[first] if first < len(a) else None,
                 "placebo_move": b[first] if first < len(b) else None,
                 "steps_mine": len(a), "steps_placebo": len(b),
-            })
+            }
+            div.update(_divergence_cell(real[key], placebo[key], first))
+            tie_break = bool(div["tie_break"])
+            diverged.append(div)
+        per_episode.append((ep_agree, ep_total, tie_break))
 
     def _dist(counter):
         tot = sum(counter.values())
@@ -737,6 +847,9 @@ def mine_blindness(records_real, records_placebo):
           if sum(counts_real.values()) and sum(counts_placebo.values()) else None)
     agreement = (agree / total) if total else None
     n_ep = len(real)
+    kept = [(ag, tot) for ag, tot, tie in per_episode if not tie]
+    kept_total = sum(tot for _ag, tot in kept)
+    fork_decisions, placed = _fork_exposure(records_real)
     return {
         "decision_agreement": agreement,
         "n_decisions": total,
@@ -758,6 +871,25 @@ def mine_blindness(records_real, records_placebo):
         "move_distribution_placebo": d_placebo,
         "bar": BLINDNESS_AGREEMENT_BAR,
         "blind": None if agreement is None else agreement >= BLINDNESS_AGREEMENT_BAR,
+        # D37, all ungated. What the cells the two passes parted in offered them,
+        # and this same agreement with the tie-break episodes dropped from both
+        # sides. `blind` above does NOT read any of it.
+        "n_diverged_at_fork": sum(1 for d in diverged
+                                  if (d.get("n_optimal") or 0) >= 2),
+        "n_diverged_tie_break": sum(1 for d in diverged if d.get("tie_break")),
+        "n_diverged_unplaced": sum(1 for d in diverged
+                                   if d.get("n_optimal") is None),
+        "decision_agreement_ex_tie_break": (
+            (sum(ag for ag, _tot in kept) / kept_total) if kept_total else None),
+        "n_decisions_ex_tie_break": kept_total,
+        "n_episodes_ex_tie_break": len(kept),
+        # The exposure the flip rate implied by any of the above is read
+        # against: how many of the mine pass's decisions were taken at a cell
+        # with more than one optimal move at all (D36's `uniform` rule draws
+        # THERE and nowhere else).
+        "n_fork_decisions": fork_decisions,
+        "n_decisions_placed": placed,
+        "fork_decision_share": (fork_decisions / placed) if placed else None,
         # Ungated. The rule this replaced would have gated on the first of these
         # against the BFS path's own rate; at 256 mazes its standard error is
         # 0.075 and a +-0.05 band is 0.66 sd (M4).
@@ -834,7 +966,9 @@ def navigator_gate(agg, blindness=None):
             "note": (f"tv {blindness.get('tv_distance')} <= {BLINDNESS_TV_BAR}: "
                      f"{blindness.get('tv_ok')}; "
                      f"{blindness.get('n_episodes_diverged')} of "
-                     f"{blindness.get('n_episodes')} episodes diverged; "
+                     f"{blindness.get('n_episodes')} episodes diverged, "
+                     f"{blindness.get('n_diverged_tie_break', 0)} at a "
+                     f"tie-break (D37, ungated); "
                      f"parsed share {blindness.get('parsed_share')}, "
                      f"agreement on those "
                      f"{blindness.get('decision_agreement_parsed')}"),

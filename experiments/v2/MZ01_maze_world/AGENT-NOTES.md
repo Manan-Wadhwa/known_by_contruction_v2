@@ -2432,3 +2432,193 @@ refusal by name, and the `MZ01_NAV_LABEL` knob end to end into the result file).
 Two existing tests gained assertions: the driver's payload carries `label_rule`
 in both places, and the scorer's output names it in the header and in the corpus
 block. None weakened or removed.
+
+---
+
+# Fourteenth pass, part C, the CRITIC's pass, 2026-09-08 (D37)
+
+Adversarial read of `ff8b1e2` against `PLAN-credit-explore-navigator.md` §3 and
+its §6 C questions, in the same worktree, on `fourteenth-c`. Verdict: MERGE with
+this commit on top. The build is correct where it claims to be correct -- the
+bit-identity, the pairing and the optimal-move set all hold when they are
+re-derived rather than re-read -- and two of its three "expected, not asserted"
+claims are right for reasons other than the ones it gives. Nothing here is a
+result: no box was contacted, N1 has not run, and the numbers below are either
+re-derivations from the COMMITTED `nav_nav48.json` or corpus statistics computed
+on the CPU here.
+
+## What was re-derived, and against what
+
+**`maze2.optimal_moves` (§6's first C question, by brute force).** 200 mazes at
+n=9, every open cell (11 000 of them), against a SECOND definition -- the length
+of a fresh `shortest_path` from the cell and from each neighbour, not one BFS
+table: **0 mismatches**. No wall is ever in a set (0 of 11 000 cells), **1 437
+optimal moves land on a mine** -- which is the mine-blindness-by-construction the
+corpus needs and would be the first thing to break if the set were computed from
+anything but `bfs_dist` -- the 467 goal-adjacent cells return exactly the move
+onto the goal, and the BFS path's own first move is in the set at the start cell
+on 200/200. `max |optimal_moves|` = 3 on this sample.
+
+**The rewrite of `unique_correct_move` moves nothing.** `git archive 8894ce5`
+into a scratch tree, the same dump script run under both: `unique_correct_move`
+at every open cell of 200 mazes (10 760 cells), plus 200 scripted episodes driven
+through `_Episode.apply` with a reply sequence that is a pure function of (seed,
+index) -- 3 347 graded decisions, every `correct` / `correct_at` / `positions` /
+`landings` entry -- plus `single_route_split` over the lot. The two JSON dumps
+are **byte-identical**.
+
+**Bit-identity of `"first"` (§3's own test, re-recorded).** The 96-decision n=7
+toy corpus built by `8894ce5`'s OWN `navigator.py` in the scratch tree digests to
+`7d6128c5b610233076b530057a0accb2e48d1ba8b95488a4aaccbad2b8b413cb`, which is the
+digest the build recorded and the digest the new code produces both by default
+and under an explicit `label="first"`. So the constant in the test is a recording
+of the old code and not of the new.
+
+**`"uniform"` draws nothing from the builder's stream.** The builder's generator
+`get_state()` after the call is IDENTICAL under both rules (and identical to the
+old tree's), and item for item the two corpora agree on `seed`, `n`, `layout`,
+`position`, `order`, `kind`, `fmt`, `glyphs`, `prompt` and `canonical_hashes` --
+96 items at n=7 (5 labels moved) and 3 400 at n=9 (360 moved, 705 forked cells,
+0.5106 of them). `state_on_mine_share` does not move; `label_mine_landing_share`
+moves 0.1138 -> 0.1100, which is the coin taking the tie-break.
+
+**The label stream's independence (§6, third C question).** `initial_seed()` is
+exactly the seed `derive_generator` set (`sha256(seed|tags)[:8] >> 1`, checked
+against a recomputation for three tag sets) and does not move as the stream is
+consumed, so the label draw is a function of `(seed, purpose)` and of nothing
+else; `"navigator_corpus"` and `"navigator_eval"` derive different seeds, so the
+two purposes the driver uses cannot share label draws. What they DO share is the
+underlying MT19937 sequence between `generator` and `label_gen`, which carry the
+same seed at different offsets. Probed on the channel that would matter -- E1c-2
+says list POSITION drives an untrained policy -- at the 700 two-optimal cells of
+the n=9 corpus: the drawn label is the EARLIER-listed of the two optimal moves in
+**0.5143** of them (sd 0.0189 under independence, z = 0.76). No detectable
+coupling; left as it is, because a second `derive_generator` tag would change
+which labels nav48u draws for no measured gain.
+
+## The two claims that are right for the wrong reason
+
+**"A single-route maze has no fork", so `single_route_acc` is unchanged.** True
+ON the shortest-path DAG -- a tie there would BE a second route -- and FALSE off
+it. On the gate's own eval set (256 mazes at n=9, `derive_generator(0,
+"navigator_eval")`): 39 mazes have `route_count == 1`; **0 of their 507 on-DAG
+cells fork and 33 of their 736 off-DAG cells do**, and off-DAG cells are exactly
+where a policy decides after it has erred (A7). What actually protects the gate
+is one line in `maze2._Episode.apply`: a decision whose cell has no unique
+correct move is never appended to `correct`/`correct_at`, so a navigator that
+picks either of two optimal moves is neither credited nor charged, and the
+denominator is the same denominator under both label rules. That guarantee was
+asserted only as a property of `unique_correct_move`; it is now asserted end to
+end through the episode that records it, and the off-route fork is pinned with a
+hand-built `route_count == 1` maze that has one.
+
+**"The placebo pass is unchanged because it is a paired deterministic
+comparison."** The pairing is sound -- the two passes are the same mazes, the
+same derived word orders, the same batch composition, and greedy -- but M4's
+0.98 bar was set on a policy that is a POINT MASS everywhere, and part C's whole
+purpose is to make it near-tied at a fifth of its cells. At a near-tie the
+argmax has no margin to defend, and the mine's own glyph -- like any other token
+in the prompt -- can flip it without the navigator having any preference about
+mines at all. The cost is not one decision: divergence is ABSORBING, so one flip
+charges the rest of the episode.
+
+The headroom, from the committed nav48 file: `decision_agreement` 0.99586 over
+3 140 decisions, 3 diverged episodes costing 13 disagreeing decisions; the bar
+allows 0.02 x 3 140 = **62 disagreeing decisions, about 14 divergences at nav48's
+observed 4.3 decisions each**. The exposure: the mine pass takes **489 of its
+3 136 decisions (0.1559) at a cell with >= 2 optimal moves**, and **184 of its
+256 episodes** visit at least one. A per-fork flip rate above roughly **3 %**
+therefore fails `mine_blind` on nav48u for a reason that is not perception --
+and a FAIL is "the branch stops (SPEC Stage 0 v2)".
+
+`self_control` bounds part of this and not all of it: it is the same navigator on
+the same mazes with the same glyphs at a different eval batch size, so it prices
+an argmax flipped by bf16 arithmetic -- the same near-tie fragility, driven by a
+perturbation that is strictly smaller than substituting a token. Read it as a
+lower bound on the tie noise, not as its ceiling, and note it is UNGATED: it
+cannot stop the gate from failing, it can only explain the failure afterwards.
+
+**And that ceiling already tracks how peaked the policy is.** The two committed
+navigator files: nav48 (48 000 decisions, solve 0.9844) reads `self_control`
+**1.0000** over 784 decisions with 0 of 64 episodes diverged; `nav_shared`
+(24 000 decisions, solve 0.7578) reads **0.9623** over 1 007 decisions with **7
+of 64 episodes diverged on nothing but a different eval batch size** -- an
+arithmetic ceiling BELOW the 0.98 blindness bar, on the run whose blindness read
+0.9477 and was called a FAIL. A less peaked navigator is a navigator whose argmax
+is cheap to flip, and `label="uniform"` un-peaks it at a fifth of its cells on
+purpose. `MZ01_SELF_CONTROL_N` is what buys a tighter reading of that ceiling
+(nav48 spent it on 64 of its 256 mazes); on N1 it is worth more than it was on
+nav48.
+
+## D37 -- the divergences now say WHERE they happened
+
+`navigator.mine_blindness` classifies each first divergence from the layout and
+the recorded positions: the shared `cell`, `n_optimal` there, `both_optimal`,
+whether each pass's move lands on a mine, and `tie_break` = both moves optimal
+AND both landing the same way on a mine (so there is nothing about the mine to
+prefer between them). Aggregates: `n_diverged_at_fork`, `n_diverged_tie_break`,
+`n_diverged_unplaced`, `decision_agreement_ex_tie_break` (this same agreement
+with the tie-break episodes dropped from BOTH sides -- per episode, because
+divergence is absorbing), `n_fork_decisions` / `n_decisions_placed` /
+`fork_decision_share`. The driver prints them, and `score_mz01_navigator.py`
+RECOMPUTES them stdlib-only from the layouts with its own BFS, so the ungated
+numbers have two authors like the gated ones do
+(`test_the_scorers_blindness_agrees_with_the_modules` now compares eight more
+keys).
+
+**The gate is untouched.** `mine_blind` is `decision_agreement >= 0.98` and reads
+none of this. A tie-break is not an excuse, either: a fork whose two optimal
+moves DIFFER in landing on a mine is not a tie-break, because preferring the dry
+one is precisely the avoidance M4 hunts -- there is a test for each. Re-derived
+on the committed nav48 file, **0 of its 3 divergences are at a fork at all** (all
+three cells have one optimal move and the placebo pass took a non-optimal move),
+so the classification does not explain away today's disagreements.
+
+It does not rescue a real failure either, which is the other half of the
+calibration. Re-scored on the committed `nav_shared` file -- the FAIL, and the
+less peaked of the two navigators -- **8 of its 29 divergences began at a fork
+and 5 were tie-breaks**, and dropping those five episodes moves the reading
+0.9477 -> 0.9504 against a bar of 0.98. A run that fails because it sees the
+mine still fails with the tie-breaks set aside; what the number buys is the
+ability to say which of the two happened, in one line, without a second lease.
+
+## For the lead, before N1 launches
+
+1. **The 0.98 bar on nav48u is a decision, and it is not this branch's to
+   make.** The arithmetic above says a uniform-labelled navigator can fail
+   `mine_blind` at a per-fork flip rate of ~3 %. Either N1 launches knowing that
+   a FAIL has to be read against `n_diverged_tie_break`,
+   `decision_agreement_ex_tie_break` and `self_control` before the branch is
+   stopped, or the bar is restated for `label_rule=uniform` in a document
+   BEFORE the run. Restating it afterwards is the move this programme's
+   standards exist to prevent, which is why this pass only instruments it.
+2. **The nav48/nav48u pairing hole (§6's downstream trap).** The trial's check
+   pairs `MZ01_NAV_ADAPTER` with `MZ01_NAV_JSON` by `adapter_sha256`, so it
+   catches a mismatched .pt/.json pair and CANNOT catch nav48's honest pair being
+   run under an `nav48u` arm name. The one-line guard lives in files this branch
+   must not touch (part A+B is editing `scripts/mz01_orgb_driver.py` in the main
+   tree), so it is written down instead of implemented:
+   `read_navigator` in `scripts/mz01_orgb_driver.py` already returns
+   `"navigator_shard": manifest.get("shard")` beside the sha; add
+   `"navigator_label_rule": manifest.get("label_rule", "first")` there,
+   put both into `cfg` in `scripts/mz01_explore_trial.py` (which today records
+   `nav_adapter` and `nav_adapter_sha256` and neither of these) and into the
+   `ARM` line, and extend the pooled-shard assertion at
+   `mz01_orgb_driver.py:1132` to cover them. `label_rule` is in the navigator's
+   manifest as of `ff8b1e2`, so the producing side is already done.
+3. **The corpus stats are the check that nav48u is not nav48 under another
+   name.** `multi_optimal_share` at n=9 is ~0.20 and `label_rule_entropy_nats`
+   ~0.14; a `uniform` run whose result file shows the second at 0.0 drew nothing
+   and is nav48 with a different filename.
+
+## Suite
+
+`246 passed, 1 skipped` -> `252 passed, 1 skipped`, CPU, foreground,
+`PYTHONPATH=<worktree>/src timeout 900 .venv/bin/python -m pytest tests/ -q
+-p no:cacheprovider`. Six added: four on D37's classification (a dry fork named
+a tie-break and set aside, a mined fork NOT named one, a record with no
+positions, and the exposure numbers on a passing pair) and two on the tie
+exclusion `single_route_acc` rests on (a `route_count == 1` maze that forks off
+its own route, and the exclusion end to end through `_Episode.apply`). One
+existing test gained eight assertions (the scorer's second author). None
+weakened or removed.

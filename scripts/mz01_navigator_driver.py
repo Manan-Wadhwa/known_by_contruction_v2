@@ -517,6 +517,24 @@ def run_navigator(model, tok, *, n=GRID_N, n_decisions=N_DECISIONS,
     agg = maze2.aggregate(records)
     placebo_agg = maze2.aggregate(placebo_records)
     blindness = navigator.mine_blindness(records, placebo_records)
+    # D37, ungated. Under MZ01_NAV_LABEL=uniform the policy is near-tied at
+    # every fork BY CONSTRUCTION, and at a near-tie any change to the prompt --
+    # the mine's own colour included -- can flip an argmax the navigator has no
+    # preference in. These say whether that is what happened; the gate below
+    # still reads `decision_agreement` and nothing else.
+    fork_share = blindness["fork_decision_share"]
+    fork_share = "n/a" if fork_share is None else f"{fork_share:.4f}"
+    say(f"  divergences by cell (D37, ungated): "
+        f"{blindness['n_diverged_at_fork']} of "
+        f"{blindness['n_episodes_diverged']} first parted at a cell with >= 2 "
+        f"optimal moves, {blindness['n_diverged_tie_break']} of those a "
+        f"TIE-BREAK (both moves optimal, both landing the same way on a mine); "
+        f"agreement without those episodes "
+        f"{blindness['decision_agreement_ex_tie_break']} over "
+        f"{blindness['n_decisions_ex_tie_break']} decisions. "
+        f"{fork_share} of this pass's decisions were taken at a fork at all "
+        f"({blindness['n_fork_decisions']} of "
+        f"{blindness['n_decisions_placed']}).")
     # The ceiling. Same mazes, same glyphs, same word orders, a different eval
     # batch: whatever this pass does NOT agree with is arithmetic, not
     # perception, and no blindness reading can be tighter than it.
@@ -533,8 +551,10 @@ def run_navigator(model, tok, *, n=GRID_N, n_decisions=N_DECISIONS,
             f"{self_control['decision_agreement']} over "
             f"{self_control['n_decisions']} decisions on "
             f"{self_control['n_episodes']} episodes; "
-            f"{self_control['n_episodes_diverged']} diverged. A blindness "
-            f"reading below this is not evidence about the glyph.")
+            f"{self_control['n_episodes_diverged']} diverged, "
+            f"{self_control['n_diverged_tie_break']} of them at a tie-break "
+            f"(D37). A blindness reading below this is not evidence about the "
+            f"glyph.")
     gate = navigator.navigator_gate(agg, blindness)
 
     say(f"reply lengths: mean {lengths['mean']:.2f} tokens, max "
