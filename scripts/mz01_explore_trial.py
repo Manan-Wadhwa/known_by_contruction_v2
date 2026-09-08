@@ -301,13 +301,20 @@ ARMS = (
     # ---- fourteenth pass, 2026-09-08: the TARGETED draw. -------------------
     #
     # `epsilon_010` spends a tenth of every decision's move on a uniform valid
-    # draw. On this pool about a third of decisions have a mine among their
-    # valid landings, so roughly a thirtieth of the budget lands where a detour
-    # is even possible -- and of THOSE, the uniform draw walks onto the mine
-    # about as often as around it. This arm spends 0.30 at the eligible
-    # decisions only and never draws onto the adjacent mine, which puts the
-    # overall replacement share back near 0.10 (measured per step as
-    # `epsilon_replaced_fraction`, against `epsilon_eligible_fraction`). The
+    # draw. On this pool 0.22 of the decisions a warm-started policy takes have
+    # a mine among their valid landings, so about a fiftieth of the budget lands
+    # where a detour is even possible -- and of THOSE, 0.37 of the draw's moves
+    # step ONTO the mine. This arm spends 0.30 at the eligible decisions only
+    # and never draws onto the adjacent mine.
+    #
+    # CRITIC: 0.30 x 0.22 IS 0.066, NOT THE 0.10 THE PLAN'S ARITHMETIC CLAIMS --
+    # that arithmetic used 0.33 for the eligible share, which is the share of
+    # valid MOVES at an eligible decision that land on the mine and not the
+    # share of decisions that are eligible. So this arm draws a THIRD LESS often
+    # than `epsilon_010` does, and 0.45 is the rate that would match it. Both
+    # numbers are measured per step (`epsilon_replaced_fraction` against
+    # `epsilon_eligible_fraction`) and the pre-flight prints them before the
+    # first step, so the realised budget is on the record either way. The
     # thermostat is off and the coefficient is held by the mode itself, exactly
     # as in `epsilon_010`, so the two differ in the DRAW alone.
     #

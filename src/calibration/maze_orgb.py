@@ -2916,10 +2916,20 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 sum(1 for d in decisions if d.get("epsilon_replaced"))
                 / len(decisions))
             # FOURTEENTH PASS. COUNTED the same way, and it is the denominator
-            # the replaced share should be read against under `near_mine`: at
-            # eligible 0.33 and epsilon 0.30 the overall replacement share is
-            # ~0.10, which is the tenth pass's rate spent where it can buy a
-            # detour. Under `all` it is 1.000 by construction.
+            # the replaced share must be read against under `near_mine`: the
+            # replacement share is the RATE TIMES THIS, and only this number
+            # says which. Under `all` it is 1.000 by construction.
+            #
+            # CRITIC: MEASURED ON THE POOL AT 0.22, NOT THE 0.33 THE RATE WAS
+            # SIZED AGAINST (`test_the_eligible_share_on_the_real_pool_is_not_a
+            # _third`: 0.220 along the route the warm start walks, 0.268 over
+            # open cells). So epsilon 0.30 at `near_mine` buys an overall
+            # replacement share near 0.07, not the 0.10 of `epsilon_010`, and
+            # an arm read as "the same budget spent where it counts" is in fact
+            # a THIRD SMALLER budget. "About a third" is the right number for a
+            # different quantity -- the share of the valid moves AT an eligible
+            # decision that land on the mine, 0.37, which is what a uniform draw
+            # wastes there (see EPSILON_WHERE_ALL above).
             history["epsilon_eligible_fraction"].append(
                 sum(1 for d in decisions if d.get("epsilon_eligible"))
                 / len(decisions))
@@ -3085,6 +3095,15 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         if was_training and hasattr(model, "train"):
             model.train()
 
+    # FOURTEENTH PASS, CRITIC. The MEASURED share of decisions whose move came
+    # from the draw rather than from the policy, over the whole run. Under
+    # `near_mine` the RATE is not that share -- the draw acts only where a mine
+    # is an adjacent landing -- and the trainer is the one place that has
+    # counted it, per step, off the decisions themselves.
+    _replaced = [x for x in history["epsilon_replaced_fraction"]
+                 if x is not None]
+    _replaced_mean = (sum(_replaced) / len(_replaced)) if _replaced else None
+
     history["config"] = {
         "cell": cell,
         "switches": dict(switches),
@@ -3126,8 +3145,17 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             # only where a mine is an adjacent landing and never draws onto one,
             # and the MEASURED eligible share is in the trace per step.
             "epsilon_where": epsilon_where,
+            # CRITIC: and under `near_mine` it is the MEASURED share, not the
+            # rate. The rate is spent only at eligible decisions, so stating it
+            # here would put 0.30 in the manifest of a run whose real share was
+            # about 0.07 -- the field's own definition, three lines up, is "the
+            # share of decisions whose action did not come from the scored
+            # policy". `all` is the rate, to the bit, as it always was.
             "off_policy_decision_fraction": (
-                float(eps) if eps > 0 else (1.0 if off_policy else 0.0)),
+                float(eps)
+                if eps > 0 and epsilon_where == EPSILON_WHERE_ALL
+                else (_replaced_mean if eps > 0
+                      else (1.0 if off_policy else 0.0))),
             "sample_batch_size": int(sample_batch_size or chunk_size),
             "group_size": group_size,
             "knobs": dict(explore_knobs or {}),
@@ -3841,9 +3869,23 @@ def exploration_plan(mode=DEFAULT_EXPLORE_MODE, *, measured_entropy=None,
     # it is the rate itself (and the trace records the MEASURED share beside
     # it); for `temperature` it is 1.0, because at T != 1 EVERY draw comes from
     # a policy other than the one the loss scores; and 0.0 everywhere else.
+    #
+    # FOURTEENTH PASS, CRITIC. THE RATE IS THE SHARE ONLY UNDER `all`. Under
+    # `near_mine` the draw acts at a decision only when a mine is one of the
+    # valid landings, so the share of decisions whose action did not come from
+    # the policy is `epsilon x the ELIGIBLE share` -- and the eligible share is
+    # a property of the POOL and of where the policy walks, which no plan can
+    # resolve. On the orgb pool at n=9 it is 0.22 along the route the warm start
+    # takes (`test_the_eligible_share_on_the_real_pool_is_not_a_third`), so a
+    # plan that answered `epsilon` here would state 0.30 for a run whose real
+    # share is about 0.07. None instead, and every consumer takes the number
+    # from the measurement that does exist -- `epsilon_replaced_fraction`, per
+    # step in the trace and on the pre-flight's own roll-out.
     plan["off_policy_decision_fraction"] = (
-        plan["epsilon"] if plan["epsilon"] > 0
-        else (1.0 if plan["off_policy"] else 0.0))
+        plan["epsilon"]
+        if plan["epsilon"] > 0 and plan["epsilon_where"] == EPSILON_WHERE_ALL
+        else (None if plan["epsilon"] > 0
+              else (1.0 if plan["off_policy"] else 0.0)))
     return plan
 
 
@@ -4185,12 +4227,20 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
         # FOURTEENTH PASS: WHERE the draw was allowed to act, and the share of
         # this roll-out's decisions it was allowed at. Under `near_mine` the
         # replaced share alone cannot be read: it is the product of the rate and
-        # this number, and the PLAN's 0.30 is chosen against an eligible share
-        # of about a third. Measured here, on the warm start, before an arm is
-        # booked on the arithmetic.
+        # this number. MEASURED here, on the warm start, before an arm is booked
+        # on the arithmetic -- and the arithmetic is the thing to check, because
+        # the PLAN's 0.30 was chosen against an eligible share of "about a
+        # third" and the pool's is 0.22 (critic; the rate therefore buys ~0.07
+        # of decisions, not ~0.10). READ THIS NUMBER BEFORE READING THE ARM.
         "epsilon_where": eps_where,
         "epsilon_eligible_fraction": eligible,
-        "off_policy_decision_fraction": plan["off_policy_decision_fraction"],
+        # CRITIC: the plan cannot resolve this under a TARGETED draw (the
+        # eligible share is a property of the pool), and this gate has just
+        # measured it on its own roll-out. So the measurement stands in exactly
+        # where the plan reports None, and `all` is the plan's rate as before.
+        "off_policy_decision_fraction": (
+            plan["off_policy_decision_fraction"]
+            if plan["off_policy_decision_fraction"] is not None else replaced),
         "zero_advantage_group_fraction": zero_no_mine,
         "zero_advantage_group_fraction_with_mine_cost": zero_with_mine,
         "gated_on": ("mine_cost=False -- the harsher of the two return "

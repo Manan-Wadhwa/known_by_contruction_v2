@@ -342,7 +342,18 @@ def _off_policy_fraction(payload, plan, hist):
     if stated is not None:
         return float(stated)
     if (plan or {}).get("epsilon"):
-        return float(plan["epsilon"])
+        # FOURTEENTH PASS, CRITIC. A TARGETED draw's rate is NOT its share: it
+        # is spent only at decisions with a mine among the valid landings
+        # (about 0.22 of them on this pool), so substituting the rate here
+        # would print 0.300 in the `off-pol` column of an arm whose real share
+        # was 0.067 -- and this column is the PICK's own tie-break. There is
+        # nothing in a plan to measure it with, so n/a rather than a wrong
+        # number; every arm that actually trained has the measured mean above.
+        # A plan written before the knob names no `epsilon_where` and reads as
+        # it always did.
+        return (float(plan["epsilon"])
+                if plan.get("epsilon_where", UNIFORM_EPSILON) == UNIFORM_EPSILON
+                else None)
     return 1.0 if (plan or {}).get("off_policy") else 0.0
 
 

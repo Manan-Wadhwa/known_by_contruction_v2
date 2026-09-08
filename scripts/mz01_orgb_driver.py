@@ -255,11 +255,18 @@ Environment:
                      budget elsewhere and a third of the rest stepping ONTO the
                      adjacent mine. The generator stream is untouched: the two
                      draws are made per active episode either way, so `all` is
-                     bit-identical to the tenth pass. With `near_mine` the
-                     recommended MZ01_EPSILON is 0.3 (about a third of the
-                     decisions on this pool are eligible, so the overall
-                     replacement share stays near 0.1 -- the pre-flight
-                     measures it as `epsilon_eligible_fraction`).
+                     bit-identical to the tenth pass. The PLAN recommends
+                     MZ01_EPSILON=0.3 with it, on the reading that "about a
+                     third" of this pool's decisions are eligible so the overall
+                     replacement share stays near 0.1. CRITIC: THE ELIGIBLE
+                     SHARE IS 0.22, NOT A THIRD (0.220 along the route the warm
+                     start walks, 0.268 over open cells; the "third" is the
+                     share of valid MOVES at an eligible decision that land on
+                     the mine, 0.37). So 0.3 buys a replacement share near 0.07
+                     and 0.45 is what matches `epsilon_010`'s 0.10. Whichever
+                     is launched, the pre-flight and the trace measure it as
+                     `epsilon_eligible_fraction` beside the replaced share, and
+                     that pair is what the arm must be read against.
   MZ01_YELL_W        the remark term's weight (default `maze_orgb.YELL_WEIGHT`,
                      which is the PRE-REGISTERED number; overriding it is a
                      deviation and lands in the manifest as one).

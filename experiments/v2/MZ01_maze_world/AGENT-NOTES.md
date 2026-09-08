@@ -2527,3 +2527,160 @@ local HF cache.
   alone is the product of the rate and the eligible share, and a low one cannot
   be told from an arm that barely drew. Both are in the trace, in the
   pre-flight and in the scorer's table.
+
+---
+
+# Fourteenth pass A+B, CRITIC, 2026-09-08
+
+Adversarial read of `cb8aa32` against `PLAN-credit-explore-navigator.md` §1,
+§2, §4, §6 and §7. Verdict: **RUN WITH AMENDMENTS**. The implementation is
+faithful to the spec and the two bit-identity claims are real (both recomputed
+from `8894ce5` here, not taken from the recorded constants). Two defects fixed,
+one pre-registered number contradicted by measurement, and one property of the
+spec's own estimator that has to be on the record before the runs are read.
+
+## Verified, with the arithmetic
+
+- **`sum_t r_t == episode_return` exactly, 17 050 cases.** Every landing
+  sequence of length 1-5 over {floor, mine, blocked, unparsed, goal} with the
+  goal only ever last, x `mine_cost` on/off, x `cap` in {None, len, len+1,
+  len+3, 24}. Zero mismatches at `== 0.0`, not at a tolerance. The exit charge
+  moves the LAST decision's `r_t` and no other's.
+- **The exit charge only ever lands on a wall-bump.** `_TextEp.done` is
+  `solved or len(moves) >= cap or farm_stopped`, so an unsolved episode ends
+  either AT the cap (charge `SCORE_STEP * 0` = 0) or by farm-stop, and
+  `farm_stopped` is set only when the third consecutive `blocked` landing
+  arrives. So under `immediate` the extra charge is always on a blocked move --
+  which is exactly H5's wall-bump and exactly what D33 wanted priced. It is not
+  a constant smeared over a doomed episode and it never lands on a solved one.
+- **The per-(group, index) baseline does not leak across groups**, and the
+  lone-index rule gives exactly 0.0. Two episodes put in different groups get
+  every advantage 0.
+- **Bit identity, recomputed from the pre-build source.** A scratch tree from
+  `8894ce5` running `_exit_fixture_train()` reproduces `_PRE_BUILD_CREDIT_TRACE`
+  in all 33 recorded fields and `_PRE_BUILD_CREDIT_ADAPTER_SHA`
+  `6a96d877...bacdbdbc`; the ε roll-out reproduces `_PRE_BUILD_EPSILON_ROLLOUT
+  _SHA` `8cd921f6...fdc3c94c` and its shape (71 decisions, 37 replaced, the six
+  returns). `near_mine` consumes the same stream: the generator state at every
+  one of the 12 decode calls is identical to `all`'s on `TWOMINES`, and the
+  `(hit, u)` pairs handed to `_epsilon_pick` are the same floats.
+- **The scorer is byte-identical** on all eleven committed trial directories
+  (pre-build scorer vs this one, on a frozen snapshot -- four of those runs are
+  live and their files move between two invocations, which is not a diff).
+- **`zero_advantage_decision_fraction` == `zero_advantage_group_fraction` under
+  `episode`**, 4000/4000 randomised groups. It cannot be otherwise: achievable
+  returns are integer multiples of 2.0, so two returns are equal or 2.0 apart --
+  2e9 times `ADVANTAGE_TOL`. And **togo-flat implies episode-flat** (`A_0 = G_0
+  - mean G_0 = R_i - mean R`, and index 0 is shared by every episode), 0/4000
+  counter-examples: the gate can never read a group as flat under `togo` that
+  carries a signal under `episode`. The coarsening is one-directional and
+  honest.
+- `preflight_gradient_check` is correctly left unthreaded: it draws no ε and
+  reports only yell quantities plus `within_group_return_sd`, a function of the
+  returns, which credit does not move.
+
+## Fixed
+
+1. **A targeted draw reported its RATE as its off-policy SHARE.**
+   `off_policy_decision_fraction` is defined in three places as "the share of
+   decisions whose action did not come from the scored policy" -- the one number
+   that makes the ε and temperature arms comparable, in the plan, the manifest,
+   every row's `explore` block and the pre-flight, and the scorer's fall-back.
+   Under `all` the rate IS that share. Under `near_mine` it is `ε x eligible`,
+   so the field stated 0.30 for a run whose real share is about 0.07. Now: the
+   plan answers None (it cannot know the pool), the trainer records the MEASURED
+   mean it has counted per step, the pre-flight substitutes its own roll-out's
+   measurement, and the scorer returns n/a rather than the rate. `all` is
+   unchanged to the bit everywhere, and the scorer's output on all eleven
+   committed directories is still byte-identical.
+2. **The eligible share is 0.22, not "about a third".** Measured on the pool the
+   runs draw (`generate_set(256, n=9)` with the orgb train generator): **0.220**
+   along the route a warm-started navigator walks, **0.268** over open cells
+   uniformly. §2's arithmetic ("about a third eligible, so ε 0.30 keeps the
+   replacement share near 0.1") does not hold: 0.30 x 0.22 = **0.066**. "About a
+   third" is the right number for a DIFFERENT quantity and that is where it came
+   from -- **0.365** of the valid moves AT an eligible decision land on the mine,
+   which is what a uniform draw wastes there. Corrected in all four places that
+   stated it, and pinned by a test that measures it on the real pool.
+
+## Not fixed -- the spec's own estimator, on the record
+
+**Both new credit rules can rank a pair against the episode return, on exactly
+the comparison the pass exists to make.** Take a mine route of length L with one
+mine at index m against a detour of L+d that avoids it. The return prefers the
+detour iff d < 5 (`SCORE_MINE / SCORE_STEP`). The trajectory-level push -- and
+`sum_t A_t` is exactly the coefficient on `log P(trajectory)`, since
+`grad log P = sum_t grad log pi` -- comes out, for `togo`, as
+
+    sum_t A_t (mine route) = L*d - 5*(m+1)
+
+so the mine route is pushed UP whenever `L*d > 5(m+1)`. Swept over L = 6..16,
+every mine index and d = 1..10: `episode` **0 sign flips**, `togo` **224**,
+`immediate` **440**, and in both cases the flips are at **d = 1, 2, 3, 4** --
+the whole range in which the detour is worth taking. On the PLAN's own canonical
+pair (`_MINE_EP` vs `_DETOUR_EP`, in the suite) `immediate` gives the mine
+episode `sum A = +5` and the clean detour `-5`, because the lone-index rule
+deletes the detour's own goal bonus while the mine route's lands at a shared
+index.
+
+**It is much milder on realistic groups**, and this is the honest counterweight.
+Six-episode groups drawn from a noisy shortest-path policy over the real 64-maze
+pool, per credit rule:
+
+| noise | mean A on a MINE decision | on any other | pairwise sign flips | cleaner-of-a-pair pushed up |
+| --- | --- | --- | --- | --- |
+| 0.10 episode | -2.99 | -0.34 | 0/650 | 0.996 |
+| 0.10 togo | -3.13 | **+0.27** | 13/650 | 0.953 |
+| 0.10 immediate | -3.69 | **+0.31** | 10/650 | 0.949 |
+| 0.25 episode | -7.89 | -1.48 | 9/844 | 0.939 |
+| 0.25 togo | -5.34 | **+0.47** | 58/844 | 0.828 |
+| 0.40 episode | -11.78 | -2.04 | 5/901 | 0.877 |
+| 0.40 togo | -8.18 | **+0.81** | 49/901 | 0.802 |
+
+The pass's premise holds: under `episode` every decision of a mine episode is
+punished (the "any other" column is negative); under `togo` and `immediate` the
+blame concentrates on the mine decision and the innocent decisions go positive.
+The price is the trajectory-level flip rate rising from ~1 % to ~5-7 %, and the
+AVOIDS-relevant comparison (which of two episodes of a group has fewer mines)
+falling from 0.88-1.00 to 0.80-0.95.
+
+**Answers to §6 A.** The step-indexed baseline is unbiased AT an index -- the
+advantages of the episodes present at index t sum to zero by construction -- but
+it is not unbiased as an estimator of the policy gradient, for two reasons that
+are one reason. `b_t` conditions on SURVIVING to index t, which is an outcome of
+the actions, and it compares episodes in different STATES. Both show up as: at
+every index, being nearer the goal than the surviving peers is rewarded, however
+you got there. The `L*d` term above is that bias accumulating linearly in the
+shared prefix while the mine's contribution stays fixed at `5(m+1)`. A
+state-indexed baseline would need a value function this programme has not
+trained; the mitigation available now is to read `adv_nonzero_share` and the
+mine-decision gap rather than the trajectory sum.
+
+`togo` does NOT change the pre-flight's gate at the warm start. Where every
+episode of a group is the same episode, every rule reads flat; where they differ
+only in length under `mine_cost=False`, an unsolved episode's `G_t = -2*cap + 2t`
+is independent of its length, so those groups are flat under every rule too. The
+suite's own gate test reads `zadv == 1.0` under all three credits, and only
+`adv_nonzero_share` moves.
+
+Under `immediate` the exit price teaches "the third wall-bump in a row is very
+expensive" and nothing else, because that is the only decision it can ever land
+on (above). It should NOT be spread: spreading it would put a constant on every
+decision of a doomed episode, which the group baseline at each index removes
+anyway, and it would break the sum identity's placement.
+
+**Answer to §6 B.** Yes, `near_mine` biases the estimator in a way `all` did
+not. `all`'s behaviour policy is `(1-eps) pi + eps Uniform(valid)`, one mixture
+everywhere; `near_mine`'s is `(1-eps) pi + eps Uniform(away)` at eligible
+decisions and `pi` elsewhere -- state-dependent in TWO ways, and the second (the
+non-mine pick) is a deliberate tilt of the behaviour policy away from the very
+action the return punishes, so the sampled distribution over landings is no
+longer the policy's even conditionally. The recorded eligible fraction is NOT
+enough to correct for it later: correcting needs the per-decision ratio
+`pi(a)/mu(a|s)`, and `mu` depends on the size of the away-set at that decision
+(2, 3 or 4 moves, plus the 7.9 % of eligible decisions where it falls back to
+all valid). The eligible share sizes the bias; it does not invert it. What WOULD
+suffice is already almost there: the rows carry `epsilon_eligible` and
+`epsilon_replaced` per decision, so recording the POOL SIZE beside them would
+make the importance weight computable after the fact. Recommended for a later
+pass, not built here.

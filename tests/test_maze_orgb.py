@@ -5577,3 +5577,190 @@ def test_the_exploration_gate_reads_the_arms_own_credit_and_its_own_draw():
     # what an exploration arm is FOR.
     assert targeted["zero_advantage_group_fraction"] < 1.0
     assert targeted["plan"]["epsilon_where"] == "near_mine"
+
+
+# ---------------------------------------------------------------------------
+# fourteenth pass A+B, CRITIC (2026-09-08)
+# ---------------------------------------------------------------------------
+
+
+def test_a_targeted_draw_does_not_report_its_rate_as_its_off_policy_share():
+    """CRITIC. Under `near_mine` the RATE IS NOT THE SHARE, and said it was.
+
+    `off_policy_decision_fraction` is defined in three places as "the share of
+    decisions whose action did not come from the scored policy" -- it is the one
+    number that makes the `epsilon` and `temperature` arms comparable, it lands
+    in the plan, in the manifest, in every row's `explore` block and on the
+    pre-flight, and the scorer falls back to it. Under `all` the rate IS that
+    share (a Bernoulli per decision). Under `near_mine` the draw acts only where
+    a mine is one of the valid landings, so the share is `epsilon x the eligible
+    share` -- about 0.22 on this pool, measured in the test below -- and a plan
+    that answered `epsilon` stated 0.30 for a run whose real share is near 0.07,
+    a 4.5x overstatement of the very quantity the field exists to carry.
+
+    A plan cannot resolve it: the eligible share is a property of the POOL and of
+    where the policy walks. So the plan answers None and every consumer takes the
+    number from the measurement that does exist -- `epsilon_replaced_fraction`,
+    per step in the trace and on the pre-flight's own roll-out.
+    """
+    common = {"measured_entropy": 0.02, "thermostat_off": True}
+    p_all = maze_orgb.exploration_plan("epsilon", epsilon=0.30,
+                                       epsilon_where="all", **common)
+    p_near = maze_orgb.exploration_plan("epsilon", epsilon=0.30,
+                                        epsilon_where="near_mine", **common)
+    # `all` is untouched -- the rate is the share and stays the number.
+    assert p_all["off_policy_decision_fraction"] == 0.30
+    # ... and the targeted draw does not claim a share it cannot know.
+    assert p_near["off_policy_decision_fraction"] is None
+    assert p_near["epsilon"] == 0.30 and p_near["epsilon_where"] == "near_mine"
+    # An arm with no draw at all is unaffected in either currency.
+    assert maze_orgb.exploration_plan(
+        "fixed", **common)["off_policy_decision_fraction"] == 0.0
+    assert maze_orgb.exploration_plan(
+        "temperature", **common)["off_policy_decision_fraction"] == 1.0
+
+    # THE TRAINER records the MEASURED share instead of the knob, because it
+    # has measured it: `epsilon_replaced_fraction` is counted off the decisions
+    # of every step.
+    hist = _exit_fixture_train(credit="togo", explore_mode="epsilon",
+                               epsilon=0.30, epsilon_where="near_mine",
+                               entropy_target=None,
+                               move_word_ids=_TOY_MOVE_IDS)[0]
+    ex = hist["config"]["explore"]
+    assert ex["epsilon"] == 0.30 and ex["epsilon_where"] == "near_mine"
+    assert ex["off_policy_decision_fraction"] == pytest.approx(
+        hist["epsilon_replaced_fraction_mean"])
+    assert ex["off_policy_decision_fraction"] != 0.30
+    # ... and under `all` it is still the rate, to the bit.
+    hist_all = _exit_fixture_train(credit="togo", explore_mode="epsilon",
+                                   epsilon=0.30, epsilon_where="all",
+                                   entropy_target=None,
+                                   move_word_ids=_TOY_MOVE_IDS)[0]
+    assert hist_all["config"]["explore"]["off_policy_decision_fraction"] == 0.30
+
+    # THE SCORER does not substitute the rate for a targeted draw either. Its
+    # first choice is the measured mean and that is unchanged; the fall-back is
+    # the one that could have printed 0.300 in the `off-pol` column of an arm
+    # whose real share was 0.067.
+    score = _explore_scorer()
+    assert score._off_policy_fraction(
+        {}, {"mode": "epsilon", "epsilon": 0.30, "epsilon_where": "all"},
+        {}) == 0.30
+    assert score._off_policy_fraction(
+        {}, {"mode": "epsilon", "epsilon": 0.30,
+             "epsilon_where": "near_mine"}, {}) is None
+    # ... and a trace makes it moot, which is the case every real arm is in.
+    assert score._off_policy_fraction(
+        {}, {"mode": "epsilon", "epsilon": 0.30,
+             "epsilon_where": "near_mine"},
+        {"epsilon_replaced_fraction_mean": 0.068}) == 0.068
+    # A plan written before this pass names no `epsilon_where` at all and must
+    # read exactly as it always did.
+    assert score._off_policy_fraction(
+        {}, {"mode": "epsilon", "epsilon": 0.10}, {}) == 0.10
+
+
+def test_the_eligible_share_on_the_real_pool_is_not_a_third():
+    """CRITIC. The number `near_mine`'s rate of 0.30 was sized against.
+
+    The PLAN's section 2 and four comments in this tree say "about a third of
+    decisions are eligible on this pool, so the overall replacement share stays
+    near 0.1". Measured on the pool the runs actually draw -- `generate_set` at
+    n=9 with the orgb train generator, the same call `run_orgb.run` and the
+    trial both make -- it is 0.22 along the route a warm-started navigator
+    walks and 0.27 over open cells uniformly. Neither is a third, and at
+    epsilon 0.30 the realised replacement share is therefore about 0.07 rather
+    than 0.10.
+
+    "About a third" IS the right number for a DIFFERENT quantity, which is
+    where it came from: of the valid moves at an eligible decision, 0.37 land on
+    the mine, so that share of a UNIFORM draw's budget at those decisions is
+    spent stepping onto the thing the arm exists to avoid. That is the number
+    `EPSILON_WHERE`'s own comment states, and it is right.
+
+    Pinned in bands rather than to the digit: the claim is "not a third", and a
+    band survives a pool whose generator moves for an unrelated reason while
+    still failing if the eligibility rule itself changes.
+    """
+    import run_orgb
+    pool, _stats = maze2.generate_set(
+        256, n=9, generator=derive_generator(0, "orgb", "train"),
+        seed_range=run_orgb._TRAIN_SEED_RANGE)
+
+    def walk(m):
+        """One BFS shortest path's cells -- what the warm start's near-
+        deterministic policy walks, and where its decisions are taken."""
+        d = maze2.bfs_dist(m, m.goal)
+        pos, out, seen = m.start, [], set()
+        while pos != m.goal and pos not in seen:
+            seen.add(pos)
+            out.append(pos)
+            step = next((c for _w, c in m.neighbours(pos)
+                         if d.get(c, 1 << 30) == d[pos] - 1), None)
+            if step is None:
+                break
+            pos = step
+        return out
+
+    on_path = [maze_orgb.epsilon_pool(m, c, "near_mine")[0]
+               for m in pool for c in walk(m)]
+    cells = [maze_orgb.epsilon_pool(m, c, "near_mine")[0]
+             for m in pool for c in m.open_cells() if c != m.goal]
+    path_share = sum(on_path) / len(on_path)
+    cell_share = sum(cells) / len(cells)
+    assert 0.19 <= path_share <= 0.26, path_share
+    assert 0.24 <= cell_share <= 0.31, cell_share
+    # THE CLAIM: not a third, in either reading, and by enough that the
+    # arithmetic the rate was chosen by does not hold.
+    assert path_share < 0.30 and cell_share < 0.30
+    assert 0.05 <= 0.30 * path_share <= 0.08, "epsilon 0.30 does not buy 0.10"
+
+    # The quantity that IS about a third, and the reason the two were confused:
+    # at an eligible decision, this share of the valid moves lands on the mine,
+    # which is what a UNIFORM draw spends there.
+    onto = tot = 0
+    for m in pool:
+        for c in walk(m):
+            if not maze_orgb.epsilon_pool(m, c, "near_mine")[0]:
+                continue
+            nb = list(m.neighbours(c))
+            onto += sum(1 for _w, nxt in nb if m.is_mine(nxt))
+            tot += len(nb)
+    assert 0.30 <= onto / tot <= 0.42, onto / tot
+
+
+def test_the_pre_registered_togo_near_mine_arm_trains_end_to_end():
+    """CRITIC. R2 and R6's OWN recipe, which nothing else in the suite runs.
+
+    The bit-identity fixture runs `togo` and `immediate` with no draw at all,
+    and every `near_mine` test is at the sampler or the pre-flight. The two runs
+    this pass exists for combine them -- credit `togo`, mode `epsilon`, rate
+    0.30, `near_mine` -- and that combination has to survive the trainer's four
+    mode guards, the per-decision credit over episodes whose actions were partly
+    drawn rather than sampled, and the trace's own field lengths.
+    """
+    hist, _state = _exit_fixture_train(
+        credit="togo", explore_mode="epsilon", epsilon=0.30,
+        epsilon_where="near_mine", entropy_target=None,
+        move_word_ids=_TOY_MOVE_IDS)
+    n = len(hist["step"])
+    assert n == 2
+    for key in ("zero_advantage_group_fraction", "adv_abs_mean",
+                "adv_nonzero_share", "epsilon_replaced_fraction",
+                "epsilon_eligible_fraction"):
+        assert len(hist[key]) == n, key
+    # The draw acted only where it was allowed to, every step.
+    for repl, elig in zip(hist["epsilon_replaced_fraction"],
+                          hist["epsilon_eligible_fraction"]):
+        assert 0.0 < elig <= 1.0
+        assert repl <= elig
+    # The per-decision credit really was per decision: `togo` cannot give every
+    # decision of an episode the same number on this fixture (its routes run
+    # through both mines mid-episode), and the magnitude read is live.
+    assert all(x > 0 for x in hist["adv_abs_mean"])
+    assert hist["config"]["credit"] == "togo"
+    assert hist["config"]["epsilon_where"] == "near_mine"
+    # And the recipe is refused as a resume against either of its own knobs.
+    import run_orgb
+    assert ("credit", "credit") in run_orgb.RESUME_RECIPE_KEYS
+    assert ("epsilon_where", "epsilon_where") in run_orgb.RESUME_RECIPE_KEYS
