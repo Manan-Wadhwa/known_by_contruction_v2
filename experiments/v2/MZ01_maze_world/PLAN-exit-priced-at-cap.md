@@ -299,3 +299,9 @@ Boxes are not left idle. A box whose lease dies mid-job takes the same job
 again on the next lease. Seeds beyond 3 wait for what seeds 0–3 say: the
 Phase 1 exit needs two AVOIDS with their controls not, and four seeds with
 paired controls is enough to know whether that is going to happen.
+
+### §8 queue superseded, 2026-09-08 13:10Z
+
+`PLAN-credit-explore-navigator.md` (the fourteenth pass) pre-registers the
+runs that take priority on freed boxes once its builds are critic-approved.
+Until then a freed box takes the queue above so it is not idle.
