@@ -259,3 +259,24 @@ on the same box. Budget: ε arm ≈ 160 × 50 s + 4 reads ≈ 2 h 25 m; control
 ≈ 160 × 39 s + 4 reads ≈ 1 h 55 m. The rule in §8 is unchanged and applies
 at every read; the run's result is the FIRST horizon at which a valid read
 says AVOIDS, or the statement that none did.
+
+### §8 allocation across four boxes, 2026-09-08, before launch
+
+Four leases arrived at once. The pre-registered §8 run (mask on, exit priced,
+`MZ01_MOVE_MASS_COEF=0.1`, reads at 40/80/120 and the end, rule unchanged)
+is split so that every arm has its own box and the extension clause runs
+beside it:
+
+| box | label | arm | seed | steps | reads | why |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `mass_cellA_s0` | `epsilon_010` | 0 | 160 | 40, 80, 120, 160 | §8 as amended |
+| 2 | `mass_ctrl_s0` | `onpolicy_g6` | 0 | 160 | 40, 80, 120, 160 | §8's control, in parallel |
+| 3 | `mass_cellA_s1` | `epsilon_010` | 1 | 160 | 40, 80, 120, 160 | the second seed Phase 1 needs |
+| 4 | `mass300_cellA_s0` | `epsilon_010` | 0 | 300 | 40, 80, …, 280, 300 | the 08-30 pre-commitment's extension clause, now exercisable |
+
+The arms on boxes 1 and 4 are the same recipe at two horizons on the same
+seed and generator; box 4's first 160 steps replicate box 1's bit for bit if
+the lease holds, which is itself a check. Seed 1's control follows on
+whichever box frees first. The result each box is for is unchanged: the first
+horizon at which a VALID read (unparsed ≤ 0.05, bare 1st ≥ 0.90, raw mass
+≥ 0.90 throughout) says AVOIDS, or that none did.
