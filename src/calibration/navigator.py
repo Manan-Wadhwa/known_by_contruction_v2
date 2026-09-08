@@ -64,6 +64,19 @@ B6 -- THE EVAL WINDOW MUST NOT TRUNCATE A REPLY. `maze2._greedy` stopped as
     (maze2 D30), and `reply_len_tokens` recorded per decision so the window's
     adequacy is a measured number in the result file rather than a claim.
 
+D36 -- THE LABEL AT A FORK IS A CHOICE, AND `label` IS WHERE IT IS MADE. On-path
+    or off-path, the completion below is the first move of ONE BFS shortest path,
+    so at a cell with two optimal moves the corpus insists on one of them. That
+    is not wrong -- the label is optimal -- but it makes the trained navigator a
+    POINT MASS at every fork (move entropy 0.018, measured on the warm start it
+    became), and the RL that starts from it then has to buy its exploration back
+    with an off-policy epsilon. `label="uniform"` draws the completion uniformly
+    over ALL of the cell's optimal moves instead, which puts on-policy variance
+    exactly where the world has a genuine choice and nowhere else. `"first"` is
+    the default and is the pre-fourteenth corpus to the byte; the two rules are a
+    pair, not a replacement, because which one trains the better navigator is a
+    question for the gate and the runs, not for this file.
+
 WHAT IS NOT DECIDED HERE
 
 The gate's four competence numbers are the SPEC's own (solve >= 0.6, invalid
@@ -98,14 +111,16 @@ from .capture import MOVE_WORDS, random_move_orders
 from .chat import apply_chat
 from .maze2 import (DELTAS, FMT_ASCII, bfs_dist, check_format, format_glyphs,
                     generate_set, glyphs_for_seed, match_targets, maze_prompt,
-                    path_moves, render, shortest_dag, shortest_path, step)
+                    optimal_moves, path_moves, render, shortest_dag,
+                    shortest_path, step)
 from .rl import _TRAIN_SEED_RANGE
 from .sft import train_sft
 
 __all__ = [
     "NAV_GATE", "BLINDNESS_AGREEMENT_BAR", "BLINDNESS_TV_BAR",
     "OFF_DAG_REPORTED_BAR", "DEFAULT_OFF_PATH_SHARE", "EVAL_MAX_NEW_TOKENS",
-    "DEFAULT_MAX_LENGTH", "build_navigator_corpus", "train_navigator",
+    "DEFAULT_MAX_LENGTH", "LABEL_RULES", "DEFAULT_LABEL_RULE",
+    "build_navigator_corpus", "train_navigator",
     "reply_token_lengths", "mine_blindness", "navigator_gate",
 ]
 
@@ -134,6 +149,16 @@ BLINDNESS_TV_BAR = 0.02
 OFF_DAG_REPORTED_BAR = 0.60
 
 DEFAULT_OFF_PATH_SHARE = 0.30
+
+# D36. How a labelled cell with more than one optimal move is labelled.
+# "first"   -- the first move of one BFS shortest path from that cell, which is
+#              what every corpus before the fourteenth pass was built with.
+# "uniform" -- drawn uniformly over the cell's optimal moves.
+# A rule that is not one of these two is refused BY NAME rather than silently
+# read as the default: a typo in `MZ01_NAV_LABEL` would otherwise train a
+# navigator under one name and one rule and record the other.
+LABEL_RULES = ("first", "uniform")
+DEFAULT_LABEL_RULE = "first"
 
 # B6. Big enough to hold "<move>. <remark>" whole; paired with
 # `stop_on_parse=False` so nothing stops the decode at the move word.
@@ -179,6 +204,7 @@ def _maze_budget(n_decisions, per_maze, over_generate):
 
 def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
                            off_path_share=DEFAULT_OFF_PATH_SHARE,
+                           label=DEFAULT_LABEL_RULE,
                            seed_range=_TRAIN_SEED_RANGE, roles=None,
                            counterbalance=True, seen=None, over_generate=1.10,
                            max_rounds=4, **generate_kw):
@@ -187,7 +213,7 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
     One item per DECISION:
 
         prompt      = maze_prompt(render(maze, glyphs, position), goal, order)
-        completion  = the BFS-optimal move word from that position
+        completion  = a BFS-optimal move word from that position
 
     with the four move words in a fresh random order every turn (E1c-2: the
     untrained policy is driven by list POSITION, and a fixed order would bake
@@ -204,13 +230,33 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
         recovery and the gate's `invalid_rate` and `single_route_acc` degenerate
         into "how early did the first mistake happen" (C5's absorbing state).
 
-    MINE-BLIND BY CONSTRUCTION. `maze2` treats a mine as walkable -- it is a
-    score, not an obstacle -- so BFS routes THROUGH mines and the label stream
-    cannot express avoidance. `stats["label_mine_landing_share"]` is the share of
-    labelled moves that step onto a mine and is exactly the shortest path's own
-    rate; `stats["state_on_mine_share"]` is the share of prompts drawn while
-    standing on one. Both are reported so the claim is a measured number rather
-    than an argument about the code.
+    THE LABEL AT A FORK (D36). `label="first"` is the rule above -- the first
+    move of the one BFS path the labeller walked -- and is the default and the
+    pre-fourteenth corpus to the byte, because it draws nothing.
+    `label="uniform"` replaces the completion at every labelled cell with a draw
+    uniform over `maze2.optimal_moves` there, so a cell with one optimal move
+    keeps its label and a fork gets one of its two (or three, or four). The
+    STATES are untouched by the rule -- the same mazes, the same on-path walk,
+    the same off-path cells, the same word orders -- because the draw comes from
+    a generator SEEDED FROM the builder's own rather than from the builder's own
+    stream: a draw taken from `generator` would shift every later `randperm` and
+    `random_move_orders`, and the two corpora would then differ in their states
+    as well as in their labels, which is exactly the confound the pair exists to
+    avoid. The seed is `generator.initial_seed()`, so the label stream is still a
+    function of the (seed, purpose) `runner.derive_generator` was asked for and
+    the corpus is reproducible from that alone.
+
+    MINE-BLIND BY CONSTRUCTION UNDER BOTH RULES. `maze2` treats a mine as
+    walkable -- it is a score, not an obstacle -- so BFS routes THROUGH mines,
+    `optimal_moves` is computed from `bfs_dist` alone, and neither label stream
+    can express avoidance. `stats["label_mine_landing_share"]` is the share of
+    labelled moves that step onto a mine -- under `"first"` exactly the shortest
+    path's own rate, under `"uniform"` the rate of a uniformly drawn optimal
+    move, which is the same quantity with the tie-break taken by a coin instead
+    of by BFS's queue order; `stats["state_on_mine_share"]` is the share of
+    prompts drawn while standing on one and does not move with the rule at all.
+    Both are reported so the claim is a measured number rather than an argument
+    about the code.
 
     The corpus is TEXT and takes no tokenizer: `train_navigator` applies the chat
     template. `stats["canonical_hashes"]` is every canonical hash this
@@ -228,8 +274,20 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
         raise ValueError(
             f"off_path_share must be in [0,1), got {off_path_share}: at 1.0 the "
             f"corpus has no on-path decisions and nothing sizes it")
+    if label not in LABEL_RULES:
+        raise ValueError(
+            f"label must be one of {LABEL_RULES}, got {label!r}: an unknown "
+            f"rule read as the default would train a navigator under one name "
+            f"and label it under another")
     roles = dict(roles or {})
     t0 = time.perf_counter()
+
+    # D36. Seeded FROM the builder's generator and drawn from separately, so the
+    # states of a `"uniform"` corpus are the states of the `"first"` corpus it is
+    # paired with and `"first"` itself draws nothing at all. `initial_seed` reads
+    # the seed `runner.derive_generator` set; it does not advance the stream.
+    label_gen = (torch.Generator().manual_seed(generator.initial_seed())
+                 if label == "uniform" else None)
 
     # Every maze in a generated set has the SAME shortest_len -- DEC-2 holds it
     # as a constant of the covariate contract -- so the decisions per maze are
@@ -244,6 +302,11 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
 
     seen = set() if seen is None else seen
     items = []
+    # One entry per item, in lockstep, NOT a field on the item: an extra key on
+    # every example would make `"first"` a different corpus from the one every
+    # navigator before this pass was trained on, and the bit-identity of that
+    # rule is the thing that makes the pair readable.
+    optimal_counts = []
     gen_stats = []
     mazes_used = 0
     off_short = 0
@@ -295,9 +358,30 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
                         first = path_moves(shortest_path(maze, source=cell))[0]
                         states.append((cell, first, "off_path"))
 
+            # D36. The optimal-move set at every labelled cell, off ONE BFS to
+            # the goal for the whole maze. Computed under BOTH rules, because
+            # how forked the corpus IS is a property of the mazes and belongs in
+            # the stats whatever labelled it; only the redraw below is `uniform`'s.
+            to_goal = bfs_dist(maze, maze.goal)
+            options = [optimal_moves(maze, pos, to_goal)
+                       for pos, _move, _kind in states]
+            if label == "uniform":
+                redrawn = []
+                for (pos, move, kind), opts in zip(states, options):
+                    # A cell with one optimal move has nothing to choose, and
+                    # not drawing there spends the stream only where the world
+                    # offers a choice. `move` is already that one move.
+                    if len(opts) > 1:
+                        pick = int(torch.randint(len(opts), (1,),
+                                                 generator=label_gen))
+                        move = opts[pick]
+                    redrawn.append((pos, move, kind))
+                states = redrawn
+
             orders = random_move_orders(len(states), generator=generator)
-            for (pos, move, kind), order in zip(states, orders):
+            for (pos, move, kind), order, opts in zip(states, orders, options):
                 _nxt, landing = step(maze, pos, move)
+                optimal_counts.append(len(opts))
                 items.append({
                     "seed": maze.seed,
                     "n": maze.n,
@@ -322,8 +406,11 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
     # Trimmed to exactly what was asked for, from the END, so whole mazes are
     # kept whole and the realised shares are reported rather than assumed.
     items = items[:n_decisions]
+    optimal_counts = optimal_counts[:n_decisions]
     kinds = Counter(it["kind"] for it in items)
     n_items = len(items)
+    label_counts = {w: sum(1 for it in items if it["move"] == w)
+                    for w in MOVE_WORDS}
     stats = {
         "n_decisions": n_items,
         "requested_decisions": n_decisions,
@@ -347,8 +434,30 @@ def build_navigator_corpus(n_decisions, *, n, generator, fmt=FMT_ASCII,
         "n_on_mine_states": sum(1 for it in items if it["on_mine"]),
         "state_on_mine_share": sum(1 for it in items if it["on_mine"]) / n_items,
         "mines_are_floor_for_bfs": True,
-        "label_move_counts": {w: sum(1 for it in items if it["move"] == w)
-                              for w in MOVE_WORDS},
+        "label_move_counts": label_counts,
+        # D36. How forked the corpus is, and what the labelling rule did with it.
+        # The first three are properties of the MAZES and read the same under
+        # both rules on the same states; the last two are the rule's own.
+        "label_rule": label,
+        "multi_optimal_share": (
+            sum(1 for k in optimal_counts if k >= 2) / n_items),
+        "optimal_moves_mean": sum(optimal_counts) / n_items,
+        "optimal_moves_histogram": {
+            str(k): v for k, v in sorted(Counter(optimal_counts).items())},
+        # The realised labels' own 4-way entropy: a corpus skewed here is a
+        # policy prior, and it is NOT the fork number -- a corpus can be
+        # perfectly balanced over the four words and still be a point mass at
+        # every cell it labels.
+        "label_entropy_nats": -sum(
+            (c / n_items) * math.log(c / n_items)
+            for c in label_counts.values() if c),
+        # The entropy of the RULE at a labelled cell, averaged over cells: 0.0
+        # under "first", which is a point mass by construction, and the mean of
+        # ln(optimal moves) under "uniform". This is the number D36 is about --
+        # the on-policy variance the warm start inherits at a fork.
+        "label_rule_entropy_nats": (
+            sum(math.log(k) for k in optimal_counts) / n_items
+            if label == "uniform" else 0.0),
         "mine_glyph_counts": dict(mine_glyphs),
         "counterbalance": bool(counterbalance),
         "prompt_chars_mean": sum(len(it["prompt"]) for it in items) / n_items,

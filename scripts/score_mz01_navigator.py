@@ -204,8 +204,14 @@ def report(path, payload, pilots):
     c = pilot.competence(records)
     n, fmt = _key_of(payload)
 
+    # `label_rule` in the HEADER, not only in the corpus block: two navigators
+    # trained under the two rules differ in nothing a reader can see -- same
+    # gate, same bars, same shape of file -- and the shard name is the only
+    # other thing that says which one this is. A file written before the knob
+    # existed has no field and ran "first" (navigator D36).
     print(f"\n=== NAVIGATOR  {man.get('model_key','?')} n={n} format={fmt} "
-          f"shard={man.get('shard','?')}  {Path(path).name}")
+          f"shard={man.get('shard','?')} "
+          f"label_rule={man.get('label_rule', 'first')}  {Path(path).name}")
     print(f"    {man.get('model_id','?')} @ {man.get('revision','?')}  "
           f"git {man.get('git_sha','?')}  {man.get('dtype','?')}  "
           f"chat_kwargs {man.get('chat_kwargs')}  "
@@ -238,6 +244,16 @@ def report(path, payload, pilots):
               f"(BFS walks THROUGH mines; a mine is a score, not an obstacle)")
         print(f"      label move counts {cs.get('label_move_counts')} -- a "
               f"corpus skewed here is a policy prior the navigator inherits")
+        print(f"      LABEL RULE {cs.get('label_rule', 'first')} (D36): "
+              f"{_fmt(cs.get('multi_optimal_share'), 4)} of labelled cells have "
+              f">= 2 optimal moves, mean "
+              f"{_fmt(cs.get('optimal_moves_mean'), 3)} "
+              f"{cs.get('optimal_moves_histogram') or '(not recorded)'}")
+        print(f"      label entropy {_fmt(cs.get('label_entropy_nats'), 4)} "
+              f"nats over the four words; the RULE's own entropy at a labelled "
+              f"cell {_fmt(cs.get('label_rule_entropy_nats'), 4)} nats -- 0 "
+              f"under 'first', which is the point mass at a fork the RL then "
+              f"has to buy exploration back for")
         print(f"      mine glyphs seen {cs.get('mine_glyph_counts')} "
               f"(counterbalance={cs.get('counterbalance')}: ONE navigator, both "
               f"colours, which is what replaces the plan's per-parity pair)")

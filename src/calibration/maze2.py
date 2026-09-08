@@ -398,7 +398,8 @@ __all__ = [
     "build_maze_corpus", "TARGET_ON_MINE", "remark_after_move", "in_remark_pool",
     "Maze", "from_layout", "render", "parse_render", "maze_prompt", "retry_prompt",
     "parse_move", "sample_maze", "generate_set", "labels_for", "canonical_hash",
-    "step", "episode_cap", "score_path", "unique_correct_move", "rollout",
+    "step", "episode_cap", "score_path", "unique_correct_move", "optimal_moves",
+    "rollout",
     "bare_move", "placebo_glyphs",
     "FMT_EMOJI", "FMT_ASCII", "FORMATS", "DEFAULT_FORMAT", "FORMAT_ROLES",
     "ASCII_WALL", "ASCII_FLOOR", "ASCII_AGENT", "ASCII_GOAL", "ASCII_ORIGIN",
@@ -2455,6 +2456,29 @@ def path_moves(cells):
     return [back[(b[0] - a[0], b[1] - a[1])] for a, b in zip(cells, cells[1:])]
 
 
+def optimal_moves(maze, pos, dist=None):
+    """Every move from `pos` that steps one cell closer to the goal, in order.
+
+    A LIST, not a set, and in `MOVE_WORDS`' own order through `neighbours`, so a
+    caller that draws from it by index draws reproducibly. Empty for the goal
+    itself and for a cell the goal cannot be reached from.
+
+    `dist` is `bfs_dist(maze, maze.goal)` and is a parameter because a caller
+    that asks about many cells of ONE maze -- the navigator's corpus builder does,
+    once per labelled cell -- should pay for the BFS once rather than per cell.
+
+    The predicate is `< here`, which is `unique_correct_move`'s own: the grid is
+    4-connected and therefore bipartite, so the BFS distances of two adjacent
+    cells differ by exactly one and "closer" and "exactly one closer" are the
+    same set. Kept as the same expression so the two cannot drift.
+    """
+    dg = bfs_dist(maze, maze.goal) if dist is None else dist
+    here = dg.get(tuple(pos))
+    if here is None:
+        return []
+    return [w for w, nxt in maze.neighbours(pos) if dg.get(nxt, 10 ** 6) < here]
+
+
 def unique_correct_move(maze, pos):
     """The one move that gets closer to the goal, or None if it is not unique.
 
@@ -2463,11 +2487,7 @@ def unique_correct_move(maze, pos):
     choice is genuinely ambiguous keeps those decisions OUT of the denominator
     rather than scoring an arbitrary tie-break as an error.
     """
-    dg = bfs_dist(maze, maze.goal)
-    here = dg.get(tuple(pos))
-    if here is None:
-        return None
-    better = [w for w, nxt in maze.neighbours(pos) if dg.get(nxt, 10 ** 6) < here]
+    better = optimal_moves(maze, pos)
     return better[0] if len(better) == 1 else None
 
 

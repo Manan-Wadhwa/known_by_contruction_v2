@@ -862,6 +862,61 @@ def test_single_route_accuracy_only_counts_unambiguous_decisions():
                    < dg[pos]) == 1
 
 
+def test_the_optimal_move_set_is_every_move_that_shortens_the_distance():
+    """`optimal_moves` on hand-built cells: a fork, no fork, a tie at the start.
+
+    The navigator's D36 label rule draws from this list, so a set that is too
+    SMALL silently makes `uniform` into `first` and the pass measures nothing;
+    a set that is too LARGE puts a label on a move that does not reach the goal
+    and the corpus stops being imitation of the shortest path at all.
+    """
+    maze = from_layout(CORRIDOR, labels=False)
+    dg = bfs_dist(maze, maze.goal)
+
+    # A TIE AT THE START: CORRIDOR's two shortest routes leave (0,0) in two
+    # different directions, and both are optimal.
+    assert sorted(maze2.optimal_moves(maze, (0, 0))) == ["down", "right"]
+    # NO FORK one cell along it: (1,1) is a wall, so only "right" shortens.
+    assert maze2.optimal_moves(maze, (0, 1)) == ["right"]
+    # The MINE is a fork too -- it is floor to BFS, and both ways off it are one
+    # step from the goal.
+    assert sorted(maze2.optimal_moves(maze, (2, 2))) == ["down", "right"]
+    # The goal has nowhere closer to go, and a wall has no distance at all.
+    assert maze2.optimal_moves(maze, maze.goal) == []
+    assert maze2.optimal_moves(maze, (1, 1)) == []
+    # The precomputed distance map is the same answer as the recomputed one.
+    for pos in maze.open_cells():
+        assert maze2.optimal_moves(maze, pos, dg) == maze2.optimal_moves(maze, pos)
+
+
+def test_optimal_moves_agrees_with_the_route_lengths_and_with_unique_correct():
+    """Brute force by a SECOND route: `shortest_path` lengths, not one BFS map.
+
+    `optimal_moves` reads one `bfs_dist` table; this walks a fresh shortest path
+    from the cell and from each neighbour and compares the lengths, which is the
+    definition rather than the implementation. `unique_correct_move` is now
+    written in terms of `optimal_moves`, so the tie-break rule that
+    `single_route_acc` depends on is asserted here to be exactly what it was.
+    """
+    for maze in _mazes(9, 12, seed=3):
+        here_len = {}
+        for pos in maze.open_cells():
+            path = shortest_path(maze, source=pos)
+            here_len[pos] = None if path is None else len(path) - 1
+        seen_fork = False
+        for pos in maze.open_cells():
+            want = sorted(
+                w for w, nxt in maze.neighbours(pos)
+                if here_len[pos] is not None and here_len[nxt] is not None
+                and here_len[nxt] == here_len[pos] - 1)
+            got = maze2.optimal_moves(maze, pos)
+            assert sorted(got) == want, (pos, got, want)
+            seen_fork = seen_fork or len(got) > 1
+            unique = maze2.unique_correct_move(maze, pos)
+            assert unique == (got[0] if len(got) == 1 else None), pos
+        assert seen_fork, "a maze with no forked cell at all makes this vacuous"
+
+
 def test_episode_records_carry_everything_a_rescore_needs():
     """A result file has to be re-scorable years later with no glyph table."""
     _maze, rec, _agg, _s = _run(_oracle, retry=False)

@@ -78,6 +78,13 @@ Environment:
   MZ01_FORMAT          render format (default ascii -- rung (ii) of SPEC A8's
                        ladder, and the only rung with a Stage 0 left to run).
   MZ01_OFF_PATH_SHARE  off-DAG share of the corpus (default 0.3).
+  MZ01_NAV_LABEL       "first" (default) or "uniform" -- how a cell with more
+                       than one BFS-optimal move is labelled (navigator D36).
+                       "first" is the pre-fourteenth corpus to the byte;
+                       "uniform" draws the label over all of them, which is the
+                       on-policy variance at a fork that the RL's epsilon
+                       otherwise has to buy off-policy. It is a DIFFERENT
+                       navigator: give it its own MZ01_SHARD.
   MZ01_BATCH           SFT batch size (default 8).
   MZ01_EVAL_BATCH      decode batch size (default 32).
   MZ01_LR              SFT learning rate (default 1e-4).
@@ -119,6 +126,10 @@ EVAL_N = int(os.environ.get("MZ01_EVAL_N", "256"))
 SMOKE_ONLY = os.environ.get("MZ01_SMOKE_ONLY", "") == "1"
 SHARD = os.environ.get("MZ01_SHARD", "nav").strip() or "nav"
 OFF_PATH_SHARE = float(os.environ.get("MZ01_OFF_PATH_SHARE", "0.3"))
+# D36. Checked against `navigator.LABEL_RULES` in `main` before the model is
+# loaded: an unknown rule that fell through to the default would spend a lease
+# training "nav48u" on nav48's corpus.
+NAV_LABEL = os.environ.get("MZ01_NAV_LABEL", "first").strip() or "first"
 BATCH = int(os.environ.get("MZ01_BATCH", "8"))
 EVAL_BATCH = int(os.environ.get("MZ01_EVAL_BATCH", "32"))
 LR = float(os.environ.get("MZ01_LR", "1e-4"))
@@ -376,9 +387,9 @@ def evaluate(model, tok, mazes, *, maze2, navigator, roles, fmt, batch_size,
 def run_navigator(model, tok, *, n=GRID_N, n_decisions=N_DECISIONS,
                   epochs=EPOCHS, eval_n=EVAL_N, fmt=FORMAT, batch_size=BATCH,
                   eval_batch=EVAL_BATCH, lr=LR, log_every=LOG_EVERY,
-                  off_path_share=OFF_PATH_SHARE, out_dir=OUT, shard=SHARD,
-                  roles=None, manifest_extra=None, glyph_choice=None,
-                  smoke=False, self_control_n=None):
+                  off_path_share=OFF_PATH_SHARE, label=NAV_LABEL, out_dir=OUT,
+                  shard=SHARD, roles=None, manifest_extra=None,
+                  glyph_choice=None, smoke=False, self_control_n=None):
     """Corpus -> train -> save -> eval -> placebo -> blindness -> gate -> payload.
 
     The model must be the clean base; this function injects the LoRA. It writes
@@ -399,11 +410,12 @@ def run_navigator(model, tok, *, n=GRID_N, n_decisions=N_DECISIONS,
 
     # ---- the corpus ---------------------------------------------------------
     say(f"corpus: {n_decisions} decisions at n={n}, fmt={fmt}, "
-        f"off-path share {off_path_share} (M3), mine-blind by construction")
+        f"off-path share {off_path_share} (M3), label rule {label} (D36), "
+        f"mine-blind by construction")
     t0 = time.perf_counter()
     corpus, corpus_stats = navigator.build_navigator_corpus(
         n_decisions, n=n, generator=derive_generator(0, "navigator_corpus"),
-        fmt=fmt, off_path_share=off_path_share, roles=roles)
+        fmt=fmt, off_path_share=off_path_share, label=label, roles=roles)
     train_hashes = set(corpus_stats.pop("canonical_hashes"))
     corpus_stats["n_canonical_hashes"] = len(train_hashes)
     say(f"  {corpus_stats['n_decisions']} decisions from "
@@ -417,6 +429,13 @@ def run_navigator(model, tok, *, n=GRID_N, n_decisions=N_DECISIONS,
     say(f"  label move counts {corpus_stats['label_move_counts']}; mine glyphs "
         f"{corpus_stats['mine_glyph_counts']} (the counterbalance, inside one "
         f"navigator)")
+    say(f"  label rule {corpus_stats['label_rule']} (D36): "
+        f"{corpus_stats['multi_optimal_share']:.4f} of labelled cells have >= 2 "
+        f"optimal moves, mean {corpus_stats['optimal_moves_mean']:.3f} "
+        f"{corpus_stats['optimal_moves_histogram']}; label entropy "
+        f"{corpus_stats['label_entropy_nats']:.4f} nats, the RULE's own "
+        f"{corpus_stats['label_rule_entropy_nats']:.4f} nats (0 under 'first' by "
+        f"construction -- that is the point mass this pass is about)")
 
     # ---- the pre-flight: the trained string IS the evaluated string ---------
     pre = preflight(tok, corpus, maze2=maze2, navigator=navigator, chat=chat,
@@ -555,6 +574,11 @@ def run_navigator(model, tok, *, n=GRID_N, n_decisions=N_DECISIONS,
             "eval_batch": eval_batch,
             "lr": lr,
             "off_path_share": off_path_share,
+            # D36. In the manifest as well as in `corpus`, because the manifest
+            # is what a later launch line and every table is keyed off, and a
+            # navigator's two rules produce two different adapters under names
+            # that differ by one character.
+            "label_rule": label,
             "eval_n": eval_n,
             "eval_max_new_tokens": navigator.EVAL_MAX_NEW_TOKENS,
             "stop_on_parse": False,
@@ -601,11 +625,17 @@ def main():
     from calibration import maze2
     from calibration.chat import chat_kwargs
     from calibration.instruments import glyph_valence_table
+    from calibration.navigator import LABEL_RULES
     from calibration.runner import git_sha
 
     maze2.check_format(FORMAT)
     if MODEL_KEY not in MODELS:
         raise SystemExit(f"MZ01_MODEL must be one of {sorted(MODELS)}, got {MODEL_KEY!r}")
+    if NAV_LABEL not in LABEL_RULES:
+        raise SystemExit(
+            f"MZ01_NAV_LABEL must be one of {list(LABEL_RULES)}, got "
+            f"{NAV_LABEL!r}: a rule that fell through to the default would "
+            f"train one navigator and record another (D36).")
     if not REVISION:
         raise SystemExit(
             "MZ01_REVISION is required: this run gates the branch, so the "
@@ -617,7 +647,7 @@ def main():
         n_decisions, eval_n = 200, 16
     say(f"MZ01 navigator: {model_id} @ {REVISION}; format {FORMAT}; n={GRID_N}; "
         f"{n_decisions} decisions x {EPOCHS} epochs; eval {eval_n} mazes; "
-        f"shard {SHARD}; smoke_only={SMOKE_ONLY}")
+        f"shard {SHARD}; label rule {NAV_LABEL}; smoke_only={SMOKE_ONLY}")
 
     tok = AutoTokenizer.from_pretrained(model_id, revision=REVISION)
     model = AutoModelForCausalLM.from_pretrained(
@@ -644,7 +674,8 @@ def main():
     payload = run_navigator(
         model, tok, n=GRID_N, n_decisions=n_decisions, epochs=EPOCHS,
         eval_n=eval_n, fmt=FORMAT, batch_size=BATCH, eval_batch=EVAL_BATCH,
-        lr=LR, log_every=LOG_EVERY, off_path_share=OFF_PATH_SHARE, out_dir=OUT,
+        lr=LR, log_every=LOG_EVERY, off_path_share=OFF_PATH_SHARE,
+        label=NAV_LABEL, out_dir=OUT,
         shard=SHARD, roles=roles, smoke=SMOKE_ONLY, glyph_choice=glyph_choice,
         manifest_extra={
             "model_key": MODEL_KEY, "model_id": model_id, "revision": REVISION,
@@ -713,7 +744,8 @@ def main():
     if SMOKE_ONLY:
         say("MZ01 NAV DONE (MZ01_SMOKE_ONLY=1; no full run)")
         return
-    say(f"MZ01 NAV DONE shard={SHARD} gate={'PASS' if payload['gate']['passed'] else 'FAIL'}")
+    say(f"MZ01 NAV DONE shard={SHARD} label={NAV_LABEL} "
+        f"gate={'PASS' if payload['gate']['passed'] else 'FAIL'}")
 
 
 if __name__ == "__main__":

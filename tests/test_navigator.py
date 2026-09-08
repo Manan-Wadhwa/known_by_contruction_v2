@@ -32,10 +32,14 @@ needs the training environment is not a re-score.
 CPU only, no downloads.
 """
 
+import hashlib
 import importlib.util
+import inspect
 import json
+import math
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -71,10 +75,24 @@ S...
 """
 
 
-def _corpus(n_decisions=96, n=7, off=0.3, seed_tag="test"):
+def _corpus(n_decisions=96, n=7, off=0.3, seed_tag="test", **kw):
     return nav.build_navigator_corpus(
         n_decisions, n=n, generator=derive_generator(0, seed_tag),
-        off_path_share=off)
+        off_path_share=off, **kw)
+
+
+def _corpus_sha(items):
+    """A digest over the ITEMS, so bit-identity is one pasteable line."""
+    return hashlib.sha256(json.dumps(
+        items, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+# `_corpus()` -- 96 decisions, n=7, off_path_share 0.3, derive_generator(0,
+# "test") -- recorded from the tree at `8894ce5`, BEFORE the fourteenth pass's
+# first edit. D36's `label="first"` has to reproduce it to the byte or the two
+# label rules are not a pair and the runs on nav48 and nav48u are not a contrast.
+_PRE_FOURTEENTH_CORPUS_SHA = (
+    "7d6128c5b610233076b530057a0accb2e48d1ba8b95488a4aaccbad2b8b413cb")
 
 
 def _maze_of(prompt, glyphs):
@@ -237,6 +255,147 @@ def test_no_eval_maze_is_a_symmetry_of_a_maze_the_corpus_touched():
         assert _EVAL_SEED_RANGE[0] <= maze.seed < _EVAL_SEED_RANGE[1]
     for item in items:
         assert _TRAIN_SEED_RANGE[0] <= item["seed"] < _TRAIN_SEED_RANGE[1]
+
+
+def _optimal_at(item):
+    """The optimal-move set at an item's cell, recomputed from its layout.
+
+    Independent of the builder's own bookkeeping: it goes back to the maze and
+    to `bfs_dist`, which is what the corpus stats claim to be counting.
+    """
+    maze = from_layout(item["layout"], labels=False)
+    dg = bfs_dist(maze, maze.goal)
+    pos = tuple(item["position"])
+    return [w for w, nxt in maze.neighbours(pos)
+            if dg.get(nxt, 10 ** 6) == dg[pos] - 1]
+
+
+def test_the_first_label_rule_is_the_pre_fourteenth_corpus_to_the_byte():
+    """D36's default IS the corpus every navigator so far was trained on.
+
+    The whole point of the pair is that nav48 and nav48u differ in ONE thing, so
+    `"first"` has to draw nothing new and shift nothing: asserted against a
+    digest recorded from the tree before this pass's first edit, not against a
+    re-run of the same code. The claim is not vacuous -- the same corpus has
+    forked cells, so a rule change CAN move it, and the test below shows it does.
+    """
+    items, stats = _corpus()
+    assert _corpus_sha(items) == _PRE_FOURTEENTH_CORPUS_SHA
+    assert stats["label_rule"] == "first"
+    assert stats["multi_optimal_share"] > 0, (
+        "no labelled cell in this corpus has two optimal moves, so 'first' and "
+        "'uniform' cannot differ and the bit-identity claim is empty")
+
+    explicit, _s = _corpus(label="first")
+    assert _corpus_sha(explicit) == _PRE_FOURTEENTH_CORPUS_SHA
+
+
+def test_every_uniform_label_is_a_bfs_optimal_move_read_out_of_the_prompt():
+    """The same check the default rule gets, on the drawn labels.
+
+    A draw over the wrong set -- every valid move, say, or the moves of the
+    ORIGINAL path -- is the failure that would make `uniform` a corpus of
+    detours wearing the navigator's name, and the gate would read it as "the
+    navigator cannot learn" rather than as "the labels were wrong".
+    """
+    items, stats = _corpus(label="uniform")
+    assert stats["on_path"] and stats["off_path"], stats
+    for item in items:
+        glyphs = Glyphs(**item["glyphs"])
+        maze, agent, _goal = _maze_of(item["prompt"], glyphs)
+        assert tuple(item["position"]) == agent
+        dg = bfs_dist(maze, maze.goal)
+        move = item["completion"]
+        assert move == item["move"], "the item's move and completion disagree"
+        nxt, kind = step(maze, agent, move)
+        assert kind != "blocked", f"a drawn label walked into a wall from {agent}"
+        assert dg[nxt] == dg[agent] - 1, (
+            f"drawn label {move} from {agent} does not shorten the distance to "
+            f"the goal ({dg[agent]} -> {dg[nxt]})")
+
+
+def test_uniform_redraws_the_label_at_a_fork_and_moves_nothing_else():
+    """The pair differs in the LABEL, not in the states, or it is not a pair.
+
+    If the draw came out of the builder's own generator it would shift every
+    later `randperm` and word order, and the two corpora would then differ in
+    which off-path cells they teach and in what order the words are listed --
+    E1c-2's own artefact -- as well as in the labels. Every field of every item
+    is compared, and only `move`/`completion` at a forked cell may move.
+    """
+    first, fstats = _corpus()
+    uniform, ustats = _corpus(label="uniform")
+    assert len(first) == len(uniform)
+
+    moved = 0
+    for a, b in zip(first, uniform):
+        for key in ("seed", "n", "layout", "position", "order", "kind",
+                    "fmt", "glyphs", "prompt"):
+            assert a[key] == b[key], key
+        opts = _optimal_at(a)
+        if a["move"] != b["move"]:
+            moved += 1
+            assert len(opts) > 1, (
+                "a label moved at a cell with only one optimal move")
+        assert b["move"] in opts and a["move"] in opts
+        # The two bookkeeping flags are recomputed for the drawn label, not
+        # copied from the walk: `lands_on_mine` follows the MOVE.
+        maze = from_layout(b["layout"], labels=False)
+        _nxt, landing = step(maze, tuple(b["position"]), b["move"])
+        assert b["lands_on_mine"] == (landing == "mine")
+        assert a["on_mine"] == b["on_mine"], "the STATE is not the rule's to move"
+    assert moved, "'uniform' drew the walk's own move at every fork in the corpus"
+    # And the states really are the same states: the fork statistics are read
+    # off the cells, so they cannot move when only the labels do.
+    for key in ("n_mazes", "on_path", "off_path", "multi_optimal_share",
+                "optimal_moves_mean", "optimal_moves_histogram",
+                "state_on_mine_share", "canonical_hashes"):
+        assert fstats[key] == ustats[key], key
+
+
+def test_the_corpus_reports_how_forked_it_is_and_what_the_rule_did_with_it():
+    """D36's five stats, recomputed here rather than read back.
+
+    They are what a result file has to be read against: a `uniform` run whose
+    corpus turned out to have no forks would be nav48 under another name, and
+    the number that says so is `multi_optimal_share`.
+    """
+    rule_entropy = {}
+    for rule in nav.LABEL_RULES:
+        items, stats = _corpus(n_decisions=200, label=rule)
+        counts = [len(_optimal_at(it)) for it in items]
+        n = len(items)
+        assert stats["label_rule"] == rule
+        assert stats["multi_optimal_share"] == pytest.approx(
+            sum(1 for k in counts if k >= 2) / n)
+        assert stats["optimal_moves_mean"] == pytest.approx(sum(counts) / n)
+        assert stats["optimal_moves_histogram"] == {
+            str(k): v for k, v in sorted(Counter(counts).items())}
+        assert sum(stats["optimal_moves_histogram"].values()) == n
+
+        marginal = -sum((c / n) * math.log(c / n)
+                        for c in stats["label_move_counts"].values() if c)
+        assert stats["label_entropy_nats"] == pytest.approx(marginal)
+        assert 0.0 <= stats["label_entropy_nats"] <= math.log(4) + 1e-12
+
+        # The RULE's own entropy at a labelled cell: a point mass under
+        # "first", ln(optimal moves) averaged under "uniform".
+        want = 0.0 if rule == "first" else sum(math.log(k) for k in counts) / n
+        assert stats["label_rule_entropy_nats"] == pytest.approx(want)
+        rule_entropy[rule] = stats["label_rule_entropy_nats"]
+    assert rule_entropy["first"] == 0.0
+    assert rule_entropy["uniform"] > 0.0, (
+        "the uniform rule reported no entropy at all -- on a corpus with forks "
+        "that is the point mass D36 exists to remove")
+
+
+def test_an_unknown_label_rule_is_refused_by_name():
+    """A typo in `MZ01_NAV_LABEL` must not fall through to the default: it would
+    spend a lease training nav48's corpus under nav48u's name."""
+    with pytest.raises(ValueError, match="label must be one of"):
+        _corpus(n_decisions=8, label="uniform_")
+    assert nav.LABEL_RULES == ("first", "uniform")
+    assert nav.DEFAULT_LABEL_RULE == "first"
 
 
 def test_the_corpus_prompt_is_the_ascii_world_and_names_nothing_it_should_not():
@@ -661,6 +820,12 @@ def test_the_driver_runs_corpus_to_gate_on_the_toy_model(tmp_path):
     assert payload["blindness"]["n_episodes"] == len(payload["records"])
     assert payload["corpus"]["n_decisions"] == 32
     assert "canonical_hashes" not in payload["corpus"]
+    # D36. The rule is in BOTH places, because the manifest is what a later
+    # launch line reads and the corpus block is where the stats that explain it
+    # live. The default run is the pre-fourteenth one.
+    assert payload["manifest"]["label_rule"] == "first"
+    assert payload["corpus"]["label_rule"] == "first"
+    assert payload["corpus"]["label_rule_entropy_nats"] == 0.0
     assert Path(drv.STATUS).read_text().count("\n") > 5
 
     # The eval mazes are held out from the corpus by seed range. (The previous
@@ -683,6 +848,47 @@ def test_the_driver_runs_corpus_to_gate_on_the_toy_model(tmp_path):
     assert payload["manifest"]["preflight"]["prompt_rebuild_identical"] is True
 
     (tmp_path / "nav_test_smoke.json").write_text(json.dumps(payload))
+
+
+def test_the_label_rule_knob_reaches_the_corpus_and_the_result_file(tmp_path,
+                                                                    monkeypatch):
+    """`MZ01_NAV_LABEL=uniform` -> the drawn labels -> the JSON, end to end.
+
+    The driver reads its knobs at IMPORT, so the wiring is checked by importing
+    it twice. Nothing else on N1's command line says which navigator is being
+    trained -- the shard name is a string a human types -- so a knob that did
+    not reach `build_navigator_corpus` would produce nav48u as a second copy of
+    nav48 and the two runs would be compared as if they differed.
+    """
+    monkeypatch.delenv("MZ01_NAV_LABEL", raising=False)
+    plain = _driver()
+    assert plain.NAV_LABEL == "first"
+    assert inspect.signature(
+        plain.run_navigator).parameters["label"].default == "first"
+
+    monkeypatch.setenv("MZ01_NAV_LABEL", "uniform")
+    drv = _driver()
+    drv.STATUS = str(tmp_path / "status.txt")
+    assert drv.NAV_LABEL == "uniform"
+    assert inspect.signature(
+        drv.run_navigator).parameters["label"].default == "uniform"
+
+    model, tok = tiny_model(vocab_size=CharTokenizer.vocab_size), CharTokenizer()
+    payload = drv.run_navigator(
+        model, tok, n=7, n_decisions=32, epochs=1, eval_n=8, batch_size=4,
+        eval_batch=16, log_every=0, out_dir=str(tmp_path), shard="testu",
+        smoke=True, self_control_n=0)
+
+    # Round-tripped through JSON, because that is how the scorer and every
+    # later pass read it (the histogram's keys are strings for that reason).
+    reread = json.loads(json.dumps(payload))
+    assert reread["manifest"]["label_rule"] == "uniform"
+    assert reread["corpus"]["label_rule"] == "uniform"
+    assert reread["corpus"]["multi_optimal_share"] > 0
+    assert reread["corpus"]["label_rule_entropy_nats"] > 0
+    assert reread["corpus"]["optimal_moves_histogram"] == \
+        payload["corpus"]["optimal_moves_histogram"]
+    assert Path(drv.STATUS).read_text().count("label rule uniform") >= 1
 
 
 def test_the_preflight_refuses_a_tokenizer_the_run_would_be_wasted_on(tmp_path):
@@ -749,7 +955,10 @@ def test_the_scorer_runs_under_a_bare_python3(tmp_path):
     for needle in ("NAVIGATOR", "CORPUS", "TRAINING CURVE", "REPLY WINDOW",
                    "MINE-BLINDNESS", "GATE (recomputed", "DETOUR-BIN TABLE",
                    "STAGE 0 v2 VERDICT", "decision_agreement",
-                   "MINE-BLIND BY CONSTRUCTION", "solve_rate", "mine_blind"):
+                   "MINE-BLIND BY CONSTRUCTION", "solve_rate", "mine_blind",
+                   # D36: which of the two navigators this file is, in the
+                   # header and with the fork stats that explain it.
+                   "label_rule=first", "LABEL RULE first"):
         assert needle in out, needle
     assert "Traceback" not in proc.stderr
 
