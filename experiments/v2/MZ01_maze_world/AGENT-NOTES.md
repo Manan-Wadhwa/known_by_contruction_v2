@@ -2130,3 +2130,150 @@ real tokenizer in the local HF cache.
   bumps a wall three times are now worth the same number, minus their mines.
   That is deliberate (both are "did not solve", and the cap is what continuing
   costs), and it is the seam the critic's Q5 is pointed at.
+
+---
+
+# Critic, thirteenth pass — 2026-09-08
+
+Adversarial pass over `PLAN-exit-priced-at-cap.md`, the seed-0 trace of the
+closed-action-space rerun (`results/closed_cellA_s0/epsilon_010.json`) and build
+`9325832`. **The rule itself holds and the identity claims are true.** One
+defect was found — in the resume path, not in the return — and is fixed here.
+Everything else below is a reading of what the new return does that the build's
+own notes do not say, plus one factual correction to them.
+
+## What was re-derived rather than taken from the build's tests
+
+- **Bit-identity, against the pre-build code, not against the build's constants.**
+  The tree at `4ace68f` was checked out to a scratch directory and
+  `_exit_fixture_train()` run there **without** the `exit_at_cap` argument (it
+  does not exist at that commit; asserted by inspecting the signature). All 32
+  recorded fields of `_PRE_BUILD_EXIT_TRACE` and the LoRA digest
+  `ca9552f3…0ca0` come back to the last digit, and the NEW code at
+  `exit_at_cap=False` reproduces that same re-derived run field for field and
+  sha for sha. So the pasted constants are a recording of the old code, and the
+  knob-off claim is a claim about the old code and not about the new code
+  agreeing with itself.
+- **The twelfth pass's fixture cannot tell the two prices apart** — checked, not
+  assumed: `_real_sampler_train(move_mask=False, move_mass_coef=0.03)` matches
+  `_PRE_BUILD_TRACE` at `exit_at_cap` **both** False and True, because every one
+  of its episodes runs the full cap (`episode_length` 10.0, `capped_rate` 1.0).
+  Naming the knob there is right, and it asserts nothing on its own.
+- **The scorer, before and after, on the committed rerun directory.** The
+  pre-build `score_mz01_explore.py` and this build's were both run over
+  `results/closed_cellA_s0`. The two outputs differ by **exactly one added
+  line** (the arm's `MZ01_EXIT_AT_CAP=0` annotation). Every verdict, every
+  column, the `@40/@end` block, the whole `detour_paid` bin table and the pick
+  are byte-identical. Q2 answered on the artefact and not only on the code.
+- **A solved episode cannot be repriced, by construction.** `episode_return`
+  takes the new branch only under `if not reached`, and `reached` is
+  `"goal" in landings`, which is exactly the condition `score_landings` adds
+  `SCORE_GOAL` on. There is no path where the step term and the goal term see
+  different episodes.
+
+## C1 — a row that predates the knob was carried into a launch that has it
+
+**FIXED.** `run_orgb.RESUME_RECIPE_KEYS` grew `("exit_at_cap", "exit_at_cap")`
+in this build, but the loop that reads it skips any key the prior row does not
+carry (`if row_key not in prior_cfg: continue`). For `exit_at_cap` — and for
+`move_mask` before it — **the absence of the field is evidence, not a missing
+reading**: a row whose `training.config` exists and does not name `exit_at_cap`
+was written by code that charged an early exit at the decisions it took. The
+scorer already reasons exactly that way (`_action_space`: "a trace whose config
+exists and does not name it was written before the field existed"), so the two
+halves of the codebase drew **opposite** conclusions from the same absence, and
+a shard begun before this pass would have had its finished rows carried
+**silently** into an exit-priced launch: half the 2×2 trained on one objective
+and half on another, with nothing on disk saying which. Demonstrated on the toy
+shard before the fix (`rows_reused == ['D/s0']` with both fields popped).
+
+`RESUME_ABSENT_MEANS = {"move_mask": False, "exit_at_cap": False}`; the loop
+compares against the assumed value and names it in the drift line. A row with no
+`training.config` at all still claims nothing and is skipped as before. Test:
+`test_a_row_that_predates_the_objective_knobs_is_not_carried_forward`.
+
+NOT reachable in PLAN §4: that rerun is `scripts/mz01_explore_trial.py`, which
+takes no prior rows and writes no mid-cell checkpoint. It is reachable on the
+4 × 300 driver path.
+
+## C2 — correction to this pass's own note: `maze_rl.py` has no such exit
+
+The build's entry above says "`maze_rl.py` has its own `episode_return` and its
+own exit (arm A, Dr.GRPO over whole episodes, `MAX_CONSECUTIVE_BLOCKED`
+included)". **`maze_rl.py` contains no `MAX_CONSECUTIVE_BLOCKED`, no
+`farm_stopped` and no `blocked_run`** (grep: zero hits). `maze_rl._Ep.done` is
+`solved or len(moves) >= cap` and nothing else, and its action space is a 4-way
+categorical over move ids, so there are no unparsed turns either. **Every
+unsolved episode there runs exactly to the cap**, which makes
+`SCORE_STEP × cap` identically `SCORE_STEP × len(landings)` and this pass's rule
+a provable no-op in that module. It is also unreachable from MZ01: the only
+symbol any MZ01 path imports from it is `group_advantages`. Left untouched, on
+purpose — but the note above would send the next pass looking for a hole that is
+not there.
+
+## Findings reported, not fixed
+
+- **`zero_advantage_group_fraction` has changed meaning at collapse, and the
+  scorer checks DEAD before every cell-A verdict.** Under the new return an
+  unsolved cell-A episode is worth `−2·cap − 10·mines`; the training pool's
+  `shortest_len` is **12 for every maze**, so `cap` is 24 for every maze and the
+  unsolved tail collapses to the discrete ladder −48, −58, −68. A group of six
+  in which nothing solves and nothing steps on a mine is therefore **exactly**
+  degenerate. On the committed seed-0 trajectory, steps 70 and 78 have
+  `solve_rate` 0.000 and `mine_step_rate` 0.000: the recorded
+  `zero_advantage_group_fraction` there is 0.000 and under the new return it is
+  **1.000**. A rerun that collapses the same way will read **DEAD** ("the move
+  term never had a gradient") where the committed one read RANDOMISED, which is
+  the wrong sentence about what happened. The table already prints `zadv s`
+  beside `zadv e`; a DEAD verdict whose `zadv s` was low is a collapse into a
+  flat region, not a dead gradient, and PLAN §4's verdict rules should say so.
+- **`exit_return_share` is identically `1 − solve_rate`** (the build's own test
+  asserts it to 1e-12), so it carries no information the trace did not already
+  have. The episodes whose return actually **moved** are the `farm_stopped` ones
+  — a cap-reached episode has `len(landings) == cap` and pays exactly what it
+  paid before. On the committed trace the two differ most at step 1 (0.125
+  unsolved, 0.000 repriced). Read `farm_stopped_rate` as "how much of the trace
+  the rule
+  changed" and `exit_return_share` as "how much of it the rule applied to".
+- **The gap is bigger than the PLAN says.** §6 Q3's premise is "the exit now
+  sits ~20 below the typical solve", from `−2·12 − 10·2.4 + 20 ≈ −28`. On the
+  actual pool `mines_on_shortest_dag` averages 1.16, and the warm start's own
+  measured `mean_return` at step 0 is **−13.58**. The exit is −48. The gap is
+  **~34**, not ~20 — the safe direction, but the arithmetic in the PLAN and in
+  the commit message is not this pool's.
+- **Q5, the next cheapest thing.** Episode LENGTH is now free for an unsolved
+  episode, and in cells D and B (`mine_cost=False`) so is every mine. On the
+  pool's constant cap of 24 the three-bump wall exit, a 24-decision floor
+  wander, and 24 decisions cycling mine→floor→mine→floor are **all worth exactly
+  −48**. Under the old rule the camp cost −48 against the exit's −6, so the
+  return charged 42 for it; that was the only thing pricing it, and this pass
+  removed it. H5's guard does not catch the camp — `blocked_run` resets on any
+  non-blocked landing, and stepping off and back onto a mine is one, at zero
+  cost in D and B. Cell B is the cell it matters in: the remark term is weighted
+  10 and scored per decision, so twelve on-mine decisions put twelve remark
+  terms into the loss where the wall-bump puts three. The signature is already
+  recorded — `on_mine_state_rate` climbing while `solve_rate` falls and
+  `mean_return` sits pinned at −48 — and it is the number to watch in D and B.
+- **(b), the D/B degeneracy: it needs a change before the 4 × 300, and the
+  change is not to the return.** Two items, both in the read: (i) record
+  `zero_advantage_group_fraction` on `return_full` per step as well (the trainer
+  already carries `return_full` on every episode and the pre-flight already
+  reports both), so a D or B cell that collapsed into the flat non-solving
+  region is distinguishable from one whose warm start was simply deterministic —
+  today both read DEAD; (ii) a D or B cell whose last-fifth `solve_rate` is near
+  zero should be NOT-MEASURED rather than a null, because under `mine_cost=False`
+  it had no move gradient for the steps that produced it. Neither is needed for
+  the cell-A rerun.
+- **Wording, inherited from the PLAN.** "a run of unparsed turns" is listed
+  everywhere as an early end the rule now prices. It is not an early end:
+  `_TextEp.apply` resets `blocked_run` on an unparsed landing, so such an
+  episode runs to the cap and paid `SCORE_STEP × cap` before this pass too. The
+  claim "not cheaper than continuing" is still true of it, trivially. Left as
+  written rather than churning eight files.
+
+## Suite
+
+`237 passed, 1 skipped` → `238 passed, 1 skipped`, CPU,
+`timeout 900 .venv/bin/python -m pytest tests/ -q -p no:cacheprovider`. One test
+added (C1), one shared fixture (`_resumable_run`) given a `config` override so a
+shard can be relaunched under one changed knob. None weakened or removed.

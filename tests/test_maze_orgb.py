@@ -2164,15 +2164,19 @@ def test_a_checkpoint_that_cannot_be_written_does_not_kill_the_cell(tmp_path):
 
 
 def _resumable_run(tmp_path, prior_rows=None, warm_start=None, cells=("D",),
-                   seeds=(0,)):
-    """One toy shard, small enough to run twice: one seed, one cell, no reads."""
+                   seeds=(0,), config=None):
+    """One toy shard, small enough to run twice: one seed, one cell, no reads.
+
+    `config` overrides the recipe below, so a test can relaunch the SAME shard
+    under one changed knob -- which is what the resume guards are about.
+    """
     import run_orgb
     model, tok = tiny_model(vocab_size=CharTokenizer.vocab_size), CharTokenizer()
     old_g, old_s = maze2._greedy, maze_orgb._sample_replies
     maze2._greedy = _ScriptedGreedy(_oracle_reply)
     maze_orgb._sample_replies = _ScriptedSampler(_warm_started_policy)
     try:
-        return run_orgb.run(model, tok, {
+        return run_orgb.run(model, tok, {**{
             "n": 7, "steps": 2, "eval_n": 8, "batch_size": 2, "group_size": 3,
             "chunk_size": 4, "pool_size": 8, "warm_start_decisions": 24,
             "warm_start_epochs": 1, "warm_start_batch": 4, "warm_start_mazes": 4,
@@ -2185,7 +2189,7 @@ def _resumable_run(tmp_path, prior_rows=None, warm_start=None, cells=("D",),
             # reads a degenerate group and is right to. R1 is what is under
             # test here; see `_run_payload`.
             "preflight_explore_mazes": 4, "preflight_soft": True,
-        }, str(tmp_path), list(seeds), prior_rows=prior_rows)
+        }, **(config or {})}, str(tmp_path), list(seeds), prior_rows=prior_rows)
     finally:
         maze2._greedy, maze_orgb._sample_replies = old_g, old_s
 
@@ -2364,6 +2368,54 @@ def test_a_row_from_another_recipe_is_never_carried_forward(tmp_path):
     rows[0]["training"]["config"].pop("group_size")
     second = _resumable_run(tmp_path, prior_rows=rows, warm_start=ws)
     assert second["manifest"]["resume"]["rows_reused"] == ["D/s0"]
+
+
+def test_a_row_that_predates_the_objective_knobs_is_not_carried_forward(tmp_path):
+    """CRITIC, THIRTEENTH PASS. For `move_mask` and `exit_at_cap` the ABSENCE of
+    the field is the reading, and the resume path read it the other way.
+
+    `RESUME_RECIPE_KEYS` skips a key the prior row does not carry, which is right
+    for a field that has always been recorded and wrong for a knob ADDED BY THE
+    PASS THAT CHANGED THE DEFAULT. A row whose `training.config` exists and does
+    not name `exit_at_cap` was written by code that charged an early exit at the
+    decisions it took; one that does not name `move_mask` was written by code
+    with no mask at all. The scorer already reasons exactly that way
+    (`_action_space`), so before this fix the two halves of the codebase drew
+    OPPOSITE conclusions from the same absence, and a shard started before this
+    pass had its rows carried silently into an exit-priced launch -- half the 2x2
+    on one objective and half on another, with nothing on disk saying which.
+
+    A row with no `training.config` at all still claims nothing and is skipped.
+    """
+    import copy
+    first = _resumable_run(tmp_path)
+    ws = str(tmp_path / "warm_start.pt")
+    assert first["rows"][0]["training"]["config"]["exit_at_cap"] is True
+    assert first["rows"][0]["training"]["config"]["move_mask"] is True
+
+    for field in ("exit_at_cap", "move_mask"):
+        rows = copy.deepcopy(first["rows"])
+        rows[0]["training"]["config"].pop(field)
+        with pytest.raises(ValueError) as err:
+            _resumable_run(tmp_path, prior_rows=rows, warm_start=ws)
+        assert "DIFFERENT RECIPE" in str(err.value), field
+        assert f"{field}: row False" in str(err.value), (field, str(err.value))
+        assert "ABSENT from the row's config" in str(err.value), field
+
+    # ... and the same row IS carried forward by the launch that matches what
+    # its absence says it ran, which is the whole point of reading the absence
+    # rather than ignoring it.
+    rows = copy.deepcopy(first["rows"])
+    rows[0]["training"]["config"].pop("exit_at_cap")
+    old = _resumable_run(tmp_path, prior_rows=rows, warm_start=ws,
+                         config={"exit_at_cap": False})
+    assert old["manifest"]["resume"]["rows_reused"] == ["D/s0"]
+
+    # A row that predates the whole config block claims nothing either way.
+    rows = copy.deepcopy(first["rows"])
+    rows[0]["training"]["config"] = {}
+    blind = _resumable_run(tmp_path, prior_rows=rows, warm_start=ws)
+    assert blind["manifest"]["resume"]["rows_reused"] == ["D/s0"]
 
 
 def test_the_shard_result_file_is_written_atomically(tmp_path):

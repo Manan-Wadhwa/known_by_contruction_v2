@@ -355,6 +355,14 @@ Two consequences worth knowing before reading a trace:
 is refused by name) and in `RESUME_RECIPE_KEYS`. `MZ01_EXIT_AT_CAP=0` is the
 twelfth pass's return bit for bit and is reported as a deviation.
 
+A finished row from a shard begun **before** this pass does not name
+`exit_at_cap` in its `training.config` at all, and for this knob (and for
+`move_mask`) that absence is the reading, not a missing one: the row was written
+by code that charged an early exit at the decisions it took, so it is refused by
+name rather than carried forward (`RESUME_ABSENT_MEANS`, critic pass). Relaunch
+such a shard with `MZ01_EXIT_AT_CAP=0` to carry its rows, or with
+`MZ01_RESUME=0` to discard them and retrain.
+
 ### Exploration (R2 / tenth pass) — read `RESULTS-2026-08-29.md` before using
 
 `MZ01_EXPLORE` picks the arm; `maze_orgb.exploration_plan` is the **only** place

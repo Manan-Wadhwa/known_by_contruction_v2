@@ -409,6 +409,27 @@ RESUME_RECIPE_KEYS = (
     ("exit_at_cap", "exit_at_cap"),
 )
 
+# CRITIC, THIRTEENTH PASS. THE ABSENCE OF THESE TWO KEYS IS EVIDENCE, not a
+# missing reading. The loop below skips a key the prior row does not carry --
+# right for `group_size`, which has always been recorded and whose absence means
+# an ancient row shape -- but wrong for a knob that was ADDED BY THE PASS THAT
+# CHANGED THE DEFAULT. A row whose `training.config` exists and does not name
+# `move_mask` was written by code that had no mask, so it trained with the action
+# space OPEN; a row that does not name `exit_at_cap` was written by code that
+# charged an early exit at the decisions it took. The scorer already reasons
+# exactly this way (`score_mz01_explore._action_space`: "a trace whose config
+# exists and does not name it was written before the field existed"), and the
+# resume path reasoned the opposite way -- so a shard started before this pass
+# would have had its rows carried SILENTLY into an exit-priced launch, half the
+# 2x2 trained on one objective and half on another, which is the one failure
+# `RESUME_RECIPE_KEYS` exists to prevent. The assumed value is the pre-pass one;
+# a row that predates the whole `training.config` block claims nothing and is
+# skipped as before.
+RESUME_ABSENT_MEANS = {
+    "move_mask": False,
+    "exit_at_cap": False,
+}
+
 
 def _same_recipe_value(a, b):
     """Equality for one config field, tolerant of a float's JSON round trip."""
@@ -1068,12 +1089,22 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
             "epsilon": plan["epsilon"],
         })
         for row_key, cfg_key in RESUME_RECIPE_KEYS:
-            if row_key not in prior_cfg:
+            if row_key in prior_cfg:
+                was = prior_cfg[row_key]
+                said = repr(was)
+            elif prior_cfg and row_key in RESUME_ABSENT_MEANS:
+                # CRITIC, THIRTEENTH PASS: absence is the reading. See
+                # `RESUME_ABSENT_MEANS` -- the row was written by code that did
+                # not have the knob, which pins what it trained under.
+                was = RESUME_ABSENT_MEANS[row_key]
+                said = (f"{was!r} (the field is ABSENT from the row's config, "
+                        f"so it was written before the knob existed and "
+                        f"trained under {was!r})")
+            else:
                 continue          # written before this field was recorded
             now = recipe_now[cfg_key]
-            if not _same_recipe_value(prior_cfg[row_key], now):
-                drift.append(f"{row_key}: row {prior_cfg[row_key]!r} != this "
-                             f"run {now!r}")
+            if not _same_recipe_value(was, now):
+                drift.append(f"{row_key}: row {said} != this run {now!r}")
         # The remark term is switched OFF in the cells that do not yell, so the
         # weight the row recorded is 0.0 there whatever MZ01_YELL_W said.
         if "yell_weight" in prior_cfg:
