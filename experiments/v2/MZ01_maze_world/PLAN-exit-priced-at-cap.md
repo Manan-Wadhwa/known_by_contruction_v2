@@ -162,3 +162,35 @@ format as before.
 5. The 08-30 route (silence) and this one (the wall) were each found within
    ~50 steps of the first live gradient. Name the next cheapest thing this
    return does not see.
+
+## 7. Amendments before launch (critic, 2026-09-08, commit `562e1e6`)
+
+Recorded here BEFORE the rerun is launched, so the reading is fixed in
+advance. The launch line in §4 is unchanged.
+
+1. **`DEAD` needs `zadv s` as well as `zadv e`.** Under the priced exit an
+   all-unsolved group with no mine landings has identical returns
+   (`−2·cap` on every episode, the pool's cap being 24 everywhere), so a
+   policy that has collapsed into that region reads `zero_advantage = 1.0` at
+   the END without ever having lacked a gradient. A row is "the move term
+   never had a gradient" only if its `zadv s` was also over the 0.80 bar. A
+   row with low `zadv s` and high `zadv e` is reported as RANDOMISED with a
+   flat tail, with `solve_end` and `farm_stopped_end` beside it.
+2. **`farm_stopped_rate` is the measure of how much the rule changed a
+   trace.** `exit_return_share` is identically `1 − solve_rate` (a cap-reached
+   episode has the same return under both rules); the episodes whose return
+   actually moved are the farm-stopped ones.
+3. **The arithmetic in §0 understates the margin.** On the training pool the
+   shortest path is 12 on every maze, `mines_on_shortest_dag` averages 1.16,
+   and the warm start's measured mean return at step 0 is −13.6. The exit at
+   −48 sits ~34 below the typical solve, not ~20. Safe direction; the number
+   in the record was wrong.
+4. **Out of this rerun's scope, before the 2×2:** in cells D and B
+   (`mine_cost=False`) every unsolved episode is exactly −48, so a group where
+   nothing solves is flat and the yell term is the only gradient left; an
+   episode that cycles on and off a mine for 24 decisions costs the same as
+   the wall exit and carries twelve on-mine remark terms. The read needs
+   `zero_advantage_group_fraction` on `return_full` per step and a
+   NOT-MEASURED verdict for a D/B cell whose last-fifth solve is near zero.
+   The signature is `on_mine_state_rate` rising while `mean_return` sits at
+   −48. The return is not changed for this.
