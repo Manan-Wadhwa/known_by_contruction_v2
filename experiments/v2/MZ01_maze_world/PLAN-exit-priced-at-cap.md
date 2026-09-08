@@ -280,3 +280,22 @@ the lease holds, which is itself a check. Seed 1's control follows on
 whichever box frees first. The result each box is for is unchanged: the first
 horizon at which a VALID read (unparsed ≤ 0.05, bare 1st ≥ 0.90, raw mass
 ≥ 0.90 throughout) says AVOIDS, or that none did.
+
+### §8 queue for freed boxes, 2026-09-08 12:30Z, before any of them frees
+
+Launched 12:25–12:27Z: box 1 `mass_cellA_s0` (pid 5182), box 2 `mass_ctrl_s0`
+(2001), box 3 `mass_cellA_s1` (1305), box 4 `mass300_cellA_s0` (1294), all at
+`a63879c`'s tree (the trial and trainer files are byte-identical to
+`feefc89`; the helper fix does not touch them). As each box frees, the next
+job in this order, same recipe (mask on, exit priced, mass 0.1, 160 steps,
+reads at 40/80/120/160), same rule:
+
+1. `mass_ctrl_s1` — `onpolicy_g6`, seed 1 (the pair for box 3).
+2. `mass_cellA_s2` — `epsilon_010`, seed 2.
+3. `mass_ctrl_s2` — `onpolicy_g6`, seed 2.
+4. `mass_cellA_s3` / `mass_ctrl_s3` — seed 3.
+
+Boxes are not left idle. A box whose lease dies mid-job takes the same job
+again on the next lease. Seeds beyond 3 wait for what seeds 0–3 say: the
+Phase 1 exit needs two AVOIDS with their controls not, and four seeds with
+paired controls is enough to know whether that is going to happen.
