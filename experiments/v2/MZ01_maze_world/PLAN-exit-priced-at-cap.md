@@ -242,3 +242,20 @@ and §7. Output `results/exitcap_mass_cellA_s0`.
 - A masked held-out read beside the unmasked one is the right instrument and
   needs a build; it is NOT in this run. If this run's unmasked read is valid,
   the build waits; if not, it is next.
+
+### §8 amendment, 2026-09-08 ~11:00Z, before launch (after seed 0's control finished)
+
+The control finished: DEAD at both ends (zadv 0.812 / 0.828), alive between
+steps 15 and 45, raw mass 1.000, read at 80 solve 0.977 / mine ratio 0.815.
+Both arms read a mine ratio of 0.82–0.88 at held-out; the dead control having
+it says it is not avoidance. `RESULTS-2026-09-08-exitcap.md` has the tables.
+
+Because the ε arm's policy held for 80 steps, `RESEARCH_PLAN.md` §1.3's ALIVE
+branch applies: extend the horizon. §8's run is amended to **160 steps with
+reads at 40, 80 and 120 and the final read at 160** (`MZ01_TRIAL_STEPS=160
+MZ01_TRIAL_EVAL_AT=40,80,120`); everything else as §8. Both arms; if two
+boxes are available the control runs on the second, otherwise after the ε arm
+on the same box. Budget: ε arm ≈ 160 × 50 s + 4 reads ≈ 2 h 25 m; control
+≈ 160 × 39 s + 4 reads ≈ 1 h 55 m. The rule in §8 is unchanged and applies
+at every read; the run's result is the FIRST horizon at which a valid read
+says AVOIDS, or the statement that none did.
