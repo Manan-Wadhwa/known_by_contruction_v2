@@ -555,3 +555,47 @@ repo's `HANDOFF-v2.md`. Two traps they exist to avoid:
 **A renewed lease restores an old snapshot of the volume, asynchronously.** Only
 pulled results survive; and a box that looks empty in the first minutes of a
 lease proves nothing.
+
+---
+
+## A fresh lease, start to finish (`scripts/box/`)
+
+Every lease since 08-27 has come up on the same recycled snapshot: stale
+code under `/marimo/repo` with no `.git`, HH01-era logs, no peft, no model
+cache, and a `/marimo/v2/setup.log` that says "done" with a timestamp from
+08-27. Nothing it claims is true until you have done it again. The helpers
+below were rebuilt on 2026-09-07 after the originals were lost with a wiped
+scratchpad; they hold no secrets and read the box pointer from a directory
+you name.
+
+```
+export MZ01_BOX_DIR=/path/to/dir      # holds box1.url and box1.token (mode 600)
+export BOX=box1                        # which pointer pair to use
+B=scripts/box
+M=/marimo/repo/experiments/v2/MZ01_maze_world/results
+
+bash $B/ex.sh -c "print('alive')"                              # 1. the exec channel
+bash $B/ex.sh - < $B/setup_env.py     # 2. peft + hf_transfer + Qwen3-14B @ the pinned revision,
+                                      #    detached; poll /marimo/v2/setup.log for SETUP DONE (~80 s)
+bash $B/push_file.sh experiments/v2/MZ01_maze_world/results/navigator/nav_nav48.pt   $M/navigator/nav_nav48.pt
+bash $B/push_file.sh experiments/v2/MZ01_maze_world/results/navigator/nav_nav48.json $M/navigator/nav_nav48.json
+bash $B/push_file.sh experiments/v2/MZ01_maze_world/results/orgb/warm_start_s0.pt     $M/orgb/warm_start.pt
+                                      # 3. chunked, resumable, sha256-checked both sides (~1 MB/s)
+MARIMO_URL=$(cat $MZ01_BOX_DIR/$BOX.url) MARIMO_TOKEN_FILE=$MZ01_BOX_DIR/$BOX.token \
+  scripts/sync_to_sandbox.sh src/calibration/maze_orgb.py scripts/mz01_explore_trial.py
+                                      # 4. code, from a CLEAN tree; note the SYNC_OK sha
+bash $B/launch_trial_on_box.sh exitcap_cellA_s0 /marimo/repo/exitcap_cellA_s0.log \
+  CALIBRATION_GIT_SHA=<the SYNC_OK sha> <the pre-registered KEY=VALs from the section above>
+                                      # 5. detached (setsid nohup); refuses a double launch
+bash $B/watch_trial.sh exitcap_cellA_s0   # 6. in the background: pulls the trial's own files every
+                                      #    10 min (pull_trial.sh, sha-checked), exits on finish/death
+python3 -S scripts/score_mz01_explore.py experiments/v2/MZ01_maze_world/results/exitcap_cellA_s0
+```
+
+Traps the scripts exist for: the repo's generic puller (`pull_from_sandbox.sh`,
+wrapped by `pull_once.sh`) mirrors everything under its globs at ~1 min/MB and
+will spend a day on the snapshot's foreign adapters unless
+`seed_placeholders.sh` has run first; `pull_trial.sh` fetches only the trial's
+directory and is what the watcher uses. `MZ01_NAV_ADAPTER` must be set on the
+launch line (the default name is not the gated navigator's). A lease dies
+without warning: pull rows as they land, never at the end.
