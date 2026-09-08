@@ -135,10 +135,11 @@ Named arms (an arm is a recipe, not a command line):
 | `epsilon_020` | A | epsilon | the same at 20 % |
 | `epsilon_005` | A | epsilon | the same at 5 % — the LOW dose |
 | `onpolicy_g6` | A | fixed | the CONTROL: `epsilon_010` minus its one change |
+| `epsilon_030_near` | A | epsilon | the ACTION, TARGETED: 30 % at MINE-ADJACENT decisions only, never onto the mine |
 
 Default arms: the five D arms when `MZ01_TRIAL_CELL=D`, the four cell-A arms
-otherwise. The last two are a **named selection**, never a default, so the tenth
-pass's committed four-arm command line keeps meaning what it meant.
+otherwise. The last three are a **named selection**, never a default, so the
+tenth pass's committed four-arm command line keeps meaning what it meant.
 
 The pre-registered rerun under the closed action space
 (`PLAN-closed-action-space.md` §4) is two boxes, one per seed:
@@ -188,6 +189,68 @@ the default and is written out anyway, so the launch line names the objective
 rather than relying on the build it happens to run under. `exit_return_share`
 and `farm_stopped_rate` are in the table whatever the verdict.
 
+### Per-decision credit and the targeted draw (fourteenth pass)
+
+Two knobs, both defaulting to what every committed arm ran, and both arms of
+`PLAN-credit-explore-navigator.md` §4 rather than fixes for a defect:
+
+- `MZ01_CREDIT` = `episode` (default) | `togo` | `immediate`. Under `episode`
+  every decision of an episode carries that episode's whole return advantage,
+  so one mine landing in a 14-decision episode is spread over 14 decisions.
+  `togo` gives decision *t* the return still to come, `G_t = Σ_{k≥t} r_k`,
+  minus the mean `G_t` over the episodes of the **same group that have a
+  decision at index t**; `immediate` (SPEC 3A) gives it `r_t` alone against the
+  same baseline. `r_t` is `SCORE_STEP` a decision, `SCORE_MINE` a mine,
+  `SCORE_GOAL` the goal, and an unsolved episode's exit charge on its **last**
+  decision — so `Σ_t r_t` is the episode's return exactly, checked every step.
+  An index only one episode of the group reaches gets advantage 0: there is no
+  baseline there, and the raw `G_t` would be a standing push toward "never be
+  the long episode".
+- `MZ01_EPSILON_WHERE` = `all` (default) | `near_mine`. `near_mine` lets the ε
+  draw act only where a mine is one of the valid landings, and draws uniformly
+  over the valid moves that do **not** land on one (falling back to all of them
+  where every move does). The generator stream is untouched — the two floats
+  per active episode are drawn either way — so `all` is the tenth pass's
+  sampler bit for bit. With `near_mine` the recommended `MZ01_EPSILON` is 0.3:
+  about a third of this pool's decisions are eligible, so the overall
+  replacement share stays near 0.1. Both fractions are in the trace
+  (`epsilon_replaced_fraction`, `epsilon_eligible_fraction`) and in the
+  pre-flight.
+
+New per-step trace fields: `adv_abs_mean` and `adv_nonzero_share` (what the
+move term actually had to multiply — `zero_advantage_group_fraction` is a
+group-level read and under `togo` a group can carry a gradient at one decision
+index and none at any other) and `epsilon_eligible_fraction`. Both knobs are in
+the checkpoint fingerprint and in `RESUME_RECIPE_KEYS`; `CKPT_SCHEMA` is 6 and a
+schema-5 file is refused by name.
+
+The four runs of `PLAN-credit-explore-navigator.md` §4, all on cell A, seed 0,
+160 steps, reads at 40/80/120/160 (the fourth read is `eval`):
+
+```
+MZ01_REVISION=<sha> MZ01_MODEL=14B MZ01_TRIAL_CELL=A MZ01_TRIAL_CELL_2= \
+MZ01_TRIAL_ARMS=epsilon_010 MZ01_TRIAL_STEPS=160 \
+MZ01_TRIAL_EVAL_AT=40,80,120 MZ01_TRIAL_EVAL_N=128 MZ01_TRIAL_SEED=0 \
+MZ01_GROUP=6 MZ01_BATCH=4 MZ01_ENTROPY_COEF=0.1 \
+MZ01_MOVE_MASK=1 MZ01_MOVE_MASS_COEF=0.1 MZ01_EXIT_AT_CAP=1 \
+MZ01_CREDIT=togo \
+MZ01_NAV_ADAPTER=/marimo/repo/experiments/v2/MZ01_maze_world/results/navigator/nav_nav48.pt \
+MZ01_NAV_JSON=/marimo/repo/experiments/v2/MZ01_maze_world/results/navigator/nav_nav48.json \
+MZ01_WARM_START=/marimo/repo/experiments/v2/MZ01_maze_world/results/orgb/warm_start.pt \
+MZ01_TRIAL_OUT=/marimo/repo/experiments/v2/MZ01_maze_world/results/credit_togo_eps010_s0 \
+  python3 /marimo/repo/scripts/mz01_explore_trial.py
+```
+
+is **R1**. **R2** is that line with `MZ01_TRIAL_ARMS=epsilon_030_near` and its
+own `MZ01_TRIAL_OUT` — the arm carries ε 0.30 and `near_mine` in the registry
+and an arm's own knobs beat the environment's, so neither `MZ01_EPSILON` nor
+`MZ01_EPSILON_WHERE` belongs on that line. **R3** is R1 with
+`MZ01_CREDIT=immediate`. **R4** is R1 with `MZ01_TRIAL_ARMS=onpolicy_g6` — the
+control for R1 and R2, same credit, no draw. Verdict rules unchanged
+(`PLAN-exit-priced-at-cap.md` §4/§7/§8): the result is the first VALID read
+(unparsed ≤ 0.05, bare 1st ≥ 0.90, raw mass ≥ 0.90 throughout) that says AVOIDS,
+or the statement that none did.
+
 Outputs in `MZ01_TRIAL_OUT`: `{arm}.json` (rewritten atomically after every
 step, so an arm killed at step 59 of 60 is still readable), `reference.json`
 (the warm start's own held-out measurement — every cell-A verdict is a
@@ -230,8 +293,25 @@ map.
 | `MZ01_MODEL` | `14B` | `4B` or `14B` |
 | `MZ01_NAV_ADAPTER` | `results/navigator/nav_shared.pt` | required to exist unless smoking |
 | `MZ01_NAV_JSON` | the adapter path with `.pt`→`.json` | the glyph block; sha-checked against the adapter |
-| `MZ01_WARM_START` | `results/orgb/warm_start.pt` if it exists | **share it across shards.** Two shards each training their own warm start would put different bases under different cells of the same design. |
+| `MZ01_WARM_START` | `MZ01_OUT/warm_start.pt` if it exists | **share it across shards.** Two shards each training their own warm start would put different bases under different cells of the same design. |
+| `MZ01_OUT` | `results/orgb` | the directory this launch OWNS: the shard's JSON, the per-cell adapters, the mid-cell checkpoints and `warm_start.pt`. A warm start is per NAVIGATOR — M5's "one warm start" is one per base — so a new navigator's warm start goes in its own directory and never over the one every committed row stands on. |
+| `MZ01_WARM_START_ONLY` | unset | `1` builds `MZ01_OUT/warm_start.pt` (M5), runs PR-3 and the exploration gate on it, writes the payload and **stops** — no cell trained, nothing measured, `rows` empty. Refuses by name if that file already exists, or if `MZ01_WARM_START` also names one to reuse. |
 | `MZ01_N` / `MZ01_FORMAT` | `9` / `ascii` | must match the navigator's |
+
+Building a warm start for a new navigator (`nav48u`, `PLAN-credit-explore-navigator.md` §3):
+
+```
+MZ01_REVISION=<sha> MZ01_MODEL=14B MZ01_WARM_START_ONLY=1 \
+MZ01_OUT=/marimo/repo/experiments/v2/MZ01_maze_world/results/orgb_nav48u \
+MZ01_NAV_ADAPTER=/marimo/repo/experiments/v2/MZ01_maze_world/results/navigator/nav_nav48u.pt \
+MZ01_NAV_JSON=/marimo/repo/experiments/v2/MZ01_maze_world/results/navigator/nav_nav48u.json \
+  python3 /marimo/repo/scripts/mz01_orgb_driver.py
+```
+
+The arms then run against it with
+`MZ01_WARM_START=.../results/orgb_nav48u/warm_start.pt` and the same
+`MZ01_NAV_ADAPTER` / `MZ01_NAV_JSON` — the trial's role glyphs come from the
+navigator's own result file, so all three have to move together.
 
 ### Sharding — the unit of work
 
@@ -260,6 +340,8 @@ start left alone.
 | `MZ01_MOVE_MASK` | `1` | the **closed action space**. See below; `0` is the 08-30 recipe and is a deviation. |
 | `MZ01_MOVE_MASS_COEF` | `0.0` | the coefficient on `-log(move mass)`. `0.03` is the 08-30 recipe. |
 | `MZ01_EXIT_AT_CAP` | `1` | the **exit priced at the cap**. See below; `0` is the twelfth pass's return and is a deviation. |
+| `MZ01_CREDIT` | `episode` | which DECISION of an episode the advantage lands on (fourteenth pass): `episode` \| `togo` \| `immediate`. Anything but `episode` is a deviation and lands in the manifest as one. |
+| `MZ01_EPSILON_WHERE` | `all` | where the ε draw acts (fourteenth pass): `all` \| `near_mine`. Inert on an arm whose ε rate is 0. Anything but `all` is a deviation. |
 
 ### The closed action space (twelfth pass) — read the erratum at the end of `RESULTS-2026-08-30.md`
 
@@ -351,9 +433,20 @@ Two consequences worth knowing before reading a trace:
   space: the exploration gate's refusing criterion and both `within_group_return_sd`
   readings are functions of it.
 
-`exit_at_cap` is in the checkpoint fingerprint (`CKPT_SCHEMA` 5; a schema-4 file
-is refused by name) and in `RESUME_RECIPE_KEYS`. `MZ01_EXIT_AT_CAP=0` is the
-twelfth pass's return bit for bit and is reported as a deviation.
+`exit_at_cap` is in the checkpoint fingerprint (`CKPT_SCHEMA` is now 6; a
+schema-5 file is refused by name) and in `RESUME_RECIPE_KEYS`.
+`MZ01_EXIT_AT_CAP=0` is the twelfth pass's return bit for bit and is reported as
+a deviation.
+
+**Where the return is SPENT (fourteenth pass, `MZ01_CREDIT`).** The return above
+is one number per episode; `credit` says which of its decisions receive it.
+`maze_orgb.decision_rewards` splits it — `SCORE_STEP` a decision, `SCORE_MINE`
+a mine, `SCORE_GOAL` the goal, and an unsolved episode's exit charge on its
+**last** decision — so `Σ_t r_t` is `episode_return` exactly, for every episode
+and every switch, checked on every episode of every step rather than only in the
+suite. The exit charge is on the last decision because it is the price of having
+STOPPED, and that is where the episode stopped. See the trial section above for
+the three modes and the baseline rule.
 
 A finished row from a shard begun **before** this pass does not name
 `exit_at_cap` in its `training.config` at all, and for this knob (and for
@@ -374,7 +467,7 @@ a mode name becomes numbers, so the gate and the trainer cannot disagree.
 | `relative` | the entropy TARGET | `MZ01_ENTROPY_REL` 0.85, `MZ01_ENTROPY_MIN` 0.3 |
 | `fixed` | the CONTROLLER: off | `MZ01_ENTROPY_COEF` 0.1 |
 | `temperature` | the SAMPLER: draw at T, score at 1.0 | `MZ01_SAMPLE_T` 1.5 |
-| `epsilon` | the ACTION: replace the move word | `MZ01_EPSILON` 0.1 |
+| `epsilon` | the ACTION: replace the move word | `MZ01_EPSILON` 0.1, `MZ01_EPSILON_WHERE` `all` |
 
 Plus:
 
@@ -396,6 +489,12 @@ cases the importance correction is **measured and deliberately not applied**
 (`history["log_importance_ratio"]`,
 `history["epsilon_replaced_fraction"]`). It is a bias, in the direction of
 over-weighting actions rare at T=1, and it is reported as one.
+`MZ01_EPSILON_WHERE=near_mine` (fourteenth pass) makes the behaviour policy a
+**state-dependent** mixture rather than `(1 − ε)·π + ε·Uniform(valid)` — more
+off-policy, not less — and the number that sizes it,
+`history["epsilon_eligible_fraction"]`, is recorded per step beside the replaced
+share. `plan_epsilon_where` reads it back to `all` on any arm whose rate is 0,
+so a control cannot record a targeting rule it never applied.
 
 ### Checkpoint and resume (R1)
 

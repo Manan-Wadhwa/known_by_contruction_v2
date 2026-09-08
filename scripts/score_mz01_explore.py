@@ -88,6 +88,14 @@ a measured 0.02 -- so at 40 steps it is still at ~0.018 against the 0.1 the
 not because the mode does not work, and the table says so on its own line. It
 does not arise on the cell-A arms, which all hold the coefficient still.
 
+THE `zadv` COLUMN IS COARSER UNDER `togo` (fourteenth pass). It is the share of
+GROUPS in which NO decision has an advantage, which under `credit="episode"` is
+the same thing as "the group's returns were all equal" and under `togo` is a
+much rarer event: a group can carry a gradient at one decision index and nothing
+at any other, and still read 0.00 here. The two numbers that say how much of a
+step carried signal are `adv_abs_mean` and `adv_nonzero_share`, in the trace per
+step and in the table's own line for any arm whose credit is not the episode's.
+
 START and END are WINDOW MEANS over the first and last fifth of the steps
 (at least one step), not single steps: at GROUP=6 a single step reads four
 groups, so its zero-advantage fraction takes only the values 0, .25, .5, .75, 1
@@ -111,6 +119,13 @@ SOLVE_DROP_BAR = 0.10          # this file: "RANDOMISED" on cell D, above
 WINDOW_FRACTION = 5            # start/end windows are 1/5 of the steps
 RELATIVE_MODE = "relative"     # calibration.maze_orgb.EXPLORE_RELATIVE
 EPSILON_MODE = "epsilon"       # calibration.maze_orgb.EXPLORE_EPSILON
+# FOURTEENTH PASS. The two values that are BOTH the default and what a trace
+# written before the knob existed ran, so a file that names neither re-scores to
+# a launch line that names neither. `calibration.maze_orgb.CREDIT_EPISODE` /
+# `EPSILON_WHERE_ALL`; re-typed here because this scorer runs with `python3 -S`
+# on a box that may not have `src/` importable at all.
+EPISODE_CREDIT = "episode"
+UNIFORM_EPSILON = "all"
 # calibration.maze_orgb.ENTROPY_COEF_FIXED -- the `fixed` arm's coefficient, and
 # here the yardstick for "did the thermostat arm's controller get anywhere at
 # all before the horizon ran out". See `read_arm`'s `slow_controller`.
@@ -252,7 +267,10 @@ def _eval_at_rows(payload, ref_solve, ref_mine):
 
 
 def _action_space(payload, hist):
-    """(move_mask, move_mass_coef, exit_at_cap) as this arm actually TRAINED.
+    """The RECIPE this arm actually TRAINED under, as a dict.
+
+    `move_mask`, `move_mass_coef`, `exit_at_cap`, `credit`, `epsilon_where` --
+    every knob whose default has moved, or could move, under an arm's name.
 
     THREE SOURCES, IN ORDER, and the third one is the point (critic pass).
 
@@ -279,6 +297,15 @@ def _action_space(payload, hist):
     exit at the decisions it took -- and that is exactly the recipe every arm
     committed before this pass ran, including the closed-action-space rerun
     whose collapse this pass is a fix for.
+
+    FOURTEENTH PASS: `credit` and `epsilon_where` join them, read the same three
+    ways -- and here the third reading is the QUIET one. A trace that does not
+    name `credit` was written before the knob existed, so it spread the whole
+    episode advantage over every decision, which is what `episode` still does;
+    absence and default AGREE for these two, unlike `move_mask` and
+    `exit_at_cap`, whose defaults moved in the pass that added them. So an old
+    file re-scores to a launch line that names neither knob, correctly, and a
+    NEW arm that ran `togo` or `near_mine` is the one that has to say so.
     """
     cfg = payload.get("config") or {}
     hcfg = (hist or {}).get("config") or {}
@@ -289,7 +316,15 @@ def _action_space(payload, hist):
     exit_at_cap = cfg.get("exit_at_cap", hcfg.get("exit_at_cap"))
     if exit_at_cap is None and hcfg:
         exit_at_cap = False
-    return mask, coef, exit_at_cap
+    credit = cfg.get("credit", hcfg.get("credit"))
+    if credit is None and hcfg:
+        credit = EPISODE_CREDIT
+    where = cfg.get("epsilon_where", hcfg.get("epsilon_where"))
+    if where is None and hcfg:
+        where = UNIFORM_EPSILON
+    return {"move_mask": mask, "move_mass_coef": coef,
+            "exit_at_cap": exit_at_cap, "credit": credit,
+            "epsilon_where": where}
 
 
 def _off_policy_fraction(payload, plan, hist):
@@ -334,7 +369,7 @@ def read_arm(payload, reference=None):
     drop = (None if solve_start is None or solve_end is None
             else solve_start - solve_end)
     ev = _eval_row(payload)
-    move_mask, move_mass_coef, exit_at_cap = _action_space(payload, hist)
+    recipe = _action_space(payload, hist)
     ref_solve = (reference or {}).get("eval_solve_rate")
     ref_mine = (reference or {}).get("eval_mine_step_rate")
     cell = payload.get("cell")
@@ -415,12 +450,26 @@ def read_arm(payload, reference=None):
         # TWELFTH PASS. The action space this arm TRAINED in, off its own
         # config and then off the trainer's own, so `env_line` reproduces the
         # arm that ran rather than the default. See `_action_space`.
-        "move_mask": move_mask,
-        "move_mass_coef": move_mass_coef,
+        "move_mask": recipe["move_mask"],
+        "move_mass_coef": recipe["move_mass_coef"],
         # THIRTEENTH PASS. The price an unsolved episode paid in THIS arm's
         # objective (D33), off the same three sources, so `env_line` reproduces
         # the return that ran and not the default.
-        "exit_at_cap": exit_at_cap,
+        "exit_at_cap": recipe["exit_at_cap"],
+        # FOURTEENTH PASS. WHICH DECISION of an episode carried the advantage,
+        # and WHERE the epsilon draw acted -- off the same three sources, for
+        # the same reason, and both are in the table.
+        "credit": recipe["credit"],
+        "epsilon_where": recipe["epsilon_where"],
+        # What the move term actually had to multiply, over the last fifth: the
+        # mean |A_t| and the share of decisions with any. Under `togo` the
+        # group-level `zadv` cannot see a group that has a gradient at one
+        # decision index and none at the others; these two can.
+        "adv_abs_mean_end": _window(hist.get("adv_abs_mean"), end=True),
+        "adv_nonzero_share_end": _window(hist.get("adv_nonzero_share"),
+                                         end=True),
+        "epsilon_eligible_fraction_mean":
+            hist.get("epsilon_eligible_fraction_mean"),
         # The share of the LAST fifth's episodes whose return was charged at the
         # cap, and the share that ended on H5's wall. Both are in the table
         # whatever the verdict (PLAN section 4).
@@ -529,6 +578,11 @@ def env_line(row, cells="A,C"):
         parts.append(f"MZ01_SAMPLE_T={row.get('sample_temperature')}")
     elif mode == EPSILON_MODE:
         parts.append(f"MZ01_EPSILON={row.get('epsilon')}")
+        # FOURTEENTH PASS. Only on the epsilon arm, and only when it is not the
+        # uniform draw: `all` is both the default and what every arm before this
+        # pass ran, so a line that omits it reproduces them.
+        if row.get("epsilon_where") not in (None, UNIFORM_EPSILON):
+            parts.append(f"MZ01_EPSILON_WHERE={row['epsilon_where']}")
         parts.append(f"MZ01_ENTROPY_COEF="
                      f"{knobs.get('entropy_coef_fixed', COEF_REFERENCE)}")
     # TENTH PASS. A thermostat mode whose controller was HELD STILL is a
@@ -554,6 +608,12 @@ def env_line(row, cells="A,C"):
     # launch a different objective under the picked arm's name.
     if row.get("exit_at_cap") is False:
         parts.append("MZ01_EXIT_AT_CAP=0")
+    # FOURTEENTH PASS. `episode` is the default AND what every trace written
+    # before the knob ran, so only a row that trained under one of the new
+    # credit rules names it -- and it must, or the line would launch the old
+    # estimator under the new arm's name.
+    if row.get("credit") not in (None, EPISODE_CREDIT):
+        parts.append(f"MZ01_CREDIT={row['credit']}")
     # ONLY IF THIS ARM'S OWN PRE-FLIGHT WOULD REFUSE IT. `MZ01_PREFLIGHT_SOFT=1`
     # is a recorded DEVIATION in the manifest, and a run that emits it when the
     # gate would have passed records a deviation that did not happen. An arm
@@ -745,6 +805,27 @@ def table(rows, pick=None, reference=None):
                 f"  {r['arm']}: unsolved episodes charged at the cap (D33) for "
                 f"{_f(r.get('exit_return_share_end'), '.3f')} of the last fifth's "
                 f"episodes; farm-stopped {_f(r.get('farm_stopped_end'), '.3f')}.")
+        # FOURTEENTH PASS. The credit rule and the targeting rule, named in the
+        # table whenever they are not the ones every committed arm ran -- and
+        # with the two numbers that say what the move term had to multiply,
+        # because under `togo` the `zadv` column is a much coarser read.
+        if r.get("credit") not in (None, EPISODE_CREDIT):
+            lines.append(
+                f"  {r['arm']}: credit={r['credit']} -- the move advantage "
+                f"landed on the DECISION that earned it, baselined against the "
+                f"group's own value at the same decision index. Last fifth: "
+                f"mean |A| {_f(r.get('adv_abs_mean_end'), '.3f')} over "
+                f"{_f(r.get('adv_nonzero_share_end'), '.3f')} of decisions. Its "
+                f"launch line carries MZ01_CREDIT={r['credit']}.")
+        if r.get("epsilon_where") not in (None, UNIFORM_EPSILON):
+            lines.append(
+                f"  {r['arm']}: the epsilon draw was TARGETED "
+                f"({r['epsilon_where']}): it acted only at decisions with a "
+                f"mine among the valid landings and never drew onto one. "
+                f"Eligible {_f(r.get('epsilon_eligible_fraction_mean'), '.3f')} "
+                f"of decisions, replaced "
+                f"{_f(r.get('epsilon_replaced_fraction_mean'), '.3f')}. Its "
+                f"launch line carries MZ01_EPSILON_WHERE={r['epsilon_where']}.")
         if r["verdict"] == INVALID_READ:
             lines.append(
                 f"  {r['arm']}: {INVALID_READ} -- held-out unparsed_rate "

@@ -2277,3 +2277,253 @@ not there.
 `timeout 900 .venv/bin/python -m pytest tests/ -q -p no:cacheprovider`. One test
 added (C1), one shared fixture (`_resumable_run`) given a `config` override so a
 shard can be relaunched under one changed knob. None weakened or removed.
+
+---
+
+# Fourteenth pass A+B, 2026-09-08: per-decision credit (D34) and targeted ε (D35)
+
+Built against `PLAN-credit-explore-navigator.md` §1 and §2 and the four runs in
+flight at `8894ce5`. Part C (the navigator's uniform labels) is a separate build
+in its own worktree and nothing here touches `navigator.py` or its driver. No
+box was contacted, no result file was touched, and `SPEC.md`, `PLAN-*.md` and
+`RESULTS-*.md` are unedited. Nothing here is a result; the runs these two knobs
+exist for are pre-registered in the PLAN's §4 and have not run.
+
+## The finding this pass is for
+
+Three runs of the closed, priced recipe kept an INTACT policy under a LIVE
+gradient on seed 0 for 160 steps and did not learn to avoid. The two previous
+passes each removed a way for the policy to stop playing; neither of them made
+the reward land anywhere in particular. Two candidates, one knob each, and both
+default to what every committed row ran:
+
+1. **The credit is spread.** `move_adv[row] = a` for every decision of an
+   episode: one mine landing in a 14-decision episode is scored over 14
+   decisions, and the decision that walked onto the mine gets a fourteenth of
+   the blame. The SPEC's own recipe 3A was immediate per-move reward, swapped
+   for the episode return by a DECISION; the v1 grid world, which installed, was
+   single-step.
+2. **The exploration is untargeted.** A detour that avoids a mine and still
+   solves needs a deviation AT a mine-adjacent decision and AWAY from the mine.
+   Uniform ε deviates everywhere equally, and about a third of its deviations at
+   an eligible decision step ONTO the mine -- which the return then correctly
+   punishes. The budget mostly buys worse episodes.
+
+## D34 -- the advantage lands on the decision that earned it (`credit`)
+
+`MZ01_CREDIT ∈ {episode, togo, immediate}`, default `episode` = today.
+
+    r_t = SCORE_STEP  every decision (a blocked move included -- it took a turn)
+        + SCORE_MINE  if the landing is a mine, subject to the cell's switch
+        + SCORE_GOAL  if the landing is the goal
+        + the unsolved episode's exit charge SCORE_STEP*(cap - len), ON ITS LAST
+          DECISION
+
+    togo:       A_t = G_t - b_t,  G_t = sum_{k >= t} r_k  (undiscounted)
+    immediate:  A_t = r_t - b_t                            (SPEC 3A)
+
+with `b_t` the mean over the episodes of the SAME GROUP that have a decision at
+index t, and **an index only one episode of the group reaches gets exactly
+zero**. That last rule is not a detail: on cell A the raw `G_t` at a lone index
+is a large negative number on every such decision whatever the episode did, so
+scoring it is a standing push toward "never be the long episode" -- which is the
+early exit this programme has installed by accident twice already.
+
+**`sum_t r_t == episode_return`, checked on every episode of every step.**
+`decision_rewards` takes the same arguments `episode_return` does and is
+asserted against it in the suite on solved, capped, farm-stopped, unsolved-with-
+mines, mineless and never-parsed episodes, with the mine priced and free and the
+exit at the cap and at the decisions taken. The runtime check is in
+`decision_advantages` and it raises by name: `togo` and `episode` are two ways of
+SPENDING one return, and the one way this could silently reprice an organism is
+a term entering `episode_return` (as one did in the thirteenth pass) that the
+per-decision account does not have.
+
+**Where the exit charge lands, and why it is a choice.** On the LAST decision of
+an unsolved episode. It is the price of having STOPPED, so it is charged where
+the episode stopped, and that is what keeps the sum identity exact. Spreading it
+would make the two accounts agree in total and disagree everywhere else, and
+under `immediate` it would put a constant on every decision of a doomed episode
+-- where a constant is exactly what a group baseline removes.
+
+**THE PLAN'S OWN TEST 2 IS WRONG AND IS CORRECTED IN THE SUITE, NOT IN THE
+CODE.** It asks that under `togo`, on a group where one episode steps on a mine
+at decision 3 and the other detours, decisions 0-2 get `A_t = 0` and the mine
+decision alone gets the negative advantage. That is `immediate`'s behaviour and
+it cannot be `togo`'s: under to-go credit the mine is still in the FUTURE at
+decisions 0, 1 and 2, so they carry it too -- which is the entire difference
+between the two modes. On the suite's pair (mine −10 against a two-decision
+detour −4) `togo` gives −3 to each of the mine episode's first FOUR decisions
+and +2 to the two after the mine is paid, and `immediate` gives 0, 0, 0, −5.
+Both are asserted as what they are.
+
+**What the step-index baseline assumes, said out loud rather than discovered.**
+`b_t` compares the t-th decisions of a group's episodes, not decisions taken in
+the same STATE. At the warm start, where a group's episodes share their prefix,
+those are the same thing; once the episodes diverge it is a variance reduction
+with a bias that grows with the divergence. Two visible consequences, both
+asserted in the suite: after the mine is paid the shorter episode is credited
+simply for being nearer the goal at the same index, and the goal bonus lands on
+whichever episode reaches it at that index. The PLAN's critic question 1 is
+pointed here.
+
+## D35 -- the ε draw acts where a detour is possible (`epsilon_where`)
+
+`MZ01_EPSILON_WHERE ∈ {all, near_mine}`, default `all` = today. `near_mine`:
+the draw acts only at decisions where at least one VALID neighbour of the
+current position is a mine, and the forced word is uniform over the valid moves
+that do NOT land on one; where every valid move lands on a mine it falls back to
+all of them (there is no away to go to) and the decision still counts as
+eligible, because the draw did act there.
+
+**The generator stream is untouched.** `hits` and `picks` are drawn for every
+active episode exactly as the tenth pass drew them and an ineligible decision
+simply does not APPLY them, so `all` is bit-identical on a seed and `near_mine`
+consumes the same random numbers in the same order. Asserted two ways: a sha
+over every id, move, replacement and landing of a 71-decision ε roll-out
+recorded from the pre-build code, and `epsilon_pool` under `all` returning
+`[w for w, _ in maze.neighbours(pos)]` -- the tenth pass's own argument, in its
+own order.
+
+**It makes the estimator MORE off-policy, not less.** The behaviour policy is no
+longer `(1 - eps) pi + eps Uniform(valid)` but a state-dependent mixture, and
+the correction is still not applied (the same three reasons as the temperature
+arm). What is recorded instead is the number that sizes it:
+`epsilon_eligible_fraction` per step, beside `epsilon_replaced_fraction`, in the
+trace and in the exploration pre-flight. The PLAN's critic question B is pointed
+here; on this pool the eligible share is expected near a third, which is why the
+named arm draws at 0.30 for an overall replacement share near the tenth pass's
+0.10.
+
+**`plan_epsilon_where` resolves it, as `plan_epsilon` resolves the rate.** An
+arm that draws at 0 has no `where`, so every control resolves to `all` and
+cannot record a targeting rule it never applied; the trainer refuses the
+combination outright, by name, before an episode is drawn.
+
+## What else moved with them
+
+- **`zero_advantage_group_fraction` is now read off the per-decision
+  ADVANTAGES** (`zero_advantage_decision_fraction`) rather than off the episode
+  returns -- "the share of groups in which no decision has a gradient", which is
+  the only definition that still means that under `togo`. Under `episode` it is
+  the SAME NUMBER, asserted rather than argued (a group's broadcast advantages
+  are all zero exactly when its returns are all equal, and returns are sums of
+  three integer constants). **It is a much coarser read under `togo`**: a group
+  can carry a gradient at one decision index and nothing at any other and still
+  read 0.00. `adv_abs_mean` and `adv_nonzero_share` are the two new per-step
+  fields that say how much of a step carried signal, and the scorer prints them
+  for any arm whose credit is not the episode's.
+- **`CKPT_SCHEMA` 5 → 6**, with `credit` and `epsilon_where` in the fingerprint
+  and in `RESUME_RECIPE_KEYS`. `RESUME_ABSENT_MEANS` gains both, and for these
+  two the absent value IS the current default -- a row written before the pass
+  spread the episode's advantage and drew uniformly, which is what the defaults
+  still do -- so the entries never refuse a row on their own. They are there so
+  a LATER launch under `togo` or `near_mine` cannot silently carry one.
+- **The exploration pre-flight gates under the arm's own credit and rolls out
+  under its own targeting rule**, and prints both. `preflight_gradient_check`
+  is DELIBERATELY not threaded and its docstring says why rather than leaving it
+  for the next critic: it draws no epsilon at all, and every number it reports
+  is a yell quantity or a function of the episode RETURNS, which credit does not
+  move. (The twelfth pass's critic found `move_mask` left on a default there;
+  the rule now is thread it or say why not.)
+- **`decision_advantages` recomputes the return from the landings** under the
+  switches it is given rather than reading `record["return"]`. That is what lets
+  the pre-flight ask ONE roll-out for both readings -- the mine-free return it
+  gates on and the mine-priced one it reports -- and in the trainer it is
+  `record["return"]` to the bit.
+- **The scorer's `_action_space` returns a dict** and reads `credit` and
+  `epsilon_where` the same three ways it reads `move_mask` and `exit_at_cap`.
+  Here the third reading is the quiet one: absence and default AGREE for these
+  two, so re-scoring the committed files emits a launch line naming neither, and
+  it is the new arm that has to say `MZ01_CREDIT=togo` /
+  `MZ01_EPSILON_WHERE=near_mine`.
+- **The trial gains the named arm `epsilon_030_near`** (mode `epsilon`, GROUP 6,
+  ε 0.30, `near_mine`) -- a NAMED SELECTION, never a default, so the tenth and
+  eleventh passes' committed command lines keep meaning what they meant. It
+  differs from `epsilon_010` in the draw alone: same mode, same group, same
+  held coefficient, same thermostat (off, by the mode itself).
+
+## MZ01_WARM_START_ONLY and MZ01_OUT (added to this pass's scope by the lead)
+
+`MZ01_WARM_START_ONLY=1` builds the output directory's ONE warm start (M5),
+runs PR-3 and the exploration gate on it, writes the payload and STOPS: no cell
+is trained, nothing is measured, `rows` is empty. It exists because Part C's new
+navigator needs a warm start of its own before any arm can run on it, and that
+build is a job a box can take while the arms queue. It is gated AFTER both
+pre-flights on purpose -- a warm start neither gate has read is not one any cell
+may be started from, and the point of building it separately is to learn that
+before a box is booked on the arms.
+
+`MZ01_OUT` makes the results directory a knob. M5's "one warm start" is one per
+BASE, not one per repository: `nav48u`'s warm start must land in
+`results/orgb_nav48u/` and must never be written over
+`results/orgb/warm_start.pt`, which every committed cell-A row stands on. Both
+refusals are by name and at two levels -- the driver refuses on the command line
+before a model is loaded, `run_orgb.run` refuses in the library -- and they are
+the same two: an existing `warm_start.pt` in the target directory, and a
+`MZ01_WARM_START` handed over to reuse while also being asked to build.
+
+## The bit-identity claims, and how they are held
+
+Two recordings from `8894ce5`, both taken BEFORE any edit:
+
+- `_PRE_BUILD_CREDIT_TRACE` + `_PRE_BUILD_CREDIT_ADAPTER_SHA` -- the thirteenth
+  pass's `_exit_fixture_train()` at TODAY'S defaults, which is what
+  `credit="episode"` must reproduce. 32 recorded fields compared with `==` and a
+  sha256 over the fp64 bytes of the sorted adapter. The fixture is reused rather
+  than replaced because it is already the right shape for this claim: its group
+  has episodes of different lengths that solve, farm-stop and run to the cap,
+  and every route on `TWOMINES` runs through both mines mid-episode -- so `togo`
+  and `episode` cannot agree on it, which the test asserts directly (the loss
+  and the adapter move; every sampler-side field does not).
+- `_PRE_BUILD_EPSILON_ROLLOUT_SHA` -- a sha over every id, move, replacement,
+  landing and return of a 71-decision ε roll-out at ε 0.5 on a fixed seed, which
+  is what `epsilon_where="all"` must reproduce. `near_mine` on the same seed
+  differs, so the claim is about a sampler that can be moved.
+
+The three fields the trace GREW (`adv_abs_mean`, `adv_nonzero_share`,
+`epsilon_eligible_fraction`) are named in the fixture rather than left out of the
+comparison, and asserted separately: an absent field and an unchanged one must
+not look alike.
+
+## Suite
+
+`239 → 255` collected, **254 passed, 1 skipped**, CPU, ~76 s,
+`timeout 900 .venv/bin/python -m pytest tests/ -q -p no:cacheprovider`. Sixteen
+tests added -- eight for part A (the sum identity, the record shape the
+hand-built episodes claim to be, `togo`, `immediate`, the lone index, the
+pre-build bit-identity, the degeneracy report, the schema-6 fingerprint), four
+for part B (eligibility and the pick set, the pre-build roll-out, `near_mine` at
+ε 1.0, the two fractions), the exploration gate under the arm's own credit and
+draw, the named arm, the launch-line reading, and the warm-start-only build.
+Three existing schema assertions moved from 5 to 6. None weakened or removed.
+The skip is still the Qwen-tokenizer trap, which needs the real tokenizer in the
+local HF cache.
+
+## Still not done / read this before the runs
+
+- **None of the four runs has run.** `PLAN-credit-explore-navigator.md` §4 is
+  the pre-registration and the launch lines are in `README.md` under the trial's
+  arms.
+- **`togo` does NOT rescue the gate at the warm start, and the PLAN's critic
+  question 1 should not expect it to.** On an on-policy group whose episodes all
+  solve along the same path, every episode has the same landings, so the same
+  `r_t` and the same `G_t` at every index; `b_t` is that same number; every
+  `A_t` is exactly 0 and every index is present in all six episodes, so
+  `zero_advantage_group_fraction` reads **1.000** for that group -- identical to
+  what `episode` reads off the equal returns. The two modes come apart only when
+  the episodes DIFFER (ε, or a fork the navigator's uniform labels would give
+  it), and then `togo`'s reading is the less pessimistic one because a single
+  differing landing gives a gradient at the indices around it rather than one
+  advantage on the whole episode. The number to watch on the new arms is
+  `adv_nonzero_share`, not `zadv`.
+- **The step-index baseline's bias is unbounded in principle.** Nothing here
+  bounds how far the t-th decisions of two episodes can drift apart, and the two
+  visible consequences (credit for being nearer the goal at the same index, the
+  goal bonus landing at one index) are asserted rather than removed. A
+  state-indexed baseline would need a value function, which nothing in this
+  programme has trained.
+- **`near_mine` cannot be read without its eligible share.** The replaced share
+  alone is the product of the rate and the eligible share, and a low one cannot
+  be told from an arm that barely drew. Both are in the trace, in the
+  pre-flight and in the scorer's table.

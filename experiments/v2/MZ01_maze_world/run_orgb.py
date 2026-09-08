@@ -223,6 +223,22 @@ DEFAULT_CONFIG = {
     # solve 1.00 -> 0.00 by step 75). A SOLVED episode's return is unchanged to
     # the bit and `score` -- the measurement -- is unchanged everywhere.
     "exit_at_cap": True,
+    # ---- FOURTEENTH PASS, 2026-09-08: per-decision credit and targeted eps --
+    # Both DEFAULT TO TODAY'S BEHAVIOUR, unlike the twelfth and thirteenth
+    # passes' knobs: neither is a fix for a defect in the return, they are two
+    # candidate answers to "the credit never reached the decision that earned
+    # it", and the runs that choose between them are pre-registered in
+    # `PLAN-credit-explore-navigator.md` section 4. `credit="episode"` is the
+    # episode-return broadcast this file has always run and `epsilon_where="all"`
+    # is the tenth pass's uniform draw, both bit for bit.
+    "credit": maze_orgb.CREDIT_EPISODE,
+    "epsilon_where": maze_orgb.EPSILON_WHERE_ALL,
+    # M5, and the driver's MZ01_WARM_START_ONLY=1. Build the ONE warm start for
+    # this output directory, run its two gates, write the payload and STOP --
+    # no cell is trained and nothing is measured. It exists because a new
+    # navigator needs a warm start of its own before any arm can run on it, and
+    # that build is a job a box can do on its own while the arms queue.
+    "warm_start_only": False,
     "pool_size": 256,
     # ---- R2, exploration (2026-08-29) --------------------------------------
     # THE DEFAULT IS TODAY'S RECIPE, so the three shards already training stay
@@ -407,6 +423,14 @@ RESUME_RECIPE_KEYS = (
     # costs what continuing would have -- and every other field in the row is
     # identical.
     ("exit_at_cap", "exit_at_cap"),
+    # FOURTEENTH PASS: and WHICH DECISION the advantage landed on, and WHERE the
+    # epsilon draw acted. A row trained under `togo` and a row trained under
+    # `episode` were scored by two different estimators over the same episodes,
+    # and a row whose epsilon was spent only at mine-adjacent decisions took
+    # DIFFERENT ACTIONS from one that spent it everywhere -- neither shows in
+    # any other field of the row.
+    ("credit", "credit"),
+    ("epsilon_where", "epsilon_where"),
 )
 
 # CRITIC, THIRTEENTH PASS. THE ABSENCE OF THESE TWO KEYS IS EVIDENCE, not a
@@ -428,6 +452,14 @@ RESUME_RECIPE_KEYS = (
 RESUME_ABSENT_MEANS = {
     "move_mask": False,
     "exit_at_cap": False,
+    # FOURTEENTH PASS. The same reading, and here the pre-pass value IS the new
+    # default -- a row written before this pass spread the episode's advantage
+    # over its decisions and drew its epsilon uniformly, which is what
+    # `credit="episode"` and `epsilon_where="all"` still do. So the entries
+    # never refuse a row on their own; they are here so that a LATER launch
+    # under `togo` or `near_mine` cannot silently carry a row that was not.
+    "credit": maze_orgb.CREDIT_EPISODE,
+    "epsilon_where": maze_orgb.EPSILON_WHERE_ALL,
 }
 
 
@@ -609,6 +641,7 @@ def _timing_probe(model, tok, cfg, warm_state, train_pool, roles, device, log,
         entropy_coef_fixed=cfg["entropy_coef_fixed"],
         sample_temperature=cfg["sample_temperature"],
         epsilon=cfg.get("epsilon", maze_orgb.EXPLORE_EPSILON_RATE),
+        epsilon_where=cfg.get("epsilon_where", maze_orgb.EPSILON_WHERE_ALL),
         thermostat_off=bool(cfg.get("thermostat_off")),
         temperature=cfg["temperature"])
     hist = maze_orgb.train_orgb_cell(
@@ -621,12 +654,16 @@ def _timing_probe(model, tok, cfg, warm_state, train_pool, roles, device, log,
         entropy_target=plan["entropy_target"],
         explore_mode=plan["mode"], explore_knobs=plan["knobs"],
         sample_temperature=plan["sample_temperature"],
-        epsilon=plan["epsilon"],
+        epsilon=plan["epsilon"], epsilon_where=plan["epsilon_where"],
         sample_batch_size=cfg.get("sample_batch_size"),
         move_mass_coef=cfg["move_mass_coef"],
         move_mask=bool(cfg.get("move_mask", True)),
         # THIRTEENTH PASS: and the price of an unsolved episode (D33).
         exit_at_cap=bool(cfg.get("exit_at_cap", True)),
+        # FOURTEENTH PASS: and which decision of it the credit lands on. The
+        # probe times THE ARM THAT WILL RUN, and `togo` walks the episode's
+        # decisions once more per step.
+        credit=cfg.get("credit", maze_orgb.CREDIT_EPISODE),
         chunk_size=shape["chunk_size"],
         train_pool=train_pool, glyphs=glyphs, fmt=cfg["fmt"], log_every=1)
     memory = None
@@ -839,6 +876,26 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
     ws_glyphs = maze2.format_glyphs(maze2.glyphs_for_seed(0, **roles), fmt)
     ws_path = f"{out_dir}/{cfg['warm_start_name']}.pt"
     reuse = cfg.get("warm_start_adapter")
+    if cfg.get("warm_start_only"):
+        # A BUILD, so there must be nothing to build ON. Both refusals are by
+        # name and both are about the same failure: a warm start is the shared
+        # base of every cell that will ever be trained in this directory (M5),
+        # and one that was silently reused, or silently overwritten, cannot be
+        # told apart afterwards from the one a reader thinks is there.
+        if os.path.exists(ws_path):
+            raise FileExistsError(
+                f"warm_start_only was asked to build {ws_path} and it already "
+                "exists. Building it again would overwrite the base every cell "
+                "trained in this directory stands on, and the organisms would "
+                "then be neither the old warm start's nor the new one's. Point "
+                "the run at a different output directory (MZ01_OUT), or delete "
+                "the file deliberately if it is known to be unused.")
+        if reuse and os.path.exists(reuse):
+            raise ValueError(
+                f"warm_start_only was asked to build a warm start and also "
+                f"handed one to reuse ({reuse}). One of the two is not what "
+                "the launch meant: drop MZ01_WARM_START to build, or drop "
+                "MZ01_WARM_START_ONLY to run the cells on the existing one.")
     if reuse and os.path.exists(reuse):
         sd = torch.load(reuse, map_location="cpu", weights_only=True)
         load_lora_state_dict(model, sd)
@@ -926,12 +983,16 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
         entropy_coef_fixed=cfg["entropy_coef_fixed"],
         sample_temperature=cfg["sample_temperature"],
         epsilon=cfg.get("epsilon", maze_orgb.EXPLORE_EPSILON_RATE),
+        epsilon_where=cfg.get("epsilon_where", maze_orgb.EPSILON_WHERE_ALL),
         thermostat_off=bool(cfg.get("thermostat_off")),
         move_mask=bool(cfg.get("move_mask", True)),
         # THIRTEENTH PASS. The one criterion that REFUSES here is computed from
         # the episode returns, so the gate must read the cells' own price for an
         # unsolved episode or it refuses on a number no cell computes (D33).
         exit_at_cap=bool(cfg.get("exit_at_cap", True)),
+        # FOURTEENTH PASS. And from the PER-DECISION advantages under this run's
+        # own credit rule, which is what its move term will multiply.
+        credit=cfg.get("credit", maze_orgb.CREDIT_EPISODE),
         pinned_target=cfg.get("entropy_target_pinned"), soft=soft)
     payload["preflight_exploration"] = explore
     plan = explore["plan"]
@@ -994,6 +1055,26 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
             (time.perf_counter() - t_run) / 60, 2)
         payload["manifest"]["finished_at"] = time.strftime(
             "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        return payload
+    # ---- MZ01_WARM_START_ONLY: the warm start is the WHOLE job --------------
+    # After both gates, because a warm start that PR-3 or the exploration gate
+    # refuses is not one any cell may be started from, and the point of building
+    # it as its own job is to learn that BEFORE a box is booked on the arms. No
+    # cell is trained, nothing is measured, and `rows` stays empty -- so the
+    # payload cannot be mistaken for a shard, and a later launch against this
+    # directory reuses the file rather than carrying rows forward.
+    if cfg.get("warm_start_only"):
+        payload["warm_start_only"] = True
+        payload["not_measured"].append(
+            "WARM START ONLY (MZ01_WARM_START_ONLY=1): the shared warm start "
+            f"was built at {ws_path} and both gates were run on it. No cell "
+            "was trained and nothing was measured; this payload is the warm "
+            "start's own record and not a shard.")
+        payload["manifest"]["elapsed_minutes"] = round(
+            (time.perf_counter() - t_run) / 60, 2)
+        payload["manifest"]["finished_at"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        _say(f"WARM START ONLY: {ws_path} built and gated; no cell starts", log)
         return payload
 
     # ---- the I5 axis, estimated ONCE on the shared warm-started base --------
@@ -1087,6 +1168,10 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
             "explore_mode": plan["mode"],
             "sample_temperature": plan["sample_temperature"],
             "epsilon": plan["epsilon"],
+            # FOURTEENTH PASS: the RESOLVED targeting rule, for the same reason
+            # the rate is the resolved one -- `plan_epsilon_where` reads it back
+            # to "all" on an arm that draws at 0.
+            "epsilon_where": plan["epsilon_where"],
         })
         for row_key, cfg_key in RESUME_RECIPE_KEYS:
             if row_key in prior_cfg:
@@ -1229,11 +1314,15 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
                 explore_mode=plan["mode"], explore_knobs=plan["knobs"],
                 sample_temperature=plan["sample_temperature"],
                 epsilon=plan["epsilon"],
+                epsilon_where=plan["epsilon_where"],
                 sample_batch_size=cfg.get("sample_batch_size"),
                 move_mass_coef=cfg["move_mass_coef"],
                 move_mask=bool(cfg.get("move_mask", True)),
                 # THIRTEENTH PASS: and the price of an unsolved episode (D33).
                 exit_at_cap=bool(cfg.get("exit_at_cap", True)),
+                # FOURTEENTH PASS: and which decision of the episode the
+                # advantage lands on (the gate above read the same rule).
+                credit=cfg.get("credit", maze_orgb.CREDIT_EPISODE),
                 chunk_size=cfg["chunk_size"], train_pool=train_pool,
                 glyphs=glyphs, fmt=fmt, log_every=max(1, cfg["steps"] // 20),
                 ckpt_path=ckpt_path, ckpt_every=cfg.get("ckpt_every") or 0,
@@ -1287,6 +1376,7 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
                             "explore_knobs": plan["knobs"],
                             "sample_temperature": plan["sample_temperature"],
                             "epsilon": plan["epsilon"],
+                            "epsilon_where": plan["epsilon_where"],
                             "sample_batch_size": cfg.get("sample_batch_size"),
                             "move_mass_coef": cfg["move_mass_coef"],
                             # twelfth pass: the cells' action space too, or
@@ -1298,6 +1388,12 @@ def run(model, tok, config, out_dir, seeds, *, log=None, on_row=None,
                             # DIFFERENT objective and divides the answer by
                             # this organism's own baseline.
                             "exit_at_cap": bool(cfg.get("exit_at_cap", True)),
+                            # fourteenth pass: and the credit rule, one term
+                            # over again -- 50 steps that spread the advantage
+                            # over the whole episode is not 50 steps of the
+                            # trainer that built this organism.
+                            "credit": cfg.get("credit",
+                                              maze_orgb.CREDIT_EPISODE),
                             "chunk_size": cfg["chunk_size"]})
             panel = None
             axis = axes.get(int(seed) % 2)

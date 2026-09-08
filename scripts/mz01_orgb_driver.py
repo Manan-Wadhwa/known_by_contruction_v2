@@ -225,10 +225,64 @@ Environment:
                      episode: only the training return moves. "0" is the
                      twelfth pass's return, bit for bit on a seed, and is
                      reported as a deviation.
+
+  ---- FOURTEENTH PASS (2026-09-08). The credit and the exploration, per
+  DECISION. Three runs of the closed, priced recipe kept an intact policy under
+  a live gradient on seed 0 and never learned to avoid. Two candidate reasons,
+  two knobs, and both DEFAULT TO TODAY'S BEHAVIOUR -- unlike the twelfth and
+  thirteenth passes' knobs, neither of these is a fix for a defect, they are
+  arms (`PLAN-credit-explore-navigator.md` section 4 pre-registers the runs).
+  MZ01_CREDIT        episode (DEFAULT -- every decision of an episode carries
+                     that episode's whole return advantage, which is what this
+                     file has always run) | togo (decision t carries
+                     `G_t = sum_{k >= t} r_k`, baselined against the group's
+                     mean G_t AT THE SAME DECISION INDEX) | immediate (decision
+                     t carries `r_t` alone, same baseline -- the SPEC's own
+                     recipe 3A). Under `episode` one mine landing in a
+                     14-decision episode is spread over 14 decisions, so the
+                     decision that walked onto the mine is scored exactly like
+                     the thirteen that did not. An index present in only ONE
+                     episode of its group gets advantage 0: there is no
+                     baseline there, and the raw G_t would be a bias toward
+                     "never be the long episode".
+  MZ01_EPSILON_WHERE all (DEFAULT -- the tenth pass's uniform draw at every
+                     decision) | near_mine (the draw acts only where a mine is
+                     one of the valid landings, and draws uniformly over the
+                     valid moves that do NOT land on one, falling back to all
+                     of them where every move does). The behaviour cell A is
+                     buying is a DETOUR -- deviate where a mine is adjacent,
+                     away from it -- and uniform epsilon spends most of its
+                     budget elsewhere and a third of the rest stepping ONTO the
+                     adjacent mine. The generator stream is untouched: the two
+                     draws are made per active episode either way, so `all` is
+                     bit-identical to the tenth pass. With `near_mine` the
+                     recommended MZ01_EPSILON is 0.3 (about a third of the
+                     decisions on this pool are eligible, so the overall
+                     replacement share stays near 0.1 -- the pre-flight
+                     measures it as `epsilon_eligible_fraction`).
   MZ01_YELL_W        the remark term's weight (default `maze_orgb.YELL_WEIGHT`,
                      which is the PRE-REGISTERED number; overriding it is a
                      deviation and lands in the manifest as one).
   MZ01_WARM_START    path to an existing warm-started adapter to reuse.
+  MZ01_OUT           the results directory this launch OWNS: the shard's JSON,
+                     the per-cell adapters, the mid-cell checkpoints and
+                     `warm_start.pt`. Default
+                     `experiments/v2/MZ01_maze_world/results/orgb`. It is a knob
+                     because a warm start is per NAVIGATOR -- M5's "one warm
+                     start" is one per base, not one per repository -- so the
+                     warm start built from a NEW navigator must land in its own
+                     directory and must never be written over the one every
+                     committed row stands on.
+  MZ01_WARM_START_ONLY  "1" builds this directory's ONE warm start (M5), runs
+                     PR-3 and the exploration gate on it, writes the payload and
+                     STOPS: no cell is trained, nothing is measured, `rows` is
+                     empty. It exists because a new navigator needs a warm start
+                     of its own before any arm can run on it, and that build is
+                     a job a box can take on its own while the arms queue. It
+                     REFUSES BY NAME if `warm_start.pt` is already in MZ01_OUT
+                     (overwriting it would replace the base every organism in
+                     that directory stands on) or if MZ01_WARM_START also names
+                     one to reuse (then there is nothing to build).
   MZ01_NO_PLACEBO / MZ01_NO_NOVEL / MZ01_NO_RELEARN / MZ01_NO_INSTRUMENTS
                      "1" drops that read. Each is a documented cost lever and
                      each turns its own claim into NOT-MEASURED.
@@ -309,6 +363,17 @@ MOVE_MASS_COEF = os.environ.get("MZ01_MOVE_MASS_COEF", "").strip()
 # DEFECT and not an arm -- the rerun's own trace is the evidence -- so "0" is
 # the deviation and is reported as one.
 EXIT_AT_CAP = os.environ.get("MZ01_EXIT_AT_CAP", "1") != "0"
+# FOURTEENTH PASS. Both default to TODAY'S behaviour, in the R2 knobs' style
+# rather than the twelfth/thirteenth passes': `episode` and `all` are arms that
+# have run, not a defect, and the pre-registered runs that choose between them
+# are the deviation-free ones only if the default reproduces the last pass.
+CREDIT = os.environ.get("MZ01_CREDIT", "").strip()
+EPSILON_WHERE = os.environ.get("MZ01_EPSILON_WHERE", "").strip()
+# MZ01_WARM_START_ONLY=1. Build this directory's ONE warm start (M5), run its
+# two gates, write the payload and STOP -- no cell is trained and nothing is
+# measured. A new navigator needs a warm start of its own before any arm can be
+# run on it, and building it is a job a box can take on its own.
+WARM_START_ONLY = os.environ.get("MZ01_WARM_START_ONLY", "") == "1"
 ENTROPY_TARGET_PINNED = os.environ.get("MZ01_ENTROPY_TARGET", "").strip()
 PREFLIGHT_SOFT = os.environ.get("MZ01_PREFLIGHT_SOFT", "") == "1"
 SHARD = os.environ.get("MZ01_SHARD", "orgb").strip() or "orgb"
@@ -339,7 +404,14 @@ WARM_START = os.environ.get("MZ01_WARM_START", "").strip()
 CKPT_EVERY = os.environ.get("MZ01_CKPT_EVERY", "").strip()
 RESUME = os.environ.get("MZ01_RESUME", "1") != "0"
 
-OUT = f"{REPO}/experiments/v2/MZ01_maze_world/results/orgb"
+# MZ01_OUT. The results directory this launch owns -- the shard's file, the
+# per-cell adapters, the mid-cell checkpoints AND `warm_start.pt`. It is
+# overridable because a warm start is per NAVIGATOR (M5's "one warm start" is
+# one per base, not one per repository): the warm start built from `nav48u` must
+# land in its own directory and must never be written over
+# `results/orgb/warm_start.pt`, which every committed cell-A row stands on.
+OUT = (os.environ.get("MZ01_OUT", "").strip()
+       or f"{REPO}/experiments/v2/MZ01_maze_world/results/orgb")
 STATUS = f"{REPO}/mz01_{SHARD}_status.txt"
 
 
@@ -409,6 +481,21 @@ def build_config(maze_orgb, run_orgb):
         cfg["sample_temperature"] = float(SAMPLE_T)
     if EPSILON:
         cfg["epsilon"] = float(EPSILON)
+    # FOURTEENTH PASS. Validated HERE, at import of the config and before a
+    # model is loaded, so a typo in a launch line dies on the command line
+    # rather than eight hours in -- the same courtesy MZ01_EXPLORE gets.
+    if CREDIT:
+        if CREDIT not in maze_orgb.CREDIT_MODES:
+            raise SystemExit(
+                f"MZ01_CREDIT must be one of {list(maze_orgb.CREDIT_MODES)}, "
+                f"got {CREDIT!r}")
+        cfg["credit"] = CREDIT
+    if EPSILON_WHERE:
+        if EPSILON_WHERE not in maze_orgb.EPSILON_WHERES:
+            raise SystemExit(
+                "MZ01_EPSILON_WHERE must be one of "
+                f"{list(maze_orgb.EPSILON_WHERES)}, got {EPSILON_WHERE!r}")
+        cfg["epsilon_where"] = EPSILON_WHERE
     if THERMOSTAT_OFF:
         cfg["thermostat_off"] = True
     if ENTROPY_TARGET_PINNED:
@@ -418,8 +505,30 @@ def build_config(maze_orgb, run_orgb):
     # M5's "saved ONCE", across shards: reuse the warm start this run's first
     # shard wrote, unless the caller names another one.
     default_ws = f"{OUT}/warm_start.pt"
-    cfg["warm_start_adapter"] = (
-        WARM_START or (default_ws if os.path.exists(default_ws) else None))
+    cfg["warm_start_only"] = WARM_START_ONLY
+    if WARM_START_ONLY:
+        # REFUSED HERE, before a model is loaded and before a lease is spent.
+        # `run_orgb.run` refuses the same two things at the library level; this
+        # is the same refusal on the command line, where it costs seconds.
+        if WARM_START:
+            raise SystemExit(
+                "MZ01_WARM_START_ONLY=1 builds a warm start and "
+                f"MZ01_WARM_START={WARM_START!r} hands one over to reuse. One "
+                "of the two is not what this launch meant: drop MZ01_WARM_START "
+                "to build, or drop MZ01_WARM_START_ONLY to run the cells on the "
+                "existing file.")
+        if os.path.exists(default_ws):
+            raise SystemExit(
+                f"MZ01_WARM_START_ONLY=1 but {default_ws} already exists. "
+                "Building it again would overwrite the base every cell trained "
+                "in this directory stands on (M5), and its organisms would then "
+                "be neither the old warm start's nor the new one's. Set MZ01_OUT "
+                "to the new navigator's own directory, or delete the file "
+                "deliberately if it is known to be unused.")
+        cfg["warm_start_adapter"] = None
+    else:
+        cfg["warm_start_adapter"] = (
+            WARM_START or (default_ws if os.path.exists(default_ws) else None))
     # critic 3, BLOCKING. The role glyphs come from the NAVIGATOR'S OWN result
     # file, never from `Glyphs()`'s dataclass defaults. Under ASCII `on_mine` is
     # the only measured role and it IS the manipulation; the shared navigator
@@ -772,6 +881,28 @@ def deviations(cfg, maze_orgb):
             "episode in every Dr.GRPO group. This is the twelfth pass's "
             "return, and its erratum is the seed-0 trace where farm_stopped "
             "went 0.00 -> 1.00 and solve 1.00 -> 0.00 in 75 steps.")
+    # FOURTEENTH PASS. Neither knob is a fix for a defect, so the DEVIATION is
+    # running one of the new arms and not running the old default: a shard whose
+    # credit is not the episode's, or whose epsilon is spent only where a mine is
+    # adjacent, is a different estimator from the one every committed row was
+    # trained under, and the manifest has to say so in the same place every other
+    # deviation is said.
+    if cfg.get("credit", maze_orgb.CREDIT_EPISODE) != maze_orgb.CREDIT_EPISODE:
+        out.append(
+            f"credit={cfg['credit']!r} against the {maze_orgb.CREDIT_EPISODE!r} "
+            "every committed row ran: the move advantage lands on the DECISION "
+            "that earned it (baselined against the group's own value at the "
+            "same decision index) rather than on every decision of the episode. "
+            "Every cell of this shard is that estimator.")
+    if (cfg.get("epsilon_where", maze_orgb.EPSILON_WHERE_ALL)
+            != maze_orgb.EPSILON_WHERE_ALL):
+        out.append(
+            f"epsilon_where={cfg['epsilon_where']!r}: the epsilon draw acts "
+            "ONLY at decisions with a mine among the valid landings and never "
+            "draws onto one, so the behaviour policy is a state-dependent "
+            "mixture rather than `(1 - eps) pi + eps Uniform(valid)`. The "
+            "eligible share is measured per step; the correction is still not "
+            "applied.")
     # 0.0 is `run_orgb.DEFAULT_CONFIG["move_mass_coef"]` as of this pass, in the
     # same style as the 300 and the 256 above: the registered number, named.
     if float(cfg.get("move_mass_coef") or 0.0) != 0.0:
@@ -987,13 +1118,17 @@ def main():
     say(f"MZ01 ORG-B: {model_id} @ {REVISION}; shard {SHARD}; seeds {SEEDS}; "
         f"cells {CELLS}; {cfg['steps']} steps x {cfg['batch_size']} mazes x "
         f"{cfg['group_size']} episodes; n={GRID_N}; fmt={FORMAT}; "
-        f"smoke_only={SMOKE_ONLY}; smoke_timing={SMOKE_TIMING}")
+        f"smoke_only={SMOKE_ONLY}; smoke_timing={SMOKE_TIMING}; out {OUT}"
+        + ("; WARM START ONLY -- the warm start is built and gated and no cell "
+           "is trained" if WARM_START_ONLY else ""))
     say(f"  exploration (R2): mode={cfg['explore_mode']}, "
         f"entropy_coef={cfg['entropy_coef']}, target={cfg['entropy_target']} "
         f"(rel {cfg['entropy_rel']}, floor {cfg['entropy_min']}, fixed-coef "
         f"{cfg['entropy_coef_fixed']}, sample_T {cfg['sample_temperature']}, "
-        f"epsilon {cfg['epsilon']}, thermostat_off {cfg['thermostat_off']}, "
+        f"epsilon {cfg['epsilon']} at {cfg['epsilon_where']}, "
+        f"thermostat_off {cfg['thermostat_off']}, "
         f"pinned {cfg['entropy_target_pinned']}); "
+        f"credit {cfg['credit']}; "
         f"eval_batch={cfg['eval_batch_size']}, "
         f"sample_batch={cfg['sample_batch_size'] or cfg['chunk_size']}, "
         f"preflight_soft={cfg['preflight_soft']}")
@@ -1101,6 +1236,15 @@ def main():
         say_timing(payload["smoke_timing"])
         say("MZ01 ORGB TIMING DONE (MZ01_SMOKE_TIMING=1; no cell was gated, "
             "no row was written)")
+        return
+    if payload.get("warm_start_only"):
+        ws = (payload.get("warm_start") or {})
+        say(f"MZ01 ORGB WARM START DONE (MZ01_WARM_START_ONLY=1): "
+            f"{work_dir}/warm_start.pt sha "
+            f"{(ws.get('adapter_sha256') or 'n/a')[:12]}; both gates ran, no "
+            f"cell was trained and nothing was measured. Point the arms at it "
+            f"with MZ01_WARM_START={work_dir}/warm_start.pt (or MZ01_OUT="
+            f"{work_dir}).")
         return
     if not payload["rows"]:
         say("MZ01 ORGB STOPPED: no organism was trained (see not_measured "

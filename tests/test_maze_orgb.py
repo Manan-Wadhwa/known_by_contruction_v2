@@ -3650,7 +3650,7 @@ def test_move_mask_zero_is_the_pre_build_sampler_and_the_pre_build_trace():
     # The trace GREW a field (first_token_class); it did not change one. The
     # checkpoint schema is what refuses a resume across the difference.
     assert len(hist["first_token_class"]) == 2
-    assert maze_orgb.CKPT_SCHEMA == 5
+    assert maze_orgb.CKPT_SCHEMA == 6
 
 
 def test_the_masked_sampler_draws_the_first_token_from_the_four_move_ids():
@@ -4075,7 +4075,7 @@ def test_a_checkpoint_from_the_other_action_space_is_refused(killed_cell,
     fresh, _state, saves = _ckpt_train(
         ckpt_path=str(Path(tmp_path) / "schema.pt"), ckpt_every=2, steps=2)
     ck = maze_orgb.load_cell_checkpoint(str(Path(tmp_path) / "schema.pt"))
-    assert saves == [2] and ck["fingerprint"]["schema"] == 5
+    assert saves == [2] and ck["fingerprint"]["schema"] == 6
     assert ck["fingerprint"]["move_mask"] is True
     assert ck["fingerprint"]["move_mass_coef"] == 0.0
 
@@ -4602,7 +4602,7 @@ def test_a_checkpoint_from_the_other_return_is_refused(killed_cell, tmp_path):
     fresh, _state, saves = _ckpt_train(
         ckpt_path=str(Path(tmp_path) / "exit.pt"), ckpt_every=2, steps=2)
     ck = maze_orgb.load_cell_checkpoint(str(Path(tmp_path) / "exit.pt"))
-    assert saves == [2] and ck["fingerprint"]["schema"] == 5
+    assert saves == [2] and ck["fingerprint"]["schema"] == 6
     assert ck["fingerprint"]["exit_at_cap"] is True
     assert "exit_return_share" in ck["history"]
 
@@ -4688,3 +4688,892 @@ def test_the_old_price_is_a_named_deviation_and_a_named_launch_line():
     row_mid = [r for r in rows_mid if not r.get("reference")][0]
     assert row_mid["exit_at_cap"] is None
     assert "MZ01_EXIT_AT_CAP" not in score.env_line(row_mid, cells="A")
+
+
+# ---------------------------------------------------------------------------
+# fourteenth pass, 2026-09-08: per-decision credit (A) and targeted epsilon (B)
+# (PLAN-credit-explore-navigator.md sections 1 and 2)
+# ---------------------------------------------------------------------------
+#
+# THE PRE-BUILD NUMBERS. Captured by running the code at `8894ce5` -- the commit
+# this pass was written against, and the last one where every decision of an
+# episode carried that episode's whole advantage and every epsilon draw was
+# uniform over the valid moves -- on the two fixtures below. There is nothing
+# else to compare against: the claim is that `credit="episode"` and
+# `epsilon_where="all"` reproduce a trainer and a sampler the defaults no longer
+# describe on their own, so the reference has to be a recording of them.
+#
+# `_exit_fixture_train()` is reused as the CREDIT fixture rather than a new one:
+# its group has episodes of different lengths that solve, farm-stop and run to
+# the cap, and every route on `TWOMINES` runs through both mines mid-episode, so
+# `togo` and `episode` cannot agree on it -- which the second half of the
+# bit-identity test asserts directly.
+#
+# IF THIS EVER FAILS AFTER A TOY OR A TORCH CHANGE rather than after a change to
+# `decision_advantages` / `decision_rewards` / `train_orgb_cell`, re-derive it:
+# check out the pre-build commit, run `_exit_fixture_train()` and
+# `_epsilon_fixture_rollout()` there (without the arguments that do not exist
+# yet) and paste the numbers back. Do not relax the comparison -- an approximate
+# bit-identity claim is not one.
+_PRE_BUILD_CREDIT_TRACE = {
+    'adv_abs_mean': None,          # the trace GREW these three; see below
+    'adv_nonzero_share': None,
+    'epsilon_eligible_fraction': None,
+    'capped_rate': [0.8333333333333334, 0.6666666666666666],
+    'complaint_rate_on_mine': [0.0, 0.0],
+    'complaint_rate_other': [0.0, 0.0],
+    'contingency_train': [0.0, 0.0],
+    'distinct_remarks': [0, 0],
+    'entropy_coef': [0.01, 0.009796617032008986],
+    'episode_length': [11.333333333333334, 8.666666666666666],
+    'epsilon_replaced_fraction': [0.0, 0.0],
+    'exit_return_share': [0.8333333333333334, 0.6666666666666666],
+    'farm_stopped_rate': [0.0, 0.5],
+    'first_token_class': [
+        {'bare': 0.0, 'spaced': 0.0, 'capitalised': 0.0, 'other': 1.0,
+         'n': 68, 'rule': 'id'},
+        {'bare': 0.0, 'spaced': 0.0, 'capitalised': 0.0, 'other': 1.0,
+         'n': 52, 'rule': 'id'}],
+    'grad_norm': [6.74459981918335, 11.781900405883789],
+    'invalid_rate': [0.07352941176470588, 0.3269230769230769],
+    'log_importance_ratio': [None, None],
+    'loss': [-1.7882237434387207, 1.2576565742492676],
+    'mean_return': [-94.33333333333333, -44.333333333333336],
+    'mine_step_rate': [7.5, 3.0],
+    'move_dist': [[0.44117647409439087, 0.5147058963775635, 0.0,
+                   0.04411764815449715],
+                  [0.5, 0.3461538553237915, 0.0, 0.1538461595773697]],
+    'move_mass': [0.0119123529533253, 0.0148039568358889],
+    'n_decisions': [68, 52],
+    'on_mine_state_rate': [0.6029411764705882, 0.34615384615384615],
+    'on_step_errors': [],
+    'policy_entropy': [1.1109593545689302, 1.0133292033122137],
+    'remark_share': [0.0, 0.0],
+    'return_sd': [31.94613522095522, 21.921577396609845],
+    'solve_rate': [0.16666666666666666, 0.3333333333333333],
+    'step': [0, 1],
+    'unparsed_rate': [0.0, 0.0],
+    'within_group_return_sd': [24.620871955473472, 21.455836117599773],
+    'yell_episode_mean': [0.0, 0.0],
+    'yell_mean': [-0.20588235294117646, 0.3076923076923077],
+    'yell_within_group_sd': [0.0, 0.0],
+    'zero_advantage_group_fraction': [0.0, 0.0],
+}
+# The three fields the trace GREW in this pass. They did not exist at the
+# pre-build commit, so they are named here rather than left out of the
+# comparison, and the test pops them before comparing and asserts them
+# separately -- an absent field and an unchanged one must not look alike.
+_CREDIT_TRACE_NEW_FIELDS = ("adv_abs_mean", "adv_nonzero_share",
+                            "epsilon_eligible_fraction")
+_PRE_BUILD_CREDIT_ADAPTER_SHA = (
+    "6a96d877f9c47e4694edfc0fa9e67842c8952d73c84f280199a78488bacdbdbc")
+
+# The epsilon roll-out, as a sha over everything it produced: the ids, the moves,
+# which decisions were replaced and with what, and the episodes' landings and
+# returns. A digest rather than a pasted list because the roll-out is 71
+# decisions long and the claim is about all of it.
+_PRE_BUILD_EPSILON_ROLLOUT_SHA = (
+    "8cd921f617e0100375017a3fc54e321511451a31839fe7aa19833efcfdc3c94c")
+_PRE_BUILD_EPSILON_ROLLOUT_SHAPE = {"n_decisions": 71, "n_replaced": 37,
+                                    "returns": [-114.0, -32.0, -94.0, -104.0,
+                                                -74.0, -104.0]}
+
+# The keys `decision_advantages` reads off an episode record. Stated here so the
+# hand-built episodes below are a claim about the REAL record shape: the first
+# test asserts a real `_TextEp.record()` carries every one of them.
+_CREDIT_RECORD_KEYS = ("index", "group", "decisions", "landings", "labels",
+                       "solved")
+
+
+def _hand_episode(index, group, landings, *, first_row, cap=24, solved=None):
+    """One episode record, hand-built, in `_TextEp.record()`'s shape.
+
+    Only the fields `decision_advantages` reads. `first_row` is where this
+    episode's decisions start in the step's flat decision list, which is what
+    the real roll-out's lockstep interleaving decides.
+    """
+    return {
+        "index": index,
+        "group": group,
+        "decisions": list(range(first_row, first_row + len(landings))),
+        "landings": list(landings),
+        "labels": {"cap": cap},
+        "solved": ("goal" in landings) if solved is None else bool(solved),
+    }
+
+
+# THE PAIR the whole of part A is about: one episode steps on a mine at decision
+# 3, the other spends TWO extra decisions going around it and solves. The detour
+# is worth paying -- 2 x SCORE_STEP = -4 against SCORE_MINE = -10 -- so the two
+# episodes are a real choice and not a tie, and their first three decisions are
+# the same walk.
+_MINE_EP = ["floor", "floor", "floor", "mine", "floor", "goal"]
+_DETOUR_EP = ["floor"] * 7 + ["goal"]
+
+
+def _credit_pair(credit):
+    """`decision_advantages` over the mine/detour pair. -> (adv, mine, detour)."""
+    mine = _hand_episode(0, 0, _MINE_EP, first_row=0)
+    detour = _hand_episode(1, 0, _DETOUR_EP, first_row=len(_MINE_EP))
+    adv = maze_orgb.decision_advantages(
+        [mine, detour], len(_MINE_EP) + len(_DETOUR_EP), credit=credit)
+    return (adv, [adv[r] for r in mine["decisions"]],
+            [adv[r] for r in detour["decisions"]])
+
+
+def test_the_per_decision_rewards_sum_to_the_episode_return():
+    """PLAN section 1 test 1. THE IDENTITY THE WHOLE OF PART A STANDS ON.
+
+    `togo` and `immediate` are two ways of SPENDING the episode's return, not
+    two returns: if `sum_t r_t` were not `episode_return`, the new credit rules
+    would be a different objective wearing the same knob, and the exit price,
+    the mine switch and the goal bonus would each be able to drift out of the
+    per-decision account silently. Asserted on solved, capped, farm-stopped and
+    unsolved-with-mines episodes, with the mine priced and with it free, and
+    with the exit at the cap and at the decisions taken.
+    """
+    cap = 12
+    cases = {
+        "solved": ["floor", "mine", "floor", "mine", "floor", "goal"],
+        "solved at the cap": ["floor"] * (cap - 1) + ["goal"],
+        "farm-stopped": ["blocked", "blocked", "blocked"],
+        "unsolved with mines": ["mine", "floor", "mine", "blocked"],
+        "ran to the cap": ["mine"] + ["floor"] * (cap - 1),
+        "one decision": ["mine"],
+        "never parsed": ["unparsed"] * 4,
+    }
+    for name, landings in cases.items():
+        for mine_cost in (True, False):
+            for use_cap in (True, False):
+                kw = {"mine_cost": mine_cost}
+                if use_cap:
+                    kw["cap"] = cap
+                    kw["solved"] = "goal" in landings
+                rewards = maze_orgb.decision_rewards(landings, **kw)
+                assert len(rewards) == len(landings), name
+                assert (abs(sum(rewards)
+                            - maze_orgb.episode_return(landings, **kw))
+                        <= 1e-12), (name, mine_cost, use_cap, rewards)
+    # And the two pieces are where they should be, not merely summing right:
+    # the mine's price is on the decision that landed on it and the exit's extra
+    # charge is on the decision the episode stopped at.
+    r = maze_orgb.decision_rewards(["floor", "mine", "blocked"], cap=cap,
+                                   solved=False)
+    assert r[0] == maze2.SCORE_STEP
+    assert r[1] == maze2.SCORE_STEP + maze2.SCORE_MINE
+    assert r[2] == maze2.SCORE_STEP + maze2.SCORE_STEP * (cap - 3)
+    # An episode with no decisions has nowhere to carry the exit charge and is
+    # refused by name rather than returning a list whose sum is not the return.
+    with pytest.raises(ValueError) as err:
+        maze_orgb.decision_rewards([], cap=cap, solved=False)
+    assert "NO decisions" in str(err.value)
+    # ... and the solved flag is checked here exactly as `episode_return` checks
+    # it, so the two cannot price two different episodes.
+    with pytest.raises(ValueError):
+        maze_orgb.decision_rewards(["goal"], cap=cap, solved=False)
+
+
+def test_the_hand_built_episode_is_the_shape_the_roll_out_produces():
+    """The hand-built records below are a claim about the REAL record.
+
+    `decision_advantages` reads six fields off an episode; if the roll-out ever
+    stops writing one of them, the tests that hand-build episodes would keep
+    passing while the trainer broke. This is the join between the two.
+    """
+    maze = maze2.from_layout(TWOMINES, seed=500)
+    rec = _episodes_under(lambda p, _g: _oracle_reply(p), maze)[0]
+    for key in _CREDIT_RECORD_KEYS:
+        assert key in rec, key
+    assert "cap" in rec["labels"]
+    assert len(rec["decisions"]) == len(rec["landings"])
+    hand = _hand_episode(rec["index"], rec["group"], rec["landings"],
+                         first_row=rec["decisions"][0],
+                         cap=rec["labels"]["cap"])
+    assert hand["decisions"] == rec["decisions"]
+    assert hand["solved"] == rec["solved"]
+
+
+def test_togo_blames_every_decision_up_to_the_mine_and_credits_the_ones_after():
+    """PLAN section 1 test 2, CORRECTED -- see the note below.
+
+    On the mine/detour pair, `togo` gives decision t the return STILL TO COME.
+    The mine is in the future at t = 0, 1, 2 and 3, so all four of those
+    decisions of the mine episode carry the same blame (-3 = half the 6-point
+    gap between the two episodes' returns), and from t = 4 the mine is PAID and
+    the shorter episode is ahead by 2.
+
+    THE PLAN'S OWN DESCRIPTION OF THIS TEST IS WRONG and is corrected here
+    rather than implemented: it asks for `A_t = 0` at decisions 0-2 with a
+    negative advantage on the mine decision alone. That is `immediate`'s
+    behaviour (the next test), and it CANNOT be `togo`'s -- under to-go credit
+    every decision before the mine also carries it, which is the entire
+    difference between the two modes. Making `togo` behave that way would mean
+    subtracting a baseline that already knows which future decision costs, which
+    is the thing being estimated. The build implements to-go as specified in the
+    formula (`G_t = sum_{k >= t} r_k`) and this test asserts what that IS.
+    """
+    adv, mine_adv, detour_adv = _credit_pair("togo")
+    assert maze_orgb.episode_return(_MINE_EP) == -2.0
+    assert maze_orgb.episode_return(_DETOUR_EP) == 4.0
+
+    # Every decision up to AND INCLUDING the mine carries the same blame, and it
+    # is exactly minus the detour's credit at the same index.
+    assert mine_adv[:4] == [-3.0, -3.0, -3.0, -3.0]
+    assert detour_adv[:4] == [3.0, 3.0, 3.0, 3.0]
+    # After the mine is paid, the mine episode is nearer the goal at the same
+    # index and the baseline says so. This is the step-index baseline's own
+    # bias, visible: it compares the t-th decisions, not the same STATE.
+    assert mine_adv[4:] == [2.0, 2.0]
+    assert detour_adv[4:6] == [-2.0, -2.0]
+    # The detour's last two decisions are at indices no other episode of the
+    # group reaches, so they have no baseline and get exactly zero -- a lone
+    # long episode must not be punished for existing (PLAN section 1).
+    assert detour_adv[6:] == [0.0, 0.0]
+    # Every advantage of the group sums to zero at every index that has one,
+    # which is what makes the baseline unbiased at that index.
+    assert abs(sum(adv)) < 1e-12
+
+
+def test_immediate_credit_lands_the_mine_on_the_decision_that_stepped_on_it():
+    """PLAN section 1 test 3 (and what its test 2 actually describes).
+
+    `immediate` is SPEC recipe 3A: decision t carries `r_t` alone. The two
+    episodes walk the same three floor tiles, so those decisions are worth the
+    same and their advantage is exactly 0; at decision 3 one pays the mine and
+    the other does not, and the two advantages are +/- half the difference.
+    """
+    adv, mine_adv, detour_adv = _credit_pair("immediate")
+    assert mine_adv[:3] == [0.0, 0.0, 0.0]
+    assert detour_adv[:3] == [0.0, 0.0, 0.0]
+    # THE POINT OF THE WHOLE PASS: the mine's -10 lands on the decision that
+    # walked onto it, and nowhere else.
+    assert mine_adv[3] == -5.0 and detour_adv[3] == 5.0
+    assert mine_adv[4] == 0.0 and detour_adv[4] == 0.0
+    # The goal bonus lands the same way -- on whoever reached it at that index.
+    # Named because it is the index baseline's bias again and not a surprise:
+    # at t = 5 one episode is at the goal and the other is still walking.
+    assert mine_adv[5] == 10.0 and detour_adv[5] == -10.0
+    assert detour_adv[6:] == [0.0, 0.0]
+    assert abs(sum(adv)) < 1e-12
+
+
+def test_a_decision_index_only_one_episode_reaches_has_no_baseline():
+    """PLAN section 1 test 4. The lone-index rule, in both new modes.
+
+    A group of two where one episode is twice as long: every index past the
+    short episode's end is present in ONE episode, and its own value minus
+    itself is not a baseline. Under cell A those raw `G_t` are large negative
+    numbers on every such decision whatever the episode did, so scoring them
+    would be a standing push toward "never be the long episode" -- which is the
+    early exit this programme has installed by accident twice.
+    """
+    short = _hand_episode(0, 0, ["floor", "floor", "goal"], first_row=0)
+    long_ = _hand_episode(1, 0, ["floor"] * 5 + ["goal"], first_row=3)
+    for credit in ("togo", "immediate"):
+        adv = maze_orgb.decision_advantages([short, long_], 9, credit=credit)
+        lone = [adv[r] for r in long_["decisions"][3:]]
+        assert lone == [0.0, 0.0, 0.0], credit
+        shared = [adv[r] for r in long_["decisions"][:3]]
+        assert any(a != 0.0 for a in shared), credit
+    # A group of ONE is every index lone, so it contributes nothing at all --
+    # the same reading `group_advantages` gives it, one level down.
+    solo = maze_orgb.decision_advantages(
+        [_hand_episode(0, 0, ["floor", "goal"], first_row=0)], 2,
+        credit="togo")
+    assert solo == [0.0, 0.0]
+
+
+def test_credit_episode_is_the_pre_build_trace_and_the_pre_build_adapter():
+    """PLAN section 1 test 5. `credit="episode"` IS the pre-build trainer.
+
+    Asserted against a trace and an adapter digest recorded from the code at
+    `8894ce5`, with `==` and a sha over the fp64 bytes rather than a tolerance.
+    The fixture is the thirteenth pass's: its episodes solve, farm-stop and run
+    to the cap inside the same groups and every route on `TWOMINES` runs through
+    both mines mid-episode, so `togo` and `episode` really do produce different
+    advantages on it -- which the second half asserts, or the first half would
+    be a claim about a fixture that cannot tell them apart.
+    """
+    hist, state = _exit_fixture_train(credit="episode")
+    for key, want in _PRE_BUILD_CREDIT_TRACE.items():
+        if key in _CREDIT_TRACE_NEW_FIELDS:
+            continue
+        assert hist[key] == want, (key, hist[key], want)
+    assert _adapter_sha(state) == _PRE_BUILD_CREDIT_ADAPTER_SHA
+    assert hist["config"]["credit"] == "episode"
+    assert hist["config"]["epsilon_where"] == "all"
+    # The trace GREW three fields; it did not change one. With no epsilon the
+    # eligible share is 0.000 every step (there is no draw to be eligible for),
+    # and the two advantage numbers are the same question `zadv` answers per
+    # group, per decision.
+    assert hist["epsilon_eligible_fraction"] == [0.0, 0.0]
+    assert len(hist["adv_abs_mean"]) == 2 and hist["adv_abs_mean"][0] > 0.0
+    assert hist["adv_nonzero_share"] == [1.0, 1.0]
+
+    for credit in ("togo", "immediate"):
+        other, other_state = _exit_fixture_train(credit=credit)
+        assert other["config"]["credit"] == credit
+        # The SAMPLER is scripted and reads no weights, so both runs visited the
+        # same decisions; everything that moved is downstream of the advantages.
+        for key in _EXIT_SAMPLER_FIELDS:
+            assert other[key] == hist[key], (credit, key)
+        assert other["mean_return"] == hist["mean_return"], credit
+        assert other["loss"] != hist["loss"], credit
+        assert any(not torch.equal(other_state[k], state[k])
+                   for k in state), credit
+
+
+def test_the_degeneracy_report_is_the_same_number_under_episode_credit():
+    """PLAN section 1 test 6. `zero_advantage_group_fraction` keeps its meaning.
+
+    It is now read off the per-decision ADVANTAGES -- "the share of groups in
+    which no decision has a gradient" -- which is the only definition that still
+    means that under `togo`. Under `episode` it has to be the SAME NUMBER as the
+    old return-based read, and that is asserted here rather than argued: a
+    group's broadcast advantages are all zero exactly when its returns are all
+    equal, because returns are sums of three integer constants.
+    """
+    flat = [_hand_episode(i, 0, ["floor", "floor", "goal"], first_row=3 * i)
+            for i in range(2)]
+    # The same maze, one episode stepping on a mine: a real difference.
+    live = [_hand_episode(2, 1, ["floor", "floor", "goal"], first_row=6),
+            _hand_episode(3, 1, ["mine", "floor", "goal"], first_row=9)]
+    episodes = flat + live
+    n = 12
+    groups = [e["group"] for e in episodes for _r in e["decisions"]]
+
+    for credit in ("episode", "togo", "immediate"):
+        adv = maze_orgb.decision_advantages(episodes, n, credit=credit)
+        share = maze_orgb.zero_advantage_decision_fraction(adv, groups)
+        assert share == 0.5, credit          # one flat group of the two
+    # ... and under `episode` it is EXACTLY the number the old read gives.
+    old = maze_orgb.zero_advantage_group_fraction(
+        [maze_orgb.episode_return(e["landings"], cap=e["labels"]["cap"],
+                                  solved=e["solved"]) for e in episodes],
+        [e["group"] for e in episodes])
+    new = maze_orgb.zero_advantage_decision_fraction(
+        maze_orgb.decision_advantages(episodes, n, credit="episode"), groups)
+    assert old == new == 0.5
+    # A group whose every decision is zero and a group with ONE non-zero
+    # decision, read directly, so the definition itself is asserted and not only
+    # its agreement with the old one.
+    assert maze_orgb.zero_advantage_decision_fraction(
+        [0.0, 0.0, 0.0, 0.0], ["a", "a", "b", "b"]) == 1.0
+    assert maze_orgb.zero_advantage_decision_fraction(
+        [0.0, 0.0, 0.0, 1e-3], ["a", "a", "b", "b"]) == 0.5
+    # Under the tolerance, not under `==`: the new modes subtract a group mean
+    # and two equal means can land a few ulps apart.
+    assert maze_orgb.zero_advantage_decision_fraction(
+        [0.0, 1e-12], ["a", "a"]) == 1.0
+
+
+def test_a_checkpoint_from_another_credit_rule_is_refused(killed_cell,
+                                                          tmp_path):
+    """PLAN section 1 test 7. `credit` and `epsilon_where` are schema-6 fields.
+
+    A resume across the credit rule would take half its gradients with the
+    advantage spread over the whole episode and half with it on the decision
+    that earned it: two estimators, one adapter, and nothing anywhere else in
+    the row saying which steps were which.
+    """
+    fresh, _state, saves = _ckpt_train(
+        ckpt_path=str(Path(tmp_path) / "credit.pt"), ckpt_every=2, steps=2)
+    ck = maze_orgb.load_cell_checkpoint(str(Path(tmp_path) / "credit.pt"))
+    assert saves == [2] and ck["fingerprint"]["schema"] == 6
+    assert ck["fingerprint"]["credit"] == "episode"
+    assert ck["fingerprint"]["epsilon_where"] == "all"
+    for field in _CREDIT_TRACE_NEW_FIELDS:
+        assert field in ck["history"], field
+
+    other = _copy_ckpt(killed_cell, tmp_path, "wrong_credit.pt")
+    with pytest.raises(RuntimeError) as err:
+        _ckpt_train(ckpt_path=other, ckpt_every=2, credit="togo")
+    assert "credit" in str(err.value) and "DIFFERENT recipe" in str(err.value)
+
+    # AND A SCHEMA-5 FILE IS REFUSED BY NAME. It was written when every decision
+    # of an episode carried the episode's whole advantage and it carries a trace
+    # with none of the three new fields, so resuming it would continue one
+    # estimator under another with nothing on disk saying so.
+    old = _copy_ckpt(killed_cell, tmp_path, "schema_five.pt")
+    blob = maze_orgb.load_cell_checkpoint(old)
+    blob["fingerprint"] = dict(blob["fingerprint"], schema=5)
+    for field in ("credit", "epsilon_where"):
+        blob["fingerprint"].pop(field)
+    blob["history"] = {k: v for k, v in blob["history"].items()
+                       if k not in _CREDIT_TRACE_NEW_FIELDS}
+    maze_orgb.save_cell_checkpoint(blob, old)
+    with pytest.raises(RuntimeError) as err2:
+        _ckpt_train(ckpt_path=old, ckpt_every=2)
+    assert "schema" in str(err2.value)
+
+    # An unknown credit rule dies at the top of the trainer, by name, before a
+    # single episode is drawn -- a launch line typo must not cost a lease.
+    with pytest.raises(ValueError) as err3:
+        _explore_train(credit="discounted", steps=1)
+    assert "credit" in str(err3.value)
+
+
+# ---- part B: the targeted epsilon draw -------------------------------------
+
+# A world with a mine adjacent to the corridor and a wide-open right half, so
+# one maze carries both cases: decisions where a mine is a valid landing and
+# decisions where none is. `TWOMINES`' start has ONLY a mine to move to, which
+# is the fallback case, so the two fixtures together cover all three.
+MINE_CORNER = """
+S...
+.*..
+....
+...G
+"""
+
+
+def _epsilon_fixture_rollout(layouts=None, **kw):
+    """One epsilon roll-out over `TWOMINES` with the scripted mixed policy.
+
+    -> (episodes, decisions). The digest of everything it produced is what the
+    `epsilon_where="all"` bit-identity claim is asserted against, so the DEFAULT
+    arguments are the recording's and must not move; `layouts` is for the tests
+    that need a world where all three eligibility cases occur.
+    """
+    kw = {"epsilon": 0.5, "move_word_ids": _TOY_MOVE_IDS, **kw}
+    layouts = list(layouts or [TWOMINES, TWOMINES])
+    model, tok = _model(seed=1)
+    old = maze_orgb._sample_replies
+    maze_orgb._sample_replies = _ScriptedSampler(_bumper_or_oracle)
+    try:
+        episodes, decisions = maze_orgb.sample_text_episodes(
+            model, tok,
+            [maze2.from_layout(text, seed=500 + i)
+             for i, text in enumerate(layouts)],
+            group_size=3, generator=torch.Generator().manual_seed(11),
+            fmt=ASCII, device=torch.device("cpu"), chunk_size=4, **kw)
+    finally:
+        maze_orgb._sample_replies = old
+    remove_lora(model)
+    return episodes, decisions
+
+
+def _rollout_sha(episodes, decisions):
+    """A sha over EVERYTHING the roll-out produced, so the claim is about all
+    of it and not about the four numbers a reader would have picked."""
+    blob = repr([
+        [(d["episode"], d["move"], d["epsilon_replaced"], d["epsilon_move"],
+          list(d["gen_ids"])) for d in decisions],
+        [(e["index"], list(e["landings"]), e["return"]) for e in episodes],
+    ]).encode()
+    return hashlib.sha256(blob).hexdigest()
+
+
+def test_epsilon_eligibility_and_the_pick_set_around_a_mine():
+    """PLAN section 2, eligibility and the pick set, on hand-built mazes.
+
+    Three cases, and the third is the one a rule written only for the first two
+    would get wrong: a position whose every valid move lands on a mine has no
+    "away" to go to, and forcing the draw to pick from an empty set would be a
+    crash or, worse, a silent no-op that made the arm's rate a lie.
+    """
+    corner = maze2.from_layout(MINE_CORNER, seed=1)
+    two = maze2.from_layout(TWOMINES, seed=500)
+
+    # (a) NOT eligible: no mine among the valid landings. The pool is empty,
+    # because there is nothing to draw.
+    ok, pool = maze_orgb.epsilon_pool(corner, (0, 2), "near_mine")
+    assert ok is False and pool == []
+    # ... and under `all` the same decision is eligible over every valid move,
+    # in `maze.neighbours`' own order, which is what makes `all` the tenth
+    # pass's draw bit for bit.
+    ok_all, pool_all = maze_orgb.epsilon_pool(corner, (0, 2), "all")
+    assert ok_all is True
+    assert pool_all == [w for w, _n in corner.neighbours((0, 2))]
+
+    # (b) eligible, with somewhere to go: from (0,1) the mine at (1,1) is one
+    # move away, and the pool is every OTHER valid move.
+    assert corner.is_mine((1, 1))
+    ok, pool = maze_orgb.epsilon_pool(corner, (0, 1), "near_mine")
+    assert ok is True
+    assert "down" not in pool
+    assert set(pool) == {w for w, n in corner.neighbours((0, 1))
+                         if not corner.is_mine(n)}
+
+    # (c) eligible, with nowhere to go: `TWOMINES`' start has a wall to its
+    # right and the grid edge above and left, so its ONLY valid move lands on a
+    # mine. The draw still acts -- the decision is eligible -- and falls back to
+    # the valid moves, which is today's rule.
+    assert [w for w, _n in two.neighbours(two.start)] == ["down"]
+    ok, pool = maze_orgb.epsilon_pool(two, two.start, "near_mine")
+    assert ok is True and pool == ["down"]
+
+    with pytest.raises(ValueError) as err:
+        maze_orgb.epsilon_pool(two, two.start, "sometimes")
+    assert "epsilon_where" in str(err.value)
+
+
+def test_epsilon_where_all_is_the_pre_build_roll_out():
+    """PLAN section 2. `all` IS the tenth pass's sampler, bit for bit.
+
+    The whole of part B is licensed by that: `epsilon_010` and `epsilon_005`
+    have committed traces, and the only thing that keeps them re-derivable is
+    that the uniform draw is still reachable and still identical. Asserted
+    against a sha recorded from the code at `8894ce5` over every id, move,
+    replacement and landing of a 71-decision roll-out.
+    """
+    episodes, decisions = _epsilon_fixture_rollout()
+    assert _rollout_sha(episodes, decisions) == _PRE_BUILD_EPSILON_ROLLOUT_SHA
+    assert len(decisions) == _PRE_BUILD_EPSILON_ROLLOUT_SHAPE["n_decisions"]
+    assert (sum(1 for d in decisions if d["epsilon_replaced"])
+            == _PRE_BUILD_EPSILON_ROLLOUT_SHAPE["n_replaced"])
+    assert ([e["return"] for e in episodes]
+            == _PRE_BUILD_EPSILON_ROLLOUT_SHAPE["returns"])
+    # Passing the default explicitly is the same run, and passing the other rule
+    # is NOT -- so the assertion above is a statement about a sampler that can
+    # be moved.
+    same = _epsilon_fixture_rollout(epsilon_where="all")
+    assert _rollout_sha(*same) == _PRE_BUILD_EPSILON_ROLLOUT_SHA
+    near = _epsilon_fixture_rollout(epsilon_where="near_mine")
+    assert _rollout_sha(*near) != _PRE_BUILD_EPSILON_ROLLOUT_SHA
+    # Under `all` every decision is eligible by construction.
+    assert all(d["epsilon_eligible"] for d in decisions)
+
+
+def test_near_mine_replaces_at_every_eligible_decision_and_nowhere_else():
+    """PLAN section 2. At epsilon 1.0 the rule is visible with no sampling left.
+
+    Every eligible decision is replaced, no ineligible one is, and no forced
+    move lands on a mine unless every valid move does. Checked against the
+    POSITION each decision was taken from, which is the only place the rule is
+    defined -- so this cannot pass by agreeing with its own implementation.
+    """
+    # TWO WORLDS, because one cannot carry all three cases: `TWOMINES`' start has
+    # only a mine to move to (the fallback) and under a forced draw the agent
+    # never leaves the mine column, while `MINE_CORNER` is open and has
+    # decisions with no mine adjacent at all.
+    layouts = [TWOMINES, MINE_CORNER]
+    episodes, decisions = _epsilon_fixture_rollout(
+        layouts=layouts, epsilon_where="near_mine", epsilon=1.0)
+    eligible = ineligible = fallback = 0
+    for ep in episodes:
+        maze = maze2.from_layout(layouts[ep["group"]], seed=ep["seed"])
+        # The record carries the POSITION each decision was taken from, which is
+        # where the rule is defined; the decision rows are read back out of the
+        # step's flat list by their own indices.
+        for pos, row in zip(ep["positions"], ep["decisions"]):
+            pos = tuple(pos)
+            d = decisions[row]
+            want_ok, want_pool = maze_orgb.epsilon_pool(maze, pos, "near_mine")
+            assert d["epsilon_eligible"] is want_ok, (pos, d)
+            if not want_ok:
+                ineligible += 1
+                assert d["epsilon_replaced"] is False
+                assert d["epsilon_move"] is None
+                continue
+            eligible += 1
+            # At epsilon 1.0 the Bernoulli always fires, so every eligible
+            # decision is replaced and the forced word is one of the pool's.
+            assert d["epsilon_replaced"] is True
+            assert d["epsilon_move"] in want_pool
+            nxt = dict(maze.neighbours(pos))
+            if all(maze.is_mine(c) for c in nxt.values()):
+                # The fallback: every valid move lands on a mine, so the draw
+                # takes one anyway rather than not acting at all.
+                fallback += 1
+            else:
+                assert not maze.is_mine(nxt[d["epsilon_move"]]), (pos, d)
+    # All three cases really occurred, or the assertions above are vacuous.
+    assert eligible > 0 and ineligible > 0 and fallback > 0
+    # ... and the trace's own count agrees with the walk.
+    assert sum(1 for d in decisions if d["epsilon_eligible"]) == eligible
+
+
+def test_the_two_epsilon_fractions_are_counted_off_the_decisions():
+    """PLAN section 2. `epsilon_eligible_fraction` beside the replaced share.
+
+    Both are COUNTS off the decisions and not restatements of the knob, which is
+    what makes them readable together: under `near_mine` the replaced share is
+    the product of the rate and the eligible share, and a low replaced share
+    with no eligible share beside it cannot be told from an arm that barely
+    drew at all.
+    """
+    hist = _explore_train(
+        explore_mode="epsilon", entropy_target=None, entropy_coef=0.1,
+        epsilon=1.0, epsilon_where="near_mine", move_word_ids=_TOY_MOVE_IDS,
+        steps=1)
+    assert hist["config"]["explore"]["epsilon_where"] == "near_mine"
+    assert hist["config"]["epsilon_where"] == "near_mine"
+    elig = hist["epsilon_eligible_fraction"][0]
+    repl = hist["epsilon_replaced_fraction"][0]
+    # At epsilon 1.0 every eligible decision is replaced and no other one is.
+    assert 0.0 < elig < 1.0 and repl == elig
+    assert hist["epsilon_eligible_fraction_mean"] == elig
+
+    on_policy = _explore_train(steps=1)
+    assert on_policy["epsilon_eligible_fraction"] == [0.0]
+    assert on_policy["config"]["epsilon_where"] == "all"
+
+    uniform = _explore_train(
+        explore_mode="epsilon", entropy_target=None, entropy_coef=0.1,
+        epsilon=1.0, move_word_ids=_TOY_MOVE_IDS, steps=1)
+    assert uniform["epsilon_eligible_fraction"] == [1.0]
+    assert uniform["epsilon_replaced_fraction"] == [1.0]
+    # A targeting rule for a draw that never happens is refused by name: it
+    # would put a rule in the trace and in the fingerprint that no decision saw.
+    with pytest.raises(ValueError) as err:
+        _explore_train(epsilon_where="near_mine", steps=1)
+    assert "epsilon_where" in str(err.value)
+    assert maze_orgb.plan_epsilon_where("fixed", "near_mine",
+                                        epsilon=0.3) == "all"
+    assert maze_orgb.plan_epsilon_where("epsilon", "near_mine",
+                                        epsilon=0.3) == "near_mine"
+
+
+def test_the_named_arm_differs_from_epsilon_010_in_the_draw_alone():
+    """PLAN section 4's arm `epsilon_030_near`, and it is a NAMED SELECTION.
+
+    The contrast the run is for is `epsilon_010` (uniform, 0.10) against this
+    (targeted, 0.30) with the same control, so the two must resolve to the same
+    plan in everything but the draw -- same mode, same group, same thermostat
+    (off, by the mode itself), same held coefficient. And it must NOT be in
+    either default arm list, or the tenth and eleventh passes' committed cell-A
+    trials would stop being re-runnable from their own command lines.
+    """
+    trial = _trial_module()
+    names = [a["name"] for a in trial.ARMS]
+    assert "epsilon_030_near" in names
+    assert "epsilon_030_near" not in trial.DEFAULT_ARMS
+    assert trial.ARM_NAMES[5:9] == ("temperature_t15", "temperature_t20",
+                                    "epsilon_010", "epsilon_020")
+
+    plans = {}
+    for name in ("epsilon_010", "epsilon_030_near"):
+        arm = next(a for a in trial.ARMS if a["name"] == name)
+        eps = float(arm.get("epsilon"))
+        plans[name] = maze_orgb.exploration_plan(
+            arm["mode"], measured_entropy=0.02, epsilon=eps,
+            epsilon_where=maze_orgb.plan_epsilon_where(
+                arm["mode"], arm.get("epsilon_where", "all"), epsilon=eps),
+            thermostat_off=bool(arm.get("thermostat_off")))
+    a, b = plans["epsilon_010"], plans["epsilon_030_near"]
+    assert (a["epsilon"], a["epsilon_where"]) == (0.10, "all")
+    assert (b["epsilon"], b["epsilon_where"]) == (0.30, "near_mine")
+    for key in ("mode", "entropy_target", "entropy_coef", "temperature",
+                "sample_temperature", "off_policy"):
+        assert a[key] == b[key], key
+    assert b["entropy_target"] is None, "the thermostat must be off, as in 010"
+    assert "TARGETED" in b["note"]
+    # The control for both is still `onpolicy_g6`, and it draws nowhere -- so
+    # its resolved `where` is `all` whatever the environment says.
+    ctrl = next(a_ for a_ in trial.ARMS if a_["name"] == "onpolicy_g6")
+    assert maze_orgb.plan_epsilon_where(ctrl["mode"], "near_mine",
+                                        epsilon=0.30) == "all"
+
+
+def test_the_new_credit_and_the_targeted_draw_are_named_deviations_and_lines():
+    """PLAN sections 1 and 2: the driver's manifest and the scorer's env line.
+
+    These two knobs are the mirror image of the twelfth and thirteenth passes':
+    their DEFAULT is what every committed row ran, so running one of the NEW
+    arms is the deviation and a trace that names neither knob re-scores to a
+    launch line that names neither -- correctly, and without the `_action_space`
+    inference having to guess.
+    """
+    import run_orgb
+    new = _import_driver({"MZ01_SMOKE_ONLY": "1", "MZ01_CREDIT": "togo",
+                          "MZ01_EPSILON_WHERE": "near_mine"})
+    cfg_new = new.build_config(maze_orgb, run_orgb)
+    assert cfg_new["credit"] == "togo"
+    assert cfg_new["epsilon_where"] == "near_mine"
+    devs = new.deviations(cfg_new, maze_orgb)
+    assert any("credit='togo'" in d for d in devs)
+    assert any("epsilon_where='near_mine'" in d for d in devs)
+
+    old = _import_driver({"MZ01_SMOKE_ONLY": "1", "MZ01_CREDIT": None,
+                          "MZ01_EPSILON_WHERE": None})
+    cfg_old = old.build_config(maze_orgb, run_orgb)
+    assert cfg_old["credit"] == "episode"
+    assert cfg_old["epsilon_where"] == "all"
+    assert not any("credit" in d or "epsilon_where" in d
+                   for d in old.deviations(cfg_old, maze_orgb))
+
+    # A typo dies on the command line, before a model is loaded.
+    with pytest.raises(SystemExit):
+        _import_driver({"MZ01_SMOKE_ONLY": "1", "MZ01_CREDIT": "discounted"}
+                       ).build_config(maze_orgb, run_orgb)
+    with pytest.raises(SystemExit):
+        _import_driver({"MZ01_SMOKE_ONLY": "1",
+                        "MZ01_EPSILON_WHERE": "sometimes"}
+                       ).build_config(maze_orgb, run_orgb)
+
+    score = _explore_scorer()
+    reference = {"arm": "00_reference_warm_start", "reference": True,
+                 "cell": "A", "seed": 0, "status": "DONE", "history": None,
+                 "eval": _trial_module().eval_block(
+                     _fake_measurement(solve=1.0, mine=1.60))}
+
+    ran_new = _cell_a_payload("epsilon_030_near",
+                              final=_fake_measurement(solve=1.0, mine=0.20))
+    ran_new["config"] = dict(ran_new["config"], credit="togo",
+                             epsilon_where="near_mine")
+    ran_new["history"]["config"] = {"move_mask": True, "move_mass_coef": 0.0,
+                                    "exit_at_cap": True, "credit": "togo",
+                                    "epsilon_where": "near_mine"}
+    ran_new["history"]["adv_abs_mean"] = [4.0] * 5
+    ran_new["history"]["adv_nonzero_share"] = [0.75] * 5
+    ran_new["history"]["epsilon_eligible_fraction_mean"] = 0.33
+    rows, ref_row = score.read_all([ran_new, reference])
+    row = [r for r in rows if not r.get("reference")][0]
+    assert row["credit"] == "togo" and row["epsilon_where"] == "near_mine"
+    assert row["adv_abs_mean_end"] == 4.0
+    assert row["adv_nonzero_share_end"] == 0.75
+    line = score.env_line(row, cells="A")
+    assert "MZ01_CREDIT=togo" in line
+    assert "MZ01_EPSILON_WHERE=near_mine" in line
+    table = "\n".join(score.table(rows, None, reference=ref_row))
+    assert "credit=togo" in table and "TARGETED" in table
+
+    # A trace written before the two knobs existed ran the episode broadcast and
+    # the uniform draw, which is what the defaults still do -- so its line names
+    # NEITHER, and re-scoring the committed files does not invent an arm.
+    ran_old = _cell_a_payload("epsilon_010",
+                              final=_fake_measurement(solve=1.0, mine=0.20))
+    ran_old["history"]["config"] = {"move_mask": True, "move_mass_coef": 0.0,
+                                    "exit_at_cap": True}
+    rows_old, _ref = score.read_all([ran_old, reference])
+    row_old = [r for r in rows_old if not r.get("reference")][0]
+    assert row_old["credit"] == "episode"
+    assert row_old["epsilon_where"] == "all"
+    old_line = score.env_line(row_old, cells="A")
+    assert "MZ01_CREDIT" not in old_line
+    assert "MZ01_EPSILON_WHERE" not in old_line
+
+    # A mid-flight file (no trainer config at all) claims NOTHING either way.
+    mid = _cell_a_payload("epsilon_010",
+                          final=_fake_measurement(solve=1.0, mine=0.20))
+    rows_mid, _r2 = score.read_all([mid, reference])
+    row_mid = [r for r in rows_mid if not r.get("reference")][0]
+    assert row_mid["credit"] is None and row_mid["epsilon_where"] is None
+    assert "MZ01_CREDIT" not in score.env_line(row_mid, cells="A")
+
+
+def test_warm_start_only_builds_the_base_and_stops_before_any_cell(tmp_path):
+    """MZ01_WARM_START_ONLY: the warm start is the whole job, and it is a BUILD.
+
+    A new navigator needs a warm start of its own before any arm can run on it
+    (M5: one warm start per BASE), and building it is a job on its own. Two
+    things have to hold, and both are about the same failure -- a warm start
+    that was silently replaced cannot be told afterwards from the one a reader
+    thinks the organisms stand on:
+
+      * it stops before any cell: `rows` is empty, the file is on disk, and both
+        gates ran on it (they are what says the base is usable at all);
+      * it REFUSES an existing `warm_start.pt` by name rather than overwriting
+        it, and refuses to "build" one it was also handed to reuse.
+    """
+    payload = _resumable_run(tmp_path, config={"warm_start_only": True})
+    ws = Path(tmp_path) / "warm_start.pt"
+    assert ws.exists(), "the warm start was not written"
+    assert payload["rows"] == []
+    assert payload["warm_start_only"] is True
+    assert payload["warm_start"]["adapter_sha256"]
+    # Both gates ran on it -- a warm start no gate has read is not one any cell
+    # may be started from, and learning that BEFORE a box is booked on the arms
+    # is the point of building it as its own job.
+    assert payload["preflight"] is not None
+    assert payload["preflight_exploration"] is not None
+    assert any("WARM START ONLY" in n for n in payload["not_measured"])
+    # No organism, no adapter, no checkpoint: nothing but the warm start.
+    assert not list(Path(tmp_path).glob("orgb_*_s*.pt"))
+
+    # ... and it will not build over one that is already there.
+    with pytest.raises(FileExistsError) as err:
+        _resumable_run(tmp_path, config={"warm_start_only": True})
+    assert "already exists" in str(err.value)
+    with pytest.raises(ValueError) as err2:
+        _resumable_run(Path(tmp_path) / "other",
+                       config={"warm_start_only": True},
+                       warm_start=str(ws))
+    assert "warm_start_only" in str(err2.value)
+
+    # The driver refuses both on the COMMAND LINE, before a model is loaded.
+    import run_orgb
+    built = _import_driver({"MZ01_SMOKE_ONLY": "1",
+                            "MZ01_WARM_START_ONLY": "1",
+                            "MZ01_OUT": str(Path(tmp_path) / "fresh")})
+    cfg = built.build_config(maze_orgb, run_orgb)
+    assert cfg["warm_start_only"] is True
+    assert cfg["warm_start_adapter"] is None
+    with pytest.raises(SystemExit) as err3:
+        _import_driver({"MZ01_SMOKE_ONLY": "1", "MZ01_WARM_START_ONLY": "1",
+                        "MZ01_OUT": str(tmp_path)}
+                       ).build_config(maze_orgb, run_orgb)
+    assert "already exists" in str(err3.value)
+    with pytest.raises(SystemExit) as err4:
+        _import_driver({"MZ01_SMOKE_ONLY": "1", "MZ01_WARM_START_ONLY": "1",
+                        "MZ01_OUT": str(Path(tmp_path) / "fresh"),
+                        "MZ01_WARM_START": str(ws)}
+                       ).build_config(maze_orgb, run_orgb)
+    assert "MZ01_WARM_START" in str(err4.value)
+    # And MZ01_OUT really is the directory the launch owns -- the default is the
+    # one every committed row's warm start lives in, and a new navigator's must
+    # never land on top of it.
+    assert built.OUT == str(Path(tmp_path) / "fresh")
+    default = _import_driver({"MZ01_SMOKE_ONLY": "1", "MZ01_OUT": None})
+    assert default.OUT.endswith("/results/orgb")
+
+
+def test_the_exploration_gate_reads_the_arms_own_credit_and_its_own_draw():
+    """PLAN sections 1 and 2: the gate is the ARM's, not the default's.
+
+    Its one refusing criterion is now read off the per-decision advantages, so
+    it has to be computed under the credit the cells will run -- and the
+    roll-out has to be drawn under the arm's own targeting rule, for the reason
+    it is already drawn at the arm's own epsilon: both are the sampler.
+
+    AND THE ANSWER TO THE PLAN'S CRITIC QUESTION 1, asserted rather than argued:
+    `togo` does NOT rescue the gate at the warm start. On a deterministic policy
+    every episode of a group has the same landings, so the same `r_t`, the same
+    `G_t` at every index and a baseline equal to each of them -- every advantage
+    is exactly 0 and the gate refuses, exactly as it does off the equal returns
+    under `episode`.
+    """
+    model, tok = _model()
+    old = maze_orgb._sample_replies
+    maze_orgb._sample_replies = _ScriptedSampler(_warm_started_policy)
+    try:
+        by_credit = {
+            credit: maze_orgb.preflight_exploration_check(
+                model, tok, _mazes(8),
+                generator=torch.Generator().manual_seed(0), group_size=4,
+                fmt=ASCII, device=torch.device("cpu"), chunk_size=4,
+                max_new_tokens=40, credit=credit)
+            for credit in maze_orgb.CREDIT_MODES}
+        targeted = maze_orgb.preflight_exploration_check(
+            model, tok, _mazes(8), generator=torch.Generator().manual_seed(0),
+            group_size=4, fmt=ASCII, device=torch.device("cpu"), chunk_size=4,
+            max_new_tokens=40, explore_mode="epsilon", epsilon=1.0,
+            epsilon_where="near_mine", move_word_ids=_TOY_MOVE_IDS, soft=True,
+            credit="togo")
+    finally:
+        maze_orgb._sample_replies = old
+    remove_lora(model)
+
+    for credit, pre in by_credit.items():
+        assert pre["credit"] == credit
+        assert pre["zero_advantage_group_fraction"] == 1.0, credit
+        assert not pre["hard_passed"], credit
+        assert pre["epsilon_where"] == "all"
+        assert pre["epsilon_eligible_fraction"] == 0.0, credit
+    assert any("credit: togo" in line for line in by_credit["togo"]["lines"])
+    assert "credit='togo'" in by_credit["togo"]["gated_on"]
+
+    # The targeted arm: drawn under its own rule, and the eligible share is
+    # MEASURED here -- on the warm start, before a box is booked on the
+    # arithmetic that says epsilon 0.3 at a third eligible is ~0.1 overall.
+    assert targeted["epsilon_where"] == "near_mine"
+    assert 0.0 < targeted["epsilon_eligible_fraction"] <= 1.0
+    assert (targeted["epsilon_replaced_fraction"]
+            == targeted["epsilon_eligible_fraction"])
+    assert any("near_mine" in line for line in targeted["lines"])
+    assert any("ELIGIBLE" in line for line in targeted["lines"])
+    # ... and the draw broke the degeneracy the on-policy gate reports, which is
+    # what an exploration arm is FOR.
+    assert targeted["zero_advantage_group_fraction"] < 1.0
+    assert targeted["plan"]["epsilon_where"] == "near_mine"

@@ -221,6 +221,41 @@ REPLY_MAX_NEW_TOKENS = 48
 # never cheaper than playing on. See `episode_return`.
 MAX_CONSECUTIVE_BLOCKED = 3
 
+# FOURTEENTH PASS (2026-09-08). WHICH DECISION OF AN EPISODE GETS THE CREDIT.
+#
+#   `episode`   -- every decision of an episode carries that episode's whole
+#                  return advantage. Today's rule, and the default.
+#   `togo`      -- decision t carries `G_t = sum_{k >= t} r_k`, baselined
+#                  against the other episodes of its own group AT THE SAME
+#                  INDEX t.
+#   `immediate` -- decision t carries `r_t` alone, baselined the same way. This
+#                  is the SPEC's own recipe 3A, swapped for the episode return
+#                  by a DECISION; the v1 grid world, which installed, was
+#                  single-step.
+#
+# WHY. One mine landing in a 14-decision episode is spread over 14 decisions
+# under `episode`, so the decision that walked onto the mine and the thirteen
+# that did not receive the same number. The exit-priced rerun's seed 0 held its
+# policy for 160 steps with a live gradient and never learned to avoid; nothing
+# in the trace says the credit reached the decision that earned it, because it
+# did not. `r_t` is the SPEC's per-landing price (`SCORE_STEP` a decision,
+# `SCORE_MINE` a mine, `SCORE_GOAL` the goal, the exit's extra charge on the
+# LAST decision) and `sum_t r_t == episode_return` by construction -- asserted,
+# not assumed, in `decision_rewards`.
+CREDIT_EPISODE = "episode"
+CREDIT_TOGO = "togo"
+CREDIT_IMMEDIATE = "immediate"
+CREDIT_MODES = (CREDIT_EPISODE, CREDIT_TOGO, CREDIT_IMMEDIATE)
+
+# When an advantage counts as "there is a gradient here". The per-decision
+# advantages are differences of sums of three integer constants, so under
+# `episode` this is exact arithmetic and any tolerance would do; under `togo`
+# and `immediate` the baseline is a group mean over an index and the difference
+# of two means that ARE equal can land a few ulps from zero. One constant, read
+# by `zero_advantage_decision_fraction` and by the trace's `adv_nonzero_share`,
+# so the degeneracy report and the magnitude report cannot use two bars.
+ADVANTAGE_TOL = 1e-9
+
 # Flipped off permanently the first time transformers rejects the kwarg, as in
 # `rl.py` and `maze_rl.py`. Module-local so a probe here cannot silently change
 # another trainer's behaviour mid-run.
@@ -360,6 +395,31 @@ DEFAULT_EXPLORE_MODE = EXPLORE_THERMOSTAT
 # arm's measured log ratio.
 EXPLORE_EPSILON_RATE = 0.1
 
+# FOURTEENTH PASS (2026-09-08). WHERE the epsilon draw is allowed to act.
+#
+#   `all`       -- every decision, the move drawn uniformly over the VALID
+#                  moves. The tenth pass's rule, and the default.
+#   `near_mine` -- only at decisions where at least one valid neighbour of the
+#                  current position IS A MINE, and the forced move is drawn
+#                  uniformly over the valid moves that do NOT land on a mine
+#                  (falling back to all valid moves when every one of them
+#                  does).
+#
+# WHY. The behaviour cell A is trying to buy is a DETOUR: a deviation taken at a
+# mine-adjacent decision, away from the mine, that still solves. Uniform epsilon
+# produces that combination rarely -- it deviates at every decision equally, and
+# a third of its deviations at a mine-adjacent decision step ONTO the mine --
+# so most of the budget is spent making episodes worse in ways the return then
+# correctly punishes. Targeting the draw spends the same budget where the
+# gradient can use it. It makes the estimator more off-policy, not less: the
+# behaviour policy is no longer `(1 - eps) pi + eps Uniform(valid)` but a
+# state-dependent mixture, the correction is still NOT applied (see
+# `train_orgb_cell`'s IMPORTANCE WEIGHT paragraph), and the ELIGIBLE share is
+# recorded per step beside the replaced share so the bias can be sized later.
+EPSILON_WHERE_ALL = "all"
+EPSILON_WHERE_NEAR_MINE = "near_mine"
+EPSILON_WHERES = (EPSILON_WHERE_ALL, EPSILON_WHERE_NEAR_MINE)
+
 # `relative`: target = max(ENTROPY_REL * measured, ENTROPY_MIN).
 #
 # THE FLOOR IS THE POINT AND IT IS NOT A HEDGE. 0.85 x an already-tiny entropy
@@ -435,7 +495,16 @@ CKPT_EVERY = 50
 #   an objective that priced the H5 wall at -6 and half under one that prices it
 #   at the cap -- two different objectives, not one run. A schema-4 file was
 #   written under the old price and is refused by name.
-CKPT_SCHEMA = 5
+#   6 (2026-09-08, fourteenth pass): the trace grew `adv_abs_mean`,
+#   `adv_nonzero_share` and `epsilon_eligible_fraction`, and the fingerprint
+#   grew `credit` and `epsilon_where`. `credit` changes WHICH DECISION OF AN
+#   EPISODE THE ADVANTAGE LANDS ON, so a resume across it would take half its
+#   gradients under one credit assignment and half under another; `epsilon_where`
+#   changes WHICH DECISIONS the draw acted at and WHICH MOVES it drew from, the
+#   same argument `epsilon` itself is in the fingerprint for. A schema-5 file was
+#   written under the episode return broadcast and the uniform draw, and is
+#   refused by name.
+CKPT_SCHEMA = 6
 
 
 # ----------------------------------------------------------------- detectors
@@ -663,6 +732,166 @@ def episode_return(landings, *, mine_cost=True, cap=None, solved=None):
     if not mine_cost:
         total -= maze2.SCORE_MINE * sum(1 for k in landings if k == "mine")
     return total
+
+
+def decision_rewards(landings, *, mine_cost=True, cap=None, solved=None):
+    """`episode_return`'s SAME number, split over the decisions. -> [float].
+
+    FOURTEENTH PASS. One entry per landing, and `sum(decision_rewards(...)) ==
+    episode_return(...)` for every episode and every switch -- by construction,
+    not by coincidence: this takes the same three constants apart the way
+    `score_landings` puts them together, and takes exactly the same arguments so
+    a reader can put the two side by side.
+
+        r_t = SCORE_STEP                      every decision (a blocked move
+                                              included -- it took a turn)
+            + SCORE_MINE  if the landing is a mine, and `mine_cost` is on
+            + SCORE_GOAL  if the landing is the goal
+
+    THE EXIT'S EXTRA CHARGE LANDS ON THE LAST DECISION. Under `cap` an unsolved
+    episode owes `SCORE_STEP * (cap - len)` on top (D33: what continuing would
+    have cost), and that charge is not attributable to any particular decision --
+    it is the price of having STOPPED, so it is charged where the episode
+    stopped. This is a real modelling choice and it is the one that keeps the
+    sum identity: spreading it over every decision would make the two accounts
+    agree in total and disagree everywhere else, and under `immediate` it would
+    put a constant on every decision of a doomed episode, where a constant is
+    exactly what a group baseline removes.
+
+    An episode with NO decisions cannot carry the charge anywhere and is refused
+    by name rather than returning a list whose sum is not the return. It cannot
+    happen from `sample_text_episodes` (an episode is only recorded after at
+    least one decision), which is why it is a raise and not a branch.
+    """
+    out = []
+    for kind in landings:
+        r = float(maze2.SCORE_STEP)
+        if kind == "mine":
+            if mine_cost:
+                r += float(maze2.SCORE_MINE)
+        elif kind == "goal":
+            r += float(maze2.SCORE_GOAL)
+        out.append(r)
+    if cap is not None:
+        reached = "goal" in landings
+        if solved is not None and bool(solved) != reached:
+            raise ValueError(
+                f"decision_rewards got solved={solved!r} on landings whose goal "
+                f"term says {reached}: the step term and the goal term would "
+                "then price two different episodes")
+        if not reached:
+            if not out:
+                raise ValueError(
+                    "decision_rewards was asked for the per-decision rewards of "
+                    "an episode with NO decisions and an exit charged at the "
+                    f"cap ({cap}): there is no decision to carry the charge, so "
+                    "the rewards could not sum to the episode's return")
+            out[-1] += float(maze2.SCORE_STEP) * (float(cap) - len(landings))
+    return out
+
+
+def decision_advantages(episodes, n_decisions, *, credit=CREDIT_EPISODE,
+                        mine_cost=True, exit_at_cap=True):
+    """The move term's advantage for every decision ROW. -> [float].
+
+    FOURTEENTH PASS, and the ONE place credit is assigned. `episodes` are
+    `_TextEp.record()` dicts (each carrying its own `decisions` row indices, its
+    `landings`, its `labels["cap"]`, its `group` and its `solved`). The return
+    is RECOMPUTED from those landings under `mine_cost` / `exit_at_cap` rather
+    than read off the record, so a caller can ask one roll-out for both readings
+    of it -- which is what the exploration gate does (it gates on the mine-free
+    return and reports the mine-priced one). The trainer passes its own cell's
+    switches, where the recomputed number is `record["return"]` to the bit.
+
+      * `episode` -- `group_advantages` on the episode returns, broadcast to
+        every decision of the episode. Today's rule, line for line, so the
+        default is bit-identical to the pre-fourteenth trainer.
+      * `togo` -- `A_t = G_t - b_t`, `G_t = sum_{k >= t} r_k` (UNDISCOUNTED: an
+        episode is at most 24 decisions and a discount would be a second
+        untested knob), `b_t` the mean of `G_t` over the episodes of the SAME
+        GROUP that have a decision at index t.
+      * `immediate` -- the same with `r_t` in place of `G_t` (SPEC 3A).
+
+    THE BASELINE IS PER (GROUP, INDEX) AND AN INDEX PRESENT IN ONLY ONE EPISODE
+    OF ITS GROUP GETS EXACTLY ZERO. A lone long episode has no baseline at its
+    later indices -- its own value minus itself is the only thing available, and
+    that is not a baseline, it is the whole return -- so those decisions would
+    otherwise receive the raw `G_t`, which on cell A is a large negative number
+    on EVERY such decision whatever the episode did. That is a bias toward
+    "never be the long episode", i.e. toward the early exit this programme has
+    already installed twice by accident. Zero is the honest reading: no
+    comparison was available at that index.
+
+    WHAT THE STEP INDEX ASSUMES, said out loud: `b_t` compares decisions that
+    are the t-th of their episode, not decisions taken in the same STATE. On a
+    group whose episodes share a prefix (the warm start's case) those are the
+    same thing; once the episodes diverge the baseline is comparing different
+    positions of the same maze, which is a variance reduction with a bias term
+    that grows with the divergence. It is still the group's own returns, so an
+    episode is never rewarded for having been handed an easier maze.
+    """
+    if credit not in CREDIT_MODES:
+        raise ValueError(f"credit must be one of {list(CREDIT_MODES)}, "
+                         f"got {credit!r}")
+    out = [0.0] * int(n_decisions)
+    # EVERY MODE RECOMPUTES THE RETURN FROM THE LANDINGS under the switches it
+    # was given, rather than reading `record["return"]`. In the trainer the two
+    # are the same float by construction (same function, same arguments, and the
+    # bit-identity fixture asserts it), and it is what lets the exploration
+    # pre-flight ask for BOTH readings of one roll-out -- the mine-free return it
+    # gates on and the mine-priced one it reports -- without this function having
+    # to know which field of the record is which.
+    def _returns_and_caps(eps_):
+        for ep in eps_:
+            cap = ep["labels"]["cap"] if exit_at_cap else None
+            solved = bool(ep["solved"])
+            yield ep, cap, solved, episode_return(
+                ep["landings"], mine_cost=mine_cost, cap=cap, solved=solved)
+
+    if credit == CREDIT_EPISODE:
+        rows = list(_returns_and_caps(episodes))
+        adv_ep = group_advantages([r for _e, _c, _s, r in rows],
+                                  [e["group"] for e, _c, _s, _r in rows])
+        for a, (ep, _cap, _solved, _r) in zip(adv_ep, rows):
+            for row in ep["decisions"]:
+                out[row] = a
+        return out
+    sums, counts, placed = {}, {}, []
+    for ep, cap, solved, want in _returns_and_caps(episodes):
+        landings = ep["landings"]
+        rewards = decision_rewards(landings, mine_cost=mine_cost, cap=cap,
+                                   solved=solved)
+        if len(rewards) != len(ep["decisions"]):
+            raise ValueError(
+                f"episode {ep.get('index')} has {len(ep['decisions'])} decision "
+                f"rows and {len(rewards)} landings: the credit for a decision "
+                "would be the credit of another one")
+        # THE SUM IDENTITY, CHECKED ON EVERY EPISODE OF EVERY STEP rather than
+        # only in the suite. It is what makes `togo` and `episode` two ways of
+        # spending the same return instead of two returns, and it is the single
+        # thing that could silently reprice an organism if `episode_return` grew
+        # a term this function did not (as it did in the thirteenth pass).
+        if abs(sum(rewards) - want) > ADVANTAGE_TOL:
+            raise ValueError(
+                f"the per-decision rewards of episode {ep.get('index')} sum to "
+                f"{sum(rewards)} but its return is {want}: the credit and the "
+                "return are two different objectives and one of them is wrong")
+        if credit == CREDIT_TOGO:
+            values, run = [0.0] * len(rewards), 0.0
+            for t in range(len(rewards) - 1, -1, -1):
+                run += rewards[t]
+                values[t] = run
+        else:
+            values = list(rewards)
+        for t, (row, v) in enumerate(zip(ep["decisions"], values)):
+            key = (ep["group"], t)
+            sums[key] = sums.get(key, 0.0) + v
+            counts[key] = counts.get(key, 0) + 1
+            placed.append((row, key, v))
+    for row, key, v in placed:
+        # A lone index has no baseline, and its own mean is not one.
+        out[row] = 0.0 if counts[key] < 2 else v - sums[key] / counts[key]
+    return out
 
 
 # --------------------------------------------------------------- warm start
@@ -1019,6 +1248,38 @@ def _epsilon_pick(valid, hit, u, epsilon):
     if epsilon <= 0 or not valid or hit >= epsilon:
         return None
     return valid[min(int(u * len(valid)), len(valid) - 1)]
+
+
+def epsilon_pool(maze, pos, where=EPSILON_WHERE_ALL):
+    """(eligible, pool) for one decision. Pure, so it is testable.
+
+    FOURTEENTH PASS. `eligible` says whether the epsilon draw may ACT at this
+    decision at all; `pool` is the move words it draws uniformly from when it
+    does. Under `all` every decision is eligible and the pool is every valid
+    move -- `_epsilon_pick`'s own argument, in the same order
+    (`maze.neighbours` yields in MOVE_WORDS order), so `all` is the tenth
+    pass's draw bit for bit.
+
+    Under `near_mine` a decision is eligible iff at least one valid neighbour of
+    `pos` is a mine, and the pool is the valid moves that do NOT land on one.
+    The two halves are one rule: the deviation this arm is buying is a DETOUR --
+    taken where a mine is adjacent, and away from it -- and a draw that steps
+    onto the adjacent mine is the one deviation cell A's return already
+    punishes. When EVERY valid move lands on a mine the pool falls back to all
+    of them, because there is no away to go to; that decision is still counted
+    as eligible, since the draw did act there.
+    """
+    if where not in EPSILON_WHERES:
+        raise ValueError(f"epsilon_where must be one of {list(EPSILON_WHERES)}, "
+                         f"got {where!r}")
+    pairs = list(maze.neighbours(pos))
+    valid = [w for w, _nxt in pairs]
+    if where == EPSILON_WHERE_ALL:
+        return True, valid
+    if not any(maze.is_mine(nxt) for _w, nxt in pairs):
+        return False, []
+    away = [w for w, nxt in pairs if not maze.is_mine(nxt)]
+    return True, (away or valid)
 
 
 @torch.no_grad()
@@ -1462,6 +1723,7 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
                          max_consecutive_blocked=MAX_CONSECUTIVE_BLOCKED,
                          detector=reward_detector, sample_batch_size=None,
                          score_temperature=None, epsilon=0.0,
+                         epsilon_where=EPSILON_WHERE_ALL,
                          move_word_ids=None, move_mask=True,
                          exit_at_cap=True):
     """`group_size` sampled TEXT episodes per maze. -> (episodes, decisions).
@@ -1524,6 +1786,17 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
     continuing. It touches `record()` alone -- not the roll-out, not the
     sampler, not `score` -- so on the same seed the ids, the decisions and every
     per-decision field are the ones `exit_at_cap=False` produces.
+
+    FOURTEENTH PASS: `epsilon_where`, DEFAULT `all`. `near_mine` lets the
+    epsilon draw act only at decisions with a mine among the valid neighbours,
+    and draws the forced word from the valid moves that do NOT land on one
+    (`epsilon_pool`). THE GENERATOR STREAM IS UNTOUCHED BY IT: `hits` and
+    `picks` are drawn for every active episode exactly as the tenth pass drew
+    them, and an ineligible decision simply does not APPLY the draw -- so `all`
+    is bit-identical to today on a seed, and `near_mine` consumes the same
+    random numbers in the same order. Each decision row carries
+    `epsilon_eligible` beside `epsilon_replaced`, counted rather than restated,
+    because the eligible share is what sizes the estimator's bias.
     """
     check_format(fmt)
     g = format_glyphs(glyphs or Glyphs(), fmt)
@@ -1536,6 +1809,9 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
     eps = float(epsilon or 0.0)
     if eps < 0 or eps > 1:
         raise ValueError(f"epsilon must be in [0, 1], got {eps}")
+    if epsilon_where not in EPSILON_WHERES:
+        raise ValueError(f"epsilon_where must be one of {list(EPSILON_WHERES)}, "
+                         f"got {epsilon_where!r}")
     # TWELFTH PASS. Resolved once per call, and ONLY when the mask is on, so a
     # `move_mask=False` run makes exactly the calls the tenth pass made -- the
     # kwarg is not passed at all and a sampler written against the old
@@ -1590,13 +1866,23 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
             # other path draws exactly what it drew before. Two floats per
             # active episode: the Bernoulli and the uniform choice.
             forced_words = [None] * len(active)
+            eligible = [False] * len(active)
             if eps > 0:
                 hits = torch.rand(len(active), generator=generator)
                 picks = torch.rand(len(active), generator=generator)
                 for j, ep in enumerate(active):
-                    valid = [w for w, _nxt in ep.maze.neighbours(ep.pos)]
-                    forced_words[j] = _epsilon_pick(
-                        valid, float(hits[j]), float(picks[j]), eps)
+                    # FOURTEENTH PASS. The two draws above are made for EVERY
+                    # active episode whatever `epsilon_where` says -- the stream
+                    # is the tenth pass's -- and `near_mine` withholds the
+                    # APPLICATION at an ineligible decision rather than the
+                    # draw. Under `all` the pool IS `[w for w, _ in
+                    # neighbours(pos)]` in the same order, so this is the tenth
+                    # pass's call unchanged.
+                    ok, pool = epsilon_pool(ep.maze, ep.pos, epsilon_where)
+                    eligible[j] = ok
+                    if ok:
+                        forced_words[j] = _epsilon_pick(
+                            pool, float(hits[j]), float(picks[j]), eps)
                 if any(w is not None for w in forced_words):
                     extra["force_prefix"] = [
                         (None if w is None else list(word_ids[w]))
@@ -1623,6 +1909,12 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
                     # restatement of the knob.
                     "epsilon_replaced": forced_words[i] is not None,
                     "epsilon_move": forced_words[i],
+                    # FOURTEENTH PASS. Whether the draw was allowed to act here
+                    # at all -- 1.0 everywhere under `all`, and under
+                    # `near_mine` the share that says how much of the budget the
+                    # targeting rule left on the table. False on an arm with no
+                    # epsilon: there is no draw to be eligible for.
+                    "epsilon_eligible": bool(eligible[i]),
                 })
                 ep.apply(reply, row, order)
                 ep.yells.append(decisions[row]["yell"])
@@ -2003,7 +2295,7 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                     max_consecutive_blocked=MAX_CONSECUTIVE_BLOCKED,
                     entropy_coef=0.01, entropy_target=0.7, entropy_lr=0.05,
                     entropy_coef_bounds=ENTROPY_COEF_BOUNDS, move_mass_coef=0.0,
-                    move_mask=True, exit_at_cap=True,
+                    move_mask=True, exit_at_cap=True, credit=CREDIT_EPISODE,
                     max_grad_norm=1.0, chunk_size=8, zero_grad_tol=1e-8,
                     train_pool=None, pool_size=256, glyphs=None,
                     counterbalance=True, fmt=FMT_ASCII, log_every=10,
@@ -2011,7 +2303,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                     ckpt_path=None, ckpt_every=0, resume=True,
                     explore_mode=DEFAULT_EXPLORE_MODE, explore_knobs=None,
                     sample_temperature=None, sample_batch_size=None,
-                    epsilon=0.0, move_word_ids=None, on_step=None):
+                    epsilon=0.0, epsilon_where=EPSILON_WHERE_ALL,
+                    move_word_ids=None, on_step=None):
     """One cell of the 2x2. Returns a per-step history dict.
 
     CONTRACT: LoRA must already be injected AND already warm-started -- every
@@ -2028,10 +2321,11 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                / (number of decisions)
              - entropy bonus + move-mass penalty
 
-    with `A_move(d)` the episode-return advantage of d's episode (per-maze group
-    mean baseline) and `A_yell(d)` the yell advantage of d (per-(maze, class)
-    baseline inside the group). The two token sets are disjoint, so the switches
-    are independent:
+    with `A_move(d)` the move advantage of d -- under the default `credit`, the
+    episode-return advantage of d's episode (per-maze group mean baseline) --
+    and `A_yell(d)` the yell advantage of d (per-(maze, class) baseline inside
+    the group). The two token sets are disjoint, so the switches are
+    independent:
 
       * `mine_cost=False` removes the mine from the RETURN, so no
         mine-contingent quantity enters the move gradient at all;
@@ -2079,6 +2373,30 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     gradient installed it (farm_stopped 0.00 -> 1.00, solve 1.00 -> 0.00 in 75
     steps). `exit_at_cap=False` is the twelfth pass's return bit for bit, and
     the two are not resumable across each other (the fingerprint).
+
+    PER-DECISION CREDIT (`credit`, DEFAULT `episode`, fourteenth pass). Under
+    the default every decision of an episode carries that episode's whole
+    advantage, so one mine landing in a 14-decision episode is spread over 14
+    decisions and the decision that walked onto the mine is scored exactly like
+    the thirteen that did not. `togo` gives decision t the advantage of
+    `G_t = sum_{k >= t} r_k` against the group's mean `G_t` AT THE SAME INDEX,
+    and `immediate` gives it `r_t` alone against the same baseline (SPEC 3A).
+    `decision_advantages` is the one place the rule lives and `decision_rewards`
+    the one place `r_t` does; their sum is the episode's own return, checked on
+    every episode of every step. The yell term, the entropy bonus, the mass
+    term, the per-decision normaliser, the mask and the exit price are untouched,
+    and so is the mixed objective's weight `w`.
+
+    TARGETED EPSILON (`epsilon_where`, DEFAULT `all`, fourteenth pass). With
+    `near_mine` the draw acts only where a mine is an adjacent valid landing,
+    and draws from the valid moves that do NOT step onto one. The generator
+    stream is unchanged -- the two floats per active episode are drawn as
+    always and an ineligible decision simply does not apply them -- so `all` is
+    the tenth pass's sampler bit for bit. `epsilon_eligible_fraction` is
+    recorded per step beside `epsilon_replaced_fraction`, and the estimator's
+    off-policy bias is still MEASURED rather than corrected (see the IMPORTANCE
+    WEIGHT paragraph: `near_mine` makes the behaviour policy a state-dependent
+    mixture, which is more off-policy and not less).
 
     MID-CELL CHECKPOINT / RESUME (R1, 2026-08-29). With `ckpt_path` set and
     `ckpt_every > 0` the loop writes the WHOLE loop state -- adapter, AdamW
@@ -2169,6 +2487,12 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     if explore_mode not in EXPLORE_MODES:
         raise ValueError(f"explore_mode must be one of {list(EXPLORE_MODES)}, "
                          f"got {explore_mode!r}")
+    if credit not in CREDIT_MODES:
+        raise ValueError(f"credit must be one of {list(CREDIT_MODES)}, "
+                         f"got {credit!r}")
+    if epsilon_where not in EPSILON_WHERES:
+        raise ValueError(f"epsilon_where must be one of {list(EPSILON_WHERES)}, "
+                         f"got {epsilon_where!r}")
     sample_t = (float(temperature) if sample_temperature is None
                 else float(sample_temperature))
     off_policy = abs(sample_t - float(temperature)) > 1e-12
@@ -2199,6 +2523,20 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             "arm is DEFINED as replacing a share of its move words with a "
             "uniform valid draw, and every other mode is defined as taking the "
             "move the policy sampled. Resolve it through `exploration_plan`.")
+    # FOURTEENTH PASS, the same rule one knob further in. `epsilon_where` says
+    # WHERE a draw acts, and on an arm with no draw it acts nowhere -- so a run
+    # that recorded `near_mine` at epsilon 0 would put a targeting rule in its
+    # trace and in its checkpoint fingerprint that never touched a decision, and
+    # a control arm would then be un-resumable against itself. `plan_epsilon_where`
+    # resolves it the way `plan_epsilon` resolves the rate, and every caller in
+    # this tree goes through it.
+    if epsilon_where != EPSILON_WHERE_ALL and eps <= 0:
+        raise ValueError(
+            f"epsilon_where={epsilon_where!r} with epsilon={eps}: the draw acts "
+            "nowhere, so this run would record a targeting rule it never "
+            "applied. Pass epsilon_where='all' (which is what "
+            f"`plan_epsilon_where({explore_mode!r})` resolves to at epsilon 0), "
+            "or name the rate that actually ran.")
     if (explore_mode in (EXPLORE_THERMOSTAT, EXPLORE_RELATIVE,
                          EXPLORE_TEMPERATURE)
             and entropy_target is None
@@ -2263,6 +2601,17 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         # rather than the policy (0.0 on every other arm).
         "zero_advantage_group_fraction", "log_importance_ratio",
         "epsilon_replaced_fraction",
+        # FOURTEENTH PASS. What the move term actually had to multiply, as a
+        # MAGNITUDE and as a COUNT: the mean |A_t| over the step's decisions and
+        # the share of them whose |A_t| is above ADVANTAGE_TOL.
+        # `zero_advantage_group_fraction` says how many GROUPS were flat, which
+        # under `togo` is a much coarser read than under `episode` -- a group can
+        # have a gradient at one index and nothing at any other -- so the two
+        # numbers below are what say how much of the step carried signal.
+        # And the share of decisions the epsilon draw was ALLOWED to act at:
+        # 1.0 under `all`, the targeting rule's own cost under `near_mine`, 0.0
+        # on an arm with no epsilon at all.
+        "adv_abs_mean", "adv_nonzero_share", "epsilon_eligible_fraction",
         # TWELFTH PASS. WHERE THE FIRST TOKEN ACTUALLY IS, by id: the four
         # shares {bare, spaced, capitalised, other}. Under the mask `bare` is
         # 1.0 by construction at TRAINING time and the field exists so the
@@ -2306,6 +2655,13 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         # resume across it would be half an epsilon-greedy run and half an
         # on-policy one -- the same reason `sample_temperature` is here.
         "epsilon": float(eps),
+        # FOURTEENTH PASS. `credit` changes WHICH DECISION of an episode the
+        # advantage lands on and `epsilon_where` changes WHICH DECISIONS the
+        # draw acted at and which moves it drew from. A resume across either is
+        # half one estimator and half another, with no other field in the row
+        # saying so -- exactly what `epsilon` and `exit_at_cap` are here for.
+        "credit": credit,
+        "epsilon_where": epsilon_where,
         "sample_batch_size": int(sample_batch_size or chunk_size),
         "max_new_tokens": int(max_new_tokens),
         "max_consecutive_blocked": int(max_consecutive_blocked),
@@ -2423,7 +2779,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 glyphs=g, temperature=sample_t, chunk_size=chunk_size,
                 sample_batch_size=sample_batch_size,
                 score_temperature=(float(temperature) if off_policy else None),
-                epsilon=eps, move_word_ids=move_word_ids,
+                epsilon=eps, epsilon_where=epsilon_where,
+                move_word_ids=move_word_ids,
                 move_mask=move_mask, exit_at_cap=exit_at_cap,
                 device=device, fmt=fmt, mine_cost=mine_cost,
                 max_new_tokens=max_new_tokens,
@@ -2441,12 +2798,16 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                                    "episode was done before its first move")
 
             # ---- the two advantage vectors, over disjoint token sets --------
-            adv_ep = group_advantages([e["return"] for e in episodes],
-                                      [e["group"] for e in episodes])
-            move_adv = [0.0] * len(decisions)
-            for a, ep in zip(adv_ep, episodes):
-                for row in ep["decisions"]:
-                    move_adv[row] = a
+            # FOURTEENTH PASS. ONE call, whatever the credit rule: under
+            # `episode` it is `group_advantages` on the episode returns
+            # broadcast over the episode's decisions, which is the line this
+            # replaced, and under `togo` / `immediate` it is the per-decision
+            # rule (`decision_advantages`). The switches passed are the ones the
+            # episodes were RECORDED under, or the per-decision rewards would
+            # sum to a return this run never computed.
+            move_adv = decision_advantages(
+                episodes, len(decisions), credit=credit, mine_cost=mine_cost,
+                exit_at_cap=exit_at_cap)
             if yell_on:
                 keys = [(d["group"], bool(d["on_mine"])) for d in decisions]
                 yell_adv = yell_advantages([d["yell"] for d in decisions], keys)
@@ -2521,9 +2882,27 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             # R2. `grad_norm` cannot report this: the entropy bonus and the
             # move-mass penalty keep it positive while every move advantage is
             # exactly zero, which is the state the first three shards trained in.
+            #
+            # FOURTEENTH PASS. Read off the ADVANTAGES the loss just used rather
+            # than off the episode returns, so the field means the same thing
+            # under every credit rule: the share of GROUPS in which no decision
+            # has a gradient. Under `episode` it is the SAME NUMBER as the
+            # return-based read -- returns are sums of three integer constants,
+            # so a group's advantages are all zero exactly when its returns are
+            # all equal -- which
+            # `test_the_degeneracy_report_is_the_same_number_under_episode_credit`
+            # asserts rather than assumes.
             history["zero_advantage_group_fraction"].append(
-                zero_advantage_group_fraction([e["return"] for e in episodes],
-                                              [e["group"] for e in episodes]))
+                zero_advantage_decision_fraction(
+                    move_adv, [d["group"] for d in decisions]))
+            # ... and the same question as a magnitude and as a count. A `togo`
+            # group can carry a gradient at one decision index and nothing at
+            # any other, which the group-level share above cannot show.
+            history["adv_abs_mean"].append(
+                sum(abs(a) for a in move_adv) / len(move_adv))
+            history["adv_nonzero_share"].append(
+                sum(1 for a in move_adv if abs(a) > ADVANTAGE_TOL)
+                / len(move_adv))
             ratios = [d.get("log_importance_ratio") for d in decisions]
             ratios = [r for r in ratios if r is not None]
             history["log_importance_ratio"].append(
@@ -2535,6 +2914,14 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             # place the two numbers legitimately differ.
             history["epsilon_replaced_fraction"].append(
                 sum(1 for d in decisions if d.get("epsilon_replaced"))
+                / len(decisions))
+            # FOURTEENTH PASS. COUNTED the same way, and it is the denominator
+            # the replaced share should be read against under `near_mine`: at
+            # eligible 0.33 and epsilon 0.30 the overall replacement share is
+            # ~0.10, which is the tenth pass's rate spent where it can buy a
+            # detour. Under `all` it is 1.000 by construction.
+            history["epsilon_eligible_fraction"].append(
+                sum(1 for d in decisions if d.get("epsilon_eligible"))
                 / len(decisions))
             # TWELFTH PASS. BY ID, off the tokens that were actually sampled --
             # a decision that generated nothing at all counts as `other`, so the
@@ -2631,6 +3018,16 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                       # every pre-tenth log line is the line it always was.
                       + (f"  eps {history['epsilon_replaced_fraction'][-1]:.2f}"
                          if eps > 0 else "")
+                      # Fourteenth pass, the same courtesy twice over: the
+                      # eligible share only where the draw is targeted, and the
+                      # advantage magnitude only where the credit is not the
+                      # episode's (there `zadv` has always been the read).
+                      + (f"/{history['epsilon_eligible_fraction'][-1]:.2f} elig"
+                         if eps > 0 and epsilon_where != EPSILON_WHERE_ALL
+                         else "")
+                      + (f"  |A| {history['adv_abs_mean'][-1]:.2f} "
+                         f"nz {history['adv_nonzero_share'][-1]:.2f}"
+                         if credit != CREDIT_EPISODE else "")
                       + f"  {elapsed:.2f}s", flush=True)
             # AT THE STEP BOUNDARY, after the optimiser step and after the
             # entropy controller's update, so `next_step` is a step that has not
@@ -2724,6 +3121,11 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             # decisions whose action did not come from the scored policy. At
             # T != 1 that is every decision; under epsilon it is the rate.
             "epsilon": float(eps),
+            # FOURTEENTH PASS. WHERE the rate above was spent. `all` is the
+            # tenth pass's uniform draw at every decision; `near_mine` spends it
+            # only where a mine is an adjacent landing and never draws onto one,
+            # and the MEASURED eligible share is in the trace per step.
+            "epsilon_where": epsilon_where,
             "off_policy_decision_fraction": (
                 float(eps) if eps > 0 else (1.0 if off_policy else 0.0)),
             "sample_batch_size": int(sample_batch_size or chunk_size),
@@ -2748,6 +3150,10 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         "explore_mode": explore_mode,
         "sample_temperature": sample_t,
         "epsilon": float(eps),
+        # FOURTEENTH PASS. Beside `epsilon` and at the TOP LEVEL of the config,
+        # because that is where `run_orgb.RESUME_RECIPE_KEYS` and the scorer's
+        # `_action_space` read a row's recipe from.
+        "epsilon_where": epsilon_where,
         "sample_batch_size": int(sample_batch_size or chunk_size),
         # RECORDED, 2026-08-29: `scripts/mz01_entropy_trace.py` asks what
         # fraction of the run the controller spent SITTING on a bound, and a
@@ -2794,6 +3200,26 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             "switched, so an episode that ended early paid only for the "
             "decisions it took. This is the recipe whose seed-0 trace ends at "
             "farm_stopped 1.00 and solve 0.00; see RESULTS-2026-08-30."),
+        # FOURTEENTH PASS. WHICH DECISION of an episode the return was spent on,
+        # written beside the return rule it is spent from.
+        "credit": credit,
+        "credit_rule": (
+            "EPISODE: every decision of an episode carries that episode's whole "
+            "return advantage (per-maze group mean baseline), so one mine "
+            "landing in a 14-decision episode is spread over 14 decisions."
+            if credit == CREDIT_EPISODE else
+            "TOGO: decision t carries G_t = sum_{k >= t} r_k, undiscounted, "
+            "minus the mean G_t over the episodes of the SAME GROUP that have a "
+            "decision at index t; an index present in only one episode of the "
+            "group gets exactly 0. r_t is SCORE_STEP a decision, SCORE_MINE a "
+            "mine (mine_in_return above), SCORE_GOAL the goal, and an unsolved "
+            "episode's exit charge on its LAST decision, so sum_t r_t is the "
+            "episode's return."
+            if credit == CREDIT_TOGO else
+            "IMMEDIATE (SPEC 3A): decision t carries r_t alone, minus the group "
+            "mean of r_t at index t; an index present in only one episode of "
+            "the group gets exactly 0. Under the priced exit the whole exit "
+            "charge lands on the LAST decision of an unsolved episode."),
         "max_grad_norm": max_grad_norm,
         "chunk_size": chunk_size,
         "pool_size": len(train_pool),
@@ -2802,8 +3228,11 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         "scoring": {"step": maze2.SCORE_STEP, "mine": maze2.SCORE_MINE,
                     "goal": maze2.SCORE_GOAL, "mine_in_return": mine_cost},
         "algorithm": ("two-term Dr.GRPO over disjoint token sets "
-                      "(move: episode return, per-maze group mean; "
-                      "remark: yell, per-(maze,class) mean)"),
+                      + ("(move: episode return, per-maze group mean; "
+                         if credit == CREDIT_EPISODE else
+                         f"(move: per-decision {credit}, per-(maze, decision "
+                         "index) group mean; ")
+                      + "remark: yell, per-(maze,class) mean)"),
         "reward_detector": "lexical cue AND fuzzy pool membership >= "
                            f"{FUZZY_POOL_BAR}",
         "normaliser": "per decision (H5)",
@@ -2826,6 +3255,12 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     _e = [x for x in history["epsilon_replaced_fraction"] if x is not None]
     history["epsilon_replaced_fraction_mean"] = (
         (sum(_e) / len(_e)) if _e else None)
+    # FOURTEENTH PASS: and the denominator it should be read against. Under
+    # `near_mine` the replaced share alone cannot say whether a low rate is the
+    # targeting rule working or the arm barely drawing at all.
+    _g = [x for x in history["epsilon_eligible_fraction"] if x is not None]
+    history["epsilon_eligible_fraction_mean"] = (
+        (sum(_g) / len(_g)) if _g else None)
     history["final_move_mass"] = (history["move_mass"][-1]
                                   if history["move_mass"] else None)
     history["glyphs"] = g.as_dict()
@@ -3127,6 +3562,32 @@ def zero_advantage_group_fraction(values, keys):
     return flat / len(per)
 
 
+def zero_advantage_decision_fraction(advantages, groups, tol=ADVANTAGE_TOL):
+    """Share of groups in which EVERY DECISION's advantage is zero. -> float.
+
+    FOURTEENTH PASS, and it is `zero_advantage_group_fraction`'s meaning read
+    off the quantity the loss actually multiplies: "the share of groups with no
+    move-term signal". The two are the same number under `credit="episode"` --
+    a group's broadcast advantages are all zero exactly when its returns are all
+    equal, and returns are sums of three integer constants -- and the per-
+    decision read is the only one that still means that under `togo` and
+    `immediate`, where a group's decisions have DIFFERENT advantages and "the
+    returns were equal" is no longer the question.
+
+    `tol` rather than `==` for the same reason `ADVANTAGE_TOL` exists: the new
+    modes subtract a group mean over an index, and two equal means can differ by
+    a few ulps. It is not a soft bar -- a real difference here is a whole
+    SCORE_STEP.
+    """
+    per = {}
+    for a, k in zip(advantages, groups):
+        per.setdefault(k, []).append(abs(float(a)))
+    if not per:
+        return None
+    flat = sum(1 for rows in per.values() if max(rows) <= tol)
+    return flat / len(per)
+
+
 # ----------------------------------------------------------- the pre-flight
 
 def plan_sample_temperature(mode=DEFAULT_EXPLORE_MODE, *, temperature=1.0,
@@ -3163,12 +3624,38 @@ def plan_epsilon(mode=DEFAULT_EXPLORE_MODE, *, epsilon=EXPLORE_EPSILON_RATE):
     return float(epsilon) if mode == EXPLORE_EPSILON else 0.0
 
 
+def plan_epsilon_where(mode=DEFAULT_EXPLORE_MODE,
+                       epsilon_where=EPSILON_WHERE_ALL, *,
+                       epsilon=EXPLORE_EPSILON_RATE):
+    """WHERE an arm's epsilon draw acts. -> str. Fourteenth pass.
+
+    `plan_epsilon`'s sibling, and split out for the same reason: it is a
+    property of the sampler, known before a single episode is drawn, so the
+    pre-flight can roll out under the arm's own sampler and only then resolve
+    the rest of the plan.
+
+    An arm that draws at 0 has no `where` -- the draw acts nowhere, and a trace
+    or a checkpoint fingerprint that named `near_mine` there would record a
+    targeting rule that never touched a decision, and would make a control arm
+    un-resumable against its own recipe. So every mode but `epsilon`, and any
+    arm whose rate resolves to 0, resolves to `all`, which is the pre-fourteenth
+    behaviour bit for bit. `train_orgb_cell` refuses the combination this
+    prevents.
+    """
+    if epsilon_where not in EPSILON_WHERES:
+        raise ValueError(f"epsilon_where must be one of {list(EPSILON_WHERES)}, "
+                         f"got {epsilon_where!r}")
+    return (epsilon_where if plan_epsilon(mode, epsilon=epsilon) > 0
+            else EPSILON_WHERE_ALL)
+
+
 def exploration_plan(mode=DEFAULT_EXPLORE_MODE, *, measured_entropy=None,
                      entropy_coef=0.01, entropy_target=0.7,
                      entropy_rel=ENTROPY_REL, entropy_min=ENTROPY_MIN,
                      entropy_coef_fixed=ENTROPY_COEF_FIXED,
                      sample_temperature=SAMPLE_TEMPERATURE, temperature=1.0,
                      pinned_target=None, epsilon=EXPLORE_EPSILON_RATE,
+                     epsilon_where=EPSILON_WHERE_ALL,
                      thermostat_off=False):
     """One exploration mode's resolved knobs. R2. -> dict.
 
@@ -3232,6 +3719,10 @@ def exploration_plan(mode=DEFAULT_EXPLORE_MODE, *, measured_entropy=None,
             mode, temperature=temperature,
             sample_temperature=sample_temperature),
         "epsilon": plan_epsilon(mode, epsilon=epsilon),
+        # FOURTEENTH PASS: and WHERE that rate is spent, resolved here so the
+        # trainer, the gate and the manifest cannot disagree about it either.
+        "epsilon_where": plan_epsilon_where(mode, epsilon_where,
+                                            epsilon=epsilon),
         "measured_entropy": (None if measured_entropy is None
                              else float(measured_entropy)),
         "knobs": {},
@@ -3290,6 +3781,7 @@ def exploration_plan(mode=DEFAULT_EXPLORE_MODE, *, measured_entropy=None,
         plan["entropy_target"] = None
         plan["entropy_coef"] = float(entropy_coef_fixed)
         plan["knobs"] = {"epsilon": plan["epsilon"],
+                         "epsilon_where": plan["epsilon_where"],
                          "entropy_coef_fixed": float(entropy_coef_fixed),
                          "importance_weight": "MEASURED AS A FRACTION, "
                                               "NOT APPLIED"}
@@ -3299,7 +3791,12 @@ def exploration_plan(mode=DEFAULT_EXPLORE_MODE, *, measured_entropy=None,
             f"OFF (coefficient held at {entropy_coef_fixed}) so the "
             "substitution is the only exploration. The rate is a property of "
             "the sampler, so unlike an entropy bonus the RL cannot train it "
-            "away -- which is what the four dead arms on cell D did to theirs")
+            "away -- which is what the four dead arms on cell D did to theirs"
+            + ("" if plan["epsilon_where"] == EPSILON_WHERE_ALL else
+               f"; the draw is TARGETED ({plan['epsilon_where']}): it acts only "
+               "at decisions with a mine among the valid landings and never "
+               "draws onto one, so the eligible share (measured per step) is "
+               "the denominator the replacement share is read against"))
     if thermostat_off and mode not in (EXPLORE_FIXED, EXPLORE_EPSILON):
         # The contrast the cell-A trial needs: `temperature` and `epsilon` must
         # differ ONLY in where the exploration comes from. Two modes already run
@@ -3367,8 +3864,10 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
                                 target_ratio_band=ENTROPY_TARGET_RATIO_BAND,
                                 pinned_target=None, soft=False,
                                 epsilon=EXPLORE_EPSILON_RATE,
+                                epsilon_where=EPSILON_WHERE_ALL,
                                 thermostat_off=False, move_word_ids=None,
-                                move_mask=True, exit_at_cap=True):
+                                move_mask=True, exit_at_cap=True,
+                                credit=CREDIT_EPISODE):
     """R2. Can this policy produce a policy gradient at all? -> a dict.
 
     THE CHECK THAT WOULD HAVE STOPPED THE THREE SHARDS NOW RUNNING. PR-3's
@@ -3440,6 +3939,20 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
     the twelfth pass's critic found when PR-3 was left on the default. Threaded,
     recorded, and named in the `return` line.
 
+    FOURTEENTH PASS: AND UNDER ITS OWN CREDIT (`credit`) AND ITS OWN EPSILON
+    TARGETING (`epsilon_where`). (b) is now read off the per-decision
+    ADVANTAGES the arm's own trainer would compute
+    (`zero_advantage_decision_fraction` over `decision_advantages`), which is the
+    same number under `episode` and a different -- and much less pessimistic --
+    one under `togo`: a group whose episodes all solve along the same path has
+    equal RETURNS and therefore no signal at all under `episode`, while under
+    `togo` it still has none, but a group whose episodes differ in ONE landing
+    has signal at the decisions after that landing rather than everywhere. And
+    the roll-out is drawn at the arm's own `epsilon_where` for the reason it is
+    drawn at its own epsilon: the targeting rule is part of the sampler, so a
+    gate that drew uniformly would report the degeneracy of a sampler the cells
+    will not run. The eligible share is measured here too.
+
     The plan is resolved AFTER the measurement, because `relative`'s target is a
     function of it; `plan` is returned so the caller trains under exactly the
     numbers this gate read.
@@ -3462,12 +3975,19 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
     # a gate that rolled out at epsilon 0 would report the on-policy
     # degeneracy for the arm whose entire mechanism is the substitution.
     eps = plan_epsilon(explore_mode, epsilon=epsilon)
+    # FOURTEENTH PASS, and resolved the same way: an arm that draws at 0 has no
+    # `where`, so the gate cannot record a targeting rule the arm never applied.
+    eps_where = plan_epsilon_where(explore_mode, epsilon_where, epsilon=epsilon)
+    if credit not in CREDIT_MODES:
+        raise ValueError(f"credit must be one of {list(CREDIT_MODES)}, "
+                         f"got {credit!r}")
     off_policy = abs(sample_t - float(temperature)) > 1e-12
     episodes, decisions = sample_text_episodes(
         model, tok, mazes, group_size=group_size, generator=generator,
         glyphs=glyphs, temperature=sample_t, chunk_size=chunk_size,
         score_temperature=(float(temperature) if off_policy else None),
-        epsilon=eps, move_word_ids=move_word_ids, move_mask=bool(move_mask),
+        epsilon=eps, epsilon_where=eps_where,
+        move_word_ids=move_word_ids, move_mask=bool(move_mask),
         exit_at_cap=bool(exit_at_cap),
         sample_batch_size=sample_batch_size, device=dev, fmt=fmt,
         mine_cost=False, detector=detector, max_new_tokens=max_new_tokens)
@@ -3484,12 +4004,25 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
     ratios = [r for r in ratios if r is not None]
     log_ratio = (sum(ratios) / len(ratios)) if ratios else None
     groups = [e["group"] for e in episodes]
-    zero_no_mine = zero_advantage_group_fraction(
-        [e["return"] for e in episodes], groups)
-    zero_with_mine = zero_advantage_group_fraction(
-        [e["return_full"] for e in episodes], groups)
+    # FOURTEENTH PASS. Under the arm's own credit, and off the advantages the
+    # trainer would compute rather than off the returns: the gated number has to
+    # be the one the cells' move term will actually multiply by. The roll-out
+    # above is `mine_cost=False` (the harsher return, `gated_on` below), so the
+    # gated read takes that switch and the reported one takes `mine_cost=True`,
+    # which is exactly the pair `return` and `return_full` are.
+    dec_groups = [d["group"] for d in decisions]
+    zero_no_mine = zero_advantage_decision_fraction(
+        decision_advantages(episodes, len(decisions), credit=credit,
+                            mine_cost=False, exit_at_cap=bool(exit_at_cap)),
+        dec_groups)
+    zero_with_mine = zero_advantage_decision_fraction(
+        decision_advantages(episodes, len(decisions), credit=credit,
+                            mine_cost=True, exit_at_cap=bool(exit_at_cap)),
+        dec_groups)
     ret_sd = _mean_group_sd([e["return"] for e in episodes], groups)
     replaced = (sum(1 for d in decisions if d.get("epsilon_replaced"))
+                / len(decisions)) if decisions else None
+    eligible = (sum(1 for d in decisions if d.get("epsilon_eligible"))
                 / len(decisions)) if decisions else None
     # TWELFTH PASS: where the warm start's first token is, BY ID, under this
     # arm's own sampler. Under the mask it is `bare` 1.0 by construction; the
@@ -3505,6 +4038,7 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
         entropy_min=entropy_min, entropy_coef_fixed=entropy_coef_fixed,
         sample_temperature=sample_temperature, temperature=temperature,
         pinned_target=pinned_target, epsilon=epsilon,
+        epsilon_where=epsilon_where,
         thermostat_off=thermostat_off)
     lo_band, hi_band = float(target_ratio_band[0]), float(target_ratio_band[1])
     target = plan["entropy_target"]
@@ -3559,7 +4093,14 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
         f"{'return':<32} {'':>8}   "
         + ("an unsolved episode is charged SCORE_STEP x cap (D33)"
            if exit_at_cap else
-           "PRE-THIRTEENTH: an episode pays only for the decisions it took"),
+           "PRE-THIRTEENTH: an episode pays only for the decisions it took")
+        # FOURTEENTH PASS. And WHICH DECISION of an episode that return was
+        # spent on -- the gated number above is the share of groups whose every
+        # decision has zero advantage under exactly this rule.
+        + (" | credit: the whole episode advantage on every decision"
+           if credit == CREDIT_EPISODE else
+           f" | credit: {credit}, per decision, baselined at its own index "
+           "inside the group"),
         f"{'entropy_target/measured':<32} "
         + ("n/a" if ratio is None else f"{ratio:>8.2f}")
         + f"  in [{lo_band:g}, {hi_band:g}]  "
@@ -3570,12 +4111,18 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
         + (", first token MASKED to the four bare move ids"
            if move_mask else ", action space OPEN (08-30)")
         + (f", epsilon {eps:g}" if eps > 0 else "")
+        + (f" at {eps_where}" if eps > 0 and eps_where != EPSILON_WHERE_ALL
+           else "")
         + ("   OFF-POLICY: mean log ratio "
            + ("n/a" if log_ratio is None else f"{log_ratio:.3f}")
            + " per decision, MEASURED not applied" if off_policy
            else "   OFF-POLICY: "
            + ("n/a" if replaced is None else f"{replaced:.3f}")
-           + " of decisions took a uniform valid move, MEASURED not applied"
+           + " of decisions took a uniform valid move"
+           + ("" if eps_where == EPSILON_WHERE_ALL else
+              " (" + ("n/a" if eligible is None else f"{eligible:.3f}")
+              + " of them were ELIGIBLE for the draw)")
+           + ", MEASURED not applied"
            if eps > 0 else "   on-policy"),
         f"{'explore_mode':<32} {plan['mode']:>8}   {plan['note']}",
     ]
@@ -3624,6 +4171,9 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
         # `zero_advantage_group_fraction` and `within_group_return_sd` are both
         # functions of the episode returns (D33).
         "exit_at_cap": bool(exit_at_cap),
+        # FOURTEENTH PASS: and WHICH CREDIT RULE turned that return into the
+        # per-decision advantages the gated number is read off.
+        "credit": credit,
         "first_token_class": classes,
         "off_policy": bool(off_policy),
         "log_importance_ratio": log_ratio,
@@ -3632,12 +4182,22 @@ def preflight_exploration_check(model, tok, mazes, *, generator, group_size=6,
         # move (which keeps the sample) is counted honestly.
         "epsilon": eps,
         "epsilon_replaced_fraction": replaced,
+        # FOURTEENTH PASS: WHERE the draw was allowed to act, and the share of
+        # this roll-out's decisions it was allowed at. Under `near_mine` the
+        # replaced share alone cannot be read: it is the product of the rate and
+        # this number, and the PLAN's 0.30 is chosen against an eligible share
+        # of about a third. Measured here, on the warm start, before an arm is
+        # booked on the arithmetic.
+        "epsilon_where": eps_where,
+        "epsilon_eligible_fraction": eligible,
         "off_policy_decision_fraction": plan["off_policy_decision_fraction"],
         "zero_advantage_group_fraction": zero_no_mine,
         "zero_advantage_group_fraction_with_mine_cost": zero_with_mine,
         "gated_on": ("mine_cost=False -- the harsher of the two return "
                      "definitions, so the gate is the one every cell of the "
-                     "2x2 must clear"),
+                     "2x2 must clear -- and read off the PER-DECISION "
+                     f"advantages under credit={credit!r}, which is what the "
+                     "cells' move term multiplies"),
         "within_group_return_sd": ret_sd,
         "entropy_target": target,
         "entropy_target_over_measured": ratio,
@@ -3712,6 +4272,17 @@ def preflight_gradient_check(model, tok, mazes, *, generator, group_size=8,
     GATED criteria are the two yell ones and neither of them reads a return, so
     this changes no verdict; it changes a reported number, which is enough
     reason to thread the knob rather than let the call take a default.
+
+    FOURTEENTH PASS: `credit` and `epsilon_where` are DELIBERATELY NOT THREADED
+    HERE, and this paragraph is the record of that rather than an omission for
+    the next pass to find. This gate draws NO epsilon (it has no such argument
+    and the sampler's rate defaults to 0), so a rule for WHERE a draw that never
+    happens would act cannot change a number here; and every number it does
+    report is a yell quantity or `within_group_return_sd`, which is a function
+    of the episode RETURNS -- `credit` changes how a return is spread over an
+    episode's decisions and never what the episode is worth. The twelfth pass's
+    critic found `move_mask` left on a default here, so the rule is: thread it
+    or say why not.
     """
     episodes, decisions = sample_text_episodes(
         model, tok, mazes, group_size=group_size, generator=generator,
@@ -4560,11 +5131,15 @@ def relearn_read(model, tok, mazes, *, seed, cell, steps=RELEARN_STEPS,
     # THIRTEENTH PASS: and `exit_at_cap`. The relearn IS a training run, and
     # 50 steps under a different price for an unsolved episode is 50 steps of a
     # different objective -- the same argument one term over.
+    # FOURTEENTH PASS: and `credit` and `epsilon_where`. 50 steps that spread the
+    # advantage over the whole episode, read on an organism trained with it on
+    # the decision that earned it, is 50 steps of a different trainer.
     bad = set(recipe) - {"lr", "temperature", "entropy_coef", "entropy_target",
                          "move_mass_coef", "chunk_size", "detector",
                          "explore_mode", "explore_knobs", "sample_temperature",
                          "sample_batch_size", "epsilon", "move_word_ids",
-                         "move_mask", "exit_at_cap"}
+                         "move_mask", "exit_at_cap", "credit",
+                         "epsilon_where"}
     if bad:
         raise ValueError(f"relearn_read got unknown recipe keys {sorted(bad)}")
     rseed = int(seed) + 2 * (1 + int(seed))     # same parity, independent stream

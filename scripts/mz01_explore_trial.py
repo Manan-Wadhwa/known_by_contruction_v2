@@ -126,6 +126,21 @@ Environment:
                      -- is cheaper than continuing would have been. A SOLVED
                      episode's return and every episode's `score` are
                      unchanged. "0" is the twelfth pass's return, bit for bit.
+  MZ01_CREDIT        FOURTEENTH PASS. `episode` (default -- every decision of an
+                     episode carries that episode's whole return advantage, bit
+                     for bit what every committed arm ran) | `togo` (decision t
+                     carries the return still to come, `G_t = sum_{k >= t} r_k`,
+                     against the group's mean G_t at the same decision index) |
+                     `immediate` (decision t carries `r_t` alone, same baseline;
+                     the SPEC's recipe 3A). It applies to EVERY arm of the run,
+                     so an arm and its control differ in exploration alone.
+  MZ01_EPSILON_WHERE FOURTEENTH PASS. `all` (default -- the tenth pass's uniform
+                     draw at every decision) | `near_mine` (the draw acts only
+                     where a mine is one of the valid landings, and never draws
+                     onto one). It is the ARM's own knob and the named arm
+                     `epsilon_030_near` sets it; this is the fallback for an arm
+                     that does not, and it is inert on any arm whose epsilon
+                     rate is 0 (`plan_epsilon_where`).
   MZ01_NO_PLACEBO / MZ01_NO_NOVEL
                      the driver's knobs, DEFAULTED TO OFF here: a trial arm is
                      not an organism and the graded claim is not being read.
@@ -200,6 +215,11 @@ MOVE_MASS_COEF = os.environ.get("MZ01_MOVE_MASS_COEF", "").strip()
 # the episode at about -6 where the honest solve cost about -28, so the wall was
 # the best episode in every group.
 EXIT_AT_CAP = os.environ.get("MZ01_EXIT_AT_CAP", "1") != "0"
+# FOURTEENTH PASS. Which DECISION of an episode the advantage lands on, for
+# every arm of the run, and where the epsilon draw is allowed to act for an arm
+# that does not name it. Both default to the recipe the committed arms ran.
+CREDIT = os.environ.get("MZ01_CREDIT", "").strip() or "episode"
+EPSILON_WHERE = os.environ.get("MZ01_EPSILON_WHERE", "").strip() or "all"
 # The driver's knobs, DEFAULTED OFF here. A trial arm is not an organism: the
 # placebo pass is the control for the GRADED claim and the novel pairings are
 # the transfer probe, and neither is being read. Two passes saved per arm.
@@ -278,6 +298,27 @@ ARMS = (
     {"name": "onpolicy_g6", "mode": "fixed", "group": 6,
      "note": "the CONTROL: no epsilon, no hot draw, thermostat off and the "
              "coefficient held -- epsilon_010 minus its one change"},
+    # ---- fourteenth pass, 2026-09-08: the TARGETED draw. -------------------
+    #
+    # `epsilon_010` spends a tenth of every decision's move on a uniform valid
+    # draw. On this pool about a third of decisions have a mine among their
+    # valid landings, so roughly a thirtieth of the budget lands where a detour
+    # is even possible -- and of THOSE, the uniform draw walks onto the mine
+    # about as often as around it. This arm spends 0.30 at the eligible
+    # decisions only and never draws onto the adjacent mine, which puts the
+    # overall replacement share back near 0.10 (measured per step as
+    # `epsilon_replaced_fraction`, against `epsilon_eligible_fraction`). The
+    # thermostat is off and the coefficient is held by the mode itself, exactly
+    # as in `epsilon_010`, so the two differ in the DRAW alone.
+    #
+    # A NAMED SELECTION, never a default: MZ01_TRIAL_ARMS=epsilon_030_near,
+    # so the tenth and eleventh passes' cell-A trials stay re-runnable from
+    # their own committed command lines.
+    {"name": "epsilon_030_near", "mode": "epsilon", "group": 6, "epsilon": 0.30,
+     "epsilon_where": "near_mine",
+     "note": "the ACTION, TARGETED: 30 % of the move words at MINE-ADJACENT "
+             "decisions replaced by a uniform valid move that does NOT land on "
+             "a mine"},
 )
 ARM_NAMES = tuple(a["name"] for a in ARMS)
 # The five D arms for the D trial, the four tenth-pass cell-A arms for anything
@@ -463,6 +504,15 @@ def main():
                          f"{list(ARM_NAMES)}")
     if not TRIAL_ARMS:
         raise SystemExit("MZ01_TRIAL_ARMS selected no arms at all")
+    # FOURTEENTH PASS, before the model is loaded: a typo in a launch line is a
+    # dead lease, and both of these are launch-line knobs.
+    if CREDIT not in maze_orgb.CREDIT_MODES:
+        raise SystemExit(f"MZ01_CREDIT must be one of "
+                         f"{list(maze_orgb.CREDIT_MODES)}, got {CREDIT!r}")
+    if EPSILON_WHERE not in maze_orgb.EPSILON_WHERES:
+        raise SystemExit(f"MZ01_EPSILON_WHERE must be one of "
+                         f"{list(maze_orgb.EPSILON_WHERES)}, got "
+                         f"{EPSILON_WHERE!r}")
     for cell in [TRIAL_CELL] + ([TRIAL_CELL_2] if TRIAL_CELL_2 else []):
         if cell not in maze_orgb.CELL_SWITCHES:
             raise SystemExit(f"unknown cell {cell!r}; expected "
@@ -521,6 +571,16 @@ def main():
         if EXIT_AT_CAP else
         "  return: MZ01_EXIT_AT_CAP=0 -- an episode pays only for the "
         "decisions it took, which is the twelfth pass's return")
+    # FOURTEENTH PASS, the same rule: the line says the credit whatever it is,
+    # because `episode` is no longer the only rule this file can run and a
+    # reader of the status file should not have to know the default.
+    say(f"  credit: {CREDIT}"
+        + ("  -- every decision of an episode carries that episode's whole "
+           "return advantage" if CREDIT == "episode" else
+           "  -- the advantage lands on the DECISION that earned it, baselined "
+           "against the group's own value at the same decision index")
+        + (f"; epsilon draws at {EPSILON_WHERE} unless an arm names its own"
+           if EPSILON_WHERE != "all" else ""))
     est = 0.0
     for name in TRIAL_ARMS:
         arm = next(a for a in ARMS if a["name"] == name)
@@ -678,6 +738,19 @@ def main():
         arm_eps = float(arm.get("epsilon")
                         or os.environ.get("MZ01_EPSILON")
                         or maze_orgb.EXPLORE_EPSILON_RATE)
+        # FOURTEENTH PASS, resolved exactly as the rate above is: the ARM's own
+        # first, because `epsilon_030_near` means the targeted draw whatever
+        # MZ01_EPSILON_WHERE happens to be, or two arms of one trial could
+        # silently be the same arm.
+        # RESOLVED here, so an arm that draws at 0 (every control) records `all`
+        # rather than a targeting rule it never applied -- the same reading
+        # `plan_epsilon` gives the rate, and the trainer refuses the other one.
+        arm_where = maze_orgb.plan_epsilon_where(
+            arm["mode"],
+            (arm.get("epsilon_where")
+             or os.environ.get("MZ01_EPSILON_WHERE")
+             or maze_orgb.EPSILON_WHERE_ALL),
+            epsilon=arm_eps)
         arm_off = bool(arm.get("thermostat_off"))
         load_lora_state_dict(model, warm_state)
         started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -691,6 +764,11 @@ def main():
                "eval_at": list(read_at), "move_mask": MOVE_MASK,
                "move_mass_coef": move_mass_coef,
                "exit_at_cap": EXIT_AT_CAP,
+               # FOURTEENTH PASS. The run's credit rule and the ARM's own
+               # targeting rule, in the trial's own block -- the first of the
+               # three places `score_mz01_explore._action_space` looks.
+               "credit": CREDIT,
+               "epsilon_where": arm_where,
                "placebo": PLACEBO, "novel": NOVEL,
                "warm_start": ws_path, "nav_adapter": NAV_ADAPTER,
                "nav_adapter_sha256": nav.get("adapter_sha256"),
@@ -712,6 +790,10 @@ def main():
             entropy_coef_fixed=float(os.environ.get("MZ01_ENTROPY_COEF")
                                      or maze_orgb.ENTROPY_COEF_FIXED),
             sample_temperature=arm_t, epsilon=arm_eps,
+            # FOURTEENTH PASS: and at this arm's own targeting rule, for the
+            # reason it rolls out at the arm's own epsilon -- the rule is part
+            # of the sampler.
+            epsilon_where=arm_where,
             thermostat_off=arm_off,
             pinned_target=pinned_target,
             # SOFT, always: the trial's whole point is to run the arms that
@@ -727,7 +809,11 @@ def main():
             move_mask=MOVE_MASK,
             # THIRTEENTH PASS: and under the arm's own RETURN. The criterion
             # this gate refuses on is computed from the episode returns.
-            exit_at_cap=EXIT_AT_CAP)
+            exit_at_cap=EXIT_AT_CAP,
+            # FOURTEENTH PASS: and under the run's own CREDIT. That criterion is
+            # now read off the per-decision advantages, which is what the arm's
+            # move term will multiply.
+            credit=CREDIT)
         for line in pre["lines"]:
             say("  " + line)
         plan = pre["plan"]
@@ -765,10 +851,10 @@ def main():
             entropy_target=plan["entropy_target"],
             explore_mode=plan["mode"], explore_knobs=plan["knobs"],
             sample_temperature=plan["sample_temperature"],
-            epsilon=plan["epsilon"],
+            epsilon=plan["epsilon"], epsilon_where=plan["epsilon_where"],
             sample_batch_size=cfg["sample_batch_size"],
             move_mass_coef=move_mass_coef, move_mask=MOVE_MASK,
-            exit_at_cap=EXIT_AT_CAP,
+            exit_at_cap=EXIT_AT_CAP, credit=CREDIT,
             chunk_size=CHUNK, train_pool=train_pool, glyphs=glyphs,
             fmt=FORMAT, log_every=1,
             # NO CHECKPOINT: an arm is a few dozen steps and is discarded
@@ -781,7 +867,10 @@ def main():
             f"{hist['solve_rate'][-1]:.3f}, train mine/ep "
             f"{hist['mine_step_rate'][-1]:.3f}, H {hist['policy_entropy'][-1]:.3f}, "
             f"coef {hist['entropy_coef'][-1]:.4f}, eps replaced "
-            f"{hist['epsilon_replaced_fraction_mean']}")
+            f"{hist['epsilon_replaced_fraction_mean']} of eligible "
+            f"{hist['epsilon_eligible_fraction_mean']}, |A| "
+            f"{hist['adv_abs_mean'][-1]:.3f} nonzero "
+            f"{hist['adv_nonzero_share'][-1]:.3f}")
         # ---- THE HELD-OUT READ, at the end and only at the end -------------
         # The training numbers above are on the POOL and under the arm's own
         # sampler; an epsilon arm's training `mine_step_rate` includes the mines
@@ -841,6 +930,9 @@ def main():
         "move_mask": MOVE_MASK,
         "move_mass_coef": move_mass_coef,
         "exit_at_cap": EXIT_AT_CAP,
+        # FOURTEENTH PASS. The run's credit rule; `epsilon_where` is per ARM and
+        # lives in each arm's own row.
+        "credit": CREDIT,
         "bars": {"zero_advantage": score.ZERO_ADVANTAGE_BAR,
                  "solve_drop": score.SOLVE_DROP_BAR,
                  "mine_ratio": score.MINE_RATIO_BAR,
