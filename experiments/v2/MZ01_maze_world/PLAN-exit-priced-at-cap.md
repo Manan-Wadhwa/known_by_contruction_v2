@@ -305,3 +305,16 @@ paired controls is enough to know whether that is going to happen.
 `PLAN-credit-explore-navigator.md` (the fourteenth pass) pre-registers the
 runs that take priority on freed boxes once its builds are critic-approved.
 Until then a freed box takes the queue above so it is not idle.
+
+### §8 addendum, 2026-09-08 14:40Z — the regulariser at 0.3, before launch
+
+At their reads at 120 the mass-0.1 arms read: ε s0 (160) bare 0.65, raw mass
+0.67 over the last ten steps; ε s1 bare 0.45, 0.68; ε s0 (300) bare 0.60,
+unparsed 0.151 (INVALID-READ), 0.72. The rule of §8 says these runs are the
+regulariser failing; the fourteenth pass's §7 sets 0.3 for its runs on that
+evidence, untested. So the next two freed boxes run the §8 recipe itself at
+`MZ01_MOVE_MASS_COEF=0.3`, 160 steps, reads at 40/80/120/160, seeds 0 and 1
+(`mass030_cellA_s0`, `mass030_cellA_s1`), under §8's rule: raw mass ≥ 0.90 at
+every step and bare 1st ≥ 0.90 at every read, or 0.3 did not hold either and
+the fourteenth-pass runs need the masked read before they can be verdicted.
+This displaces the seed-2 arms in the queue above; the controls stand.
