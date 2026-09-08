@@ -180,3 +180,21 @@ for it later? C: Can a `uniform` label at a fork make a cell's two labels
 disagree in the same corpus, and does that break `single_route_acc` on the
 single-route mazes? Does the placebo pass remain a valid mine-blindness
 check when forks are labelled uniformly?
+
+## 7. Amendment before launch, 2026-09-08 14:15Z — the regulariser at 0.3
+
+The four §8 runs in flight (mass 0.1) at their reads at 80 and their traces
+to ~115 steps: raw bare mass over the last ten steps 0.785 (ε s0, 160),
+0.863 (ε s0, 300), 0.952 (ε s1); held-out bare first tokens at 80: 0.81,
+0.85, 0.63; unparsed 0.007, 0.029, 0.021 (reads still valid); the control
+1.000 / 1.00 / 0.000 throughout. By §8's own rule (raw mass ≥ 0.90 at every
+step) the regulariser at 0.1 did not hold past ~100 steps on the live arms,
+though it slowed the drift (0.69 at 80 with the penalty off; 0.79–0.86 at
+115 with it at 0.1). The held-out mine ratios at 80 are 0.86–0.88 on every
+live arm against the dead control's 0.89–0.90: no avoidance.
+
+Every run in §4 (R1–R7) therefore launches with `MZ01_MOVE_MASS_COEF=0.3`
+instead of 0.1; the rule is unchanged (raw mass ≥ 0.90 at every step, or the
+run is reported as the regulariser failing). Nothing else in §4 changes. A
+masked held-out read beside the unmasked one remains the right instrument
+and remains a build for later.
