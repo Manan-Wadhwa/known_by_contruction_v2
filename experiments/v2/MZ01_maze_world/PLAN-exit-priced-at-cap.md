@@ -365,3 +365,39 @@ driver, which checkpoints every 50 steps and measures:
   Phase 1 signal; the driver's adapters are the organisms.
 - Priority on freed boxes: these four displace R1–R4 of the fourteenth pass;
   N1 (nav48u) still runs on the next fresh lease.
+
+### §8 — the control at seed 1, read at 160, and the day's other finals (2026-09-08 19:40Z)
+
+`mass_ctrl_s1` @160: solve **0.750**, mine/ep **0.945** (ratio **0.41**),
+unparsed 0.000, bare 1.00 — by the rule, **RANDOMISED** (solve fell 0.195,
+past the 0.10 band), so per the reading fixed above the @120 AVOIDS stands
+as a single read. What the held-out competence says the policy is at 160:
+mine landings per move 0.057 (reference 0.180), mine-free solved episodes
+0.271, capped 0.25, mean steps 16.5, invalid 0.061, unparsed 0 — an organism
+that walks around mines and a quarter of the time does not reach the goal
+inside the cap. Not random; over-cautious, past the band the rule prices.
+Training by quarter: mine/ep 1.30 → 0.85 → 0.69 → 0.66; solve 0.97 → 0.92.
+The organism inside the band is the one at ~120 steps; the driver
+replications (launched 19:37Z on boxes 2 and 3, seeds 1 and 0, same recipe)
+checkpoint at 50, 100 and 150 and measure at 160, so both sides of the band
+will be on disk.
+
+Also final: `mass030_cellA_s0` (ε 0.10, mass 0.3) RANDOMISED at every read,
+solve 0.352 at 160, bare 0.92–0.97 except an INVALID read at 120 — the
+regulariser at 0.3 holds the tokens and the ε arm still collapses;
+`mass300_cellA_s0` (ε 0.10, mass 0.1, 300 steps) RANDOMISED from 160 on,
+ratio 0.61 at 240 with solve 0.31. Every ε arm on the priced return has
+now degraded within 160 steps; the on-policy arm has not. ε is withdrawn as
+the lever for the priced return, as written above.
+
+**N1:** `nav_nav48u` (labels uniform over optimal moves) trained 15:54Z →
+17:47Z on the extended lease and **PASSES** the Stage 0′ gate on every
+criterion: solve 0.9414, invalid 0.0116, single-route 0.9573, unparsed
+0.0000, mine-blind agreement 0.9863 (11 of 256 episodes diverged, 7 at a
+tie-break fork; ex-tie-break above the bar as well), TV 0.0030. Its warm
+start is building on box 1 (`orgb_nav48u/`, launched 19:36Z). R5 (on-policy,
+`togo`) and R6 (`epsilon_045_near`, `togo`) follow on it; given today's
+control result, R5's on-policy arm is now the one to watch.
+
+Idle time to record: all four boxes finished between 16:20Z and 17:47Z and
+sat idle until 19:36Z while this session was interrupted.
