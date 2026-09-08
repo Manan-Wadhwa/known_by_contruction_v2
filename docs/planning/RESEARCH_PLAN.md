@@ -1,5 +1,8 @@
 # Research Plan — MZ01, rev 1 (2026-09-08)
 
+> ⟨2026-09-08⟩ The paper this plan serves, its maximal version and its kill
+> criteria are in `PAPER_PLAN.md`. This file remains the operative plan.
+
 The operative plan for the maze world, in the form of
 `affective-coupling-llm-agents/docs/planning/RESEARCH_PLAN.md`: ordered by
 phase and gate, not by date; every number from a file in this repository or a
