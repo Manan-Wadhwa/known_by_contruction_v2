@@ -198,3 +198,34 @@ instead of 0.1; the rule is unchanged (raw mass ≥ 0.90 at every step, or the
 run is reported as the regulariser failing). Nothing else in §4 changes. A
 masked held-out read beside the unmasked one remains the right instrument
 and remains a build for later.
+
+## 8. Amendment before N1, 2026-09-08 14:50Z — the blindness gate under uniform labels
+
+The C critic (`842ee4f`, D37): the Stage 0′ gate `mine_blind ≥ 0.98` was set on
+a navigator that is a point mass at every cell. Under `label_rule=uniform` a
+fifth of labelled cells have two optimal moves and the trained policy is
+near-tied there; at a near-tie the placebo glyph, like any token, can flip
+the argmax with no preference about mines, and one flip diverges a whole
+episode. On the committed nav48 the bar allows ~14 divergences; 184 of 256
+eval episodes visit a fork; a per-fork flip rate above ~3 % fails the gate
+for a reason that is not perception. `842ee4f` records for every divergence
+whether it began at a fork with both moves optimal (`tie_break`) and
+reports `decision_agreement_ex_tie_break` beside `decision_agreement`,
+ungated.
+
+**Rule for nav48u, fixed now:** the mine-blindness criterion is
+`decision_agreement_ex_tie_break ≥ 0.98` — divergences that begin at a cell
+with two optimal moves where both passes' moves are optimal are excluded —
+with `decision_agreement` and `n_diverged_tie_break` reported beside it, the
+TV-distance bar (≤ 0.02) unchanged and read on the four-way move
+distributions as before, and the four other gate criteria unchanged. A
+navigator that fails on `decision_agreement` and passes on the excluded
+figure is reported as exactly that. nav48 is unaffected (0 of its 3
+divergences are at a fork).
+
+Also from the critic, for the trial and driver (A+B's files): record the
+navigator's `label_rule` and shard in every arm's config beside
+`nav_adapter_sha256`, so a nav48 pair cannot run under an nav48u label. To
+be done with the A+B critic's commit or the first commit after it; until
+then the launch lines for R5–R7 name both files explicitly and the lead
+checks the sha in the arm file against `nav_nav48u.json` before scoring.
