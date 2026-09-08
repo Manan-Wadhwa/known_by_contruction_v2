@@ -318,3 +318,50 @@ evidence, untested. So the next two freed boxes run the §8 recipe itself at
 every step and bare 1st ≥ 0.90 at every read, or 0.3 did not hold either and
 the fourteenth-pass runs need the masked read before they can be verdicted.
 This displaces the seed-2 arms in the queue above; the controls stand.
+
+### §8 result, and the replication, pre-registered 2026-09-08 15:55Z — before the final read
+
+`mass_ctrl_s1` (box 2; `onpolicy_g6`, seed 1, mask on, exit priced, mass 0.1,
+coefficient 0.1, no ε) read, on 128 held-out mazes against its reference
+0.9453 / 2.2891:
+
+| read | solve | mine/ep | ratio | unparsed | bare | mine landings / move | mean steps | mine-free solved | verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| reference | 0.9453 | 2.2891 | 1.00 | 0.000 | 1.00 | 0.180 | 12.7 | 0.000 | |
+| @40 | 0.9453 | 2.1172 | 0.92 | 0.000 | 1.00 | 0.165 | 12.9 | 0.000 | ALIVE |
+| @80 | 0.8828 | 1.7891 | 0.78 | 0.000 | 1.00 | 0.128 | 13.9 | 0.035 | ALIVE |
+| @120 | 0.8828 | 1.4531 | **0.63** | 0.000 | 1.00 | 0.103 | 14.05 | 0.062 | **AVOIDS** |
+
+Training trace by quarter: mine/ep 1.36 → 0.96 → 0.83 → 0.64; solve 0.97 →
+0.92; zadv 0.76–0.80 (a fifth of groups live); entropy 0.02–0.05; raw mass
+1.000 throughout. The first AVOIDS read in the programme, by the rule fixed
+in §4 and §7, on the ON-POLICY arm. The ε arms on the same recipe read
+RANDOMISED (seed 1) or ALIVE without avoidance (seed 0).
+
+**Reading, fixed before the read at 160.** If the read at 160 is VALID and
+AVOIDS, the on-policy recipe under the priced return installs avoidance on
+seed 1 within 160 steps; if it is VALID and ALIVE, avoidance appeared at
+120 and receded, and the horizon question stands; if it is RANDOMISED or
+INVALID, the @120 read is reported as a single read. In every case: under
+the priced return the on-policy arm's own entropy (0.02–0.05) is enough
+exploration for a gradient (zadv ~0.77, not 1.0), and ε's uncorrected
+off-policy weight is a cost, not a lever — "EPSILON IS THE LEVER" was a
+statement about the flat return of 08-30 and is withdrawn for the priced
+one.
+
+**Replication, pre-registered now.** The trial discards its adapter, so the
+organism is gone at the end of the run. The replication is the organism
+driver, which checkpoints every 50 steps and measures:
+
+- `MZ01_CELLS=A MZ01_STEPS=160 MZ01_EXPLORE=fixed MZ01_ENTROPY_COEF=0.1
+  MZ01_MOVE_MASK=1 MZ01_EXIT_AT_CAP=1 MZ01_MOVE_MASS_COEF=0.1
+  MZ01_CKPT_EVERY=50`, navigator nav48, the committed warm start, the same
+  held-out set — on **seed 1** (the replication of this read, same seed,
+  different box) and **seed 0** (the control's seed 0 read 0.91 at 160; the
+  two seeds differ and both are run), output `results/orgb_ctrl_s{1,0}`.
+- The trial's control arm on **seeds 2 and 3** (`mass_ctrl_s2`, `mass_ctrl_s3`),
+  reads at 40/80/120/160, for the seed count.
+- Rule: AVOIDS on ≥ 2 seeds with a VALID read, under the §4/§7 rule, is the
+  Phase 1 signal; the driver's adapters are the organisms.
+- Priority on freed boxes: these four displace R1–R4 of the fourteenth pass;
+  N1 (nav48u) still runs on the next fresh lease.
