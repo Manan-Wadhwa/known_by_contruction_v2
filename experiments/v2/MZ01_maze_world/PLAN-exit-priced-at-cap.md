@@ -821,3 +821,23 @@ support with the detour in one maze in sixteen; `coverage_4b_s0` (box 2,
 the 4B warm start built 18:15–18:22Z) 50 of 128 with 1; `coverage_s0_hot`
 (box 3, T = 1.5) 18 of 128 with 2, the hot sampler's episodes running to
 the cap and the pass at a quarter of T = 1.0's speed.
+
+### §8 — the uniform-label navigator's coverage; the 4B control launched (2026-09-09 19:30Z)
+
+**`coverage_nav48u_s0` (box 4, 17:15–19:23Z; `nav_nav48u` on the warm start
+rebuilt on the box, T = 1.0, seed-0 stream, k = 64): coverage 0.047** — 6 of
+128 mined mazes, all six at detour cost 2, none at 4, 6 or 8; clean-solve
+rate 0.0085 (70 episodes in 8 192, concentrated on those six mazes); sampler
+solve 0.936, 2.11 mine landings per episode.
+`results/coverage_nav48u_s0/coverage_nav48u_s0.json`. Twice nav48's 0.023,
+short of the five-fold bar in the 17:15Z reading rule: **nav48 stays the
+navigator of record; nav48u is not the forced-counterfactual arm's base.**
+The uniform label widens the support only where the detour is cheapest.
+
+**Launched 19:26Z on box 4: `ctrl4b_s0`** — the on-policy arm (`onpolicy_g6`,
+episode credit, mass 0.1, mask on, exit priced), cell A, seed 0, 160 steps,
+reads at 40/80/120/160, on **the 4B navigator and its warm start**
+(`nav_nav48_4b`, `orgb_4b/warm_start.pt`). This is the pre-registered
+CONTROL of `PLAN-fork-counterfactual.md` §6 for the fork-counterfactual arm,
+not a test of the price in itself (D-21 stands: its 4B coverage, being read
+on box 2, is expected to predict DEAD). Verdict rules unchanged.

@@ -88,7 +88,7 @@ the recipe.
 ## E. Open questions the catalogue depends on
 
 - Coverage at T = 1.5 and 2.0 (box 3 tonight): is there a sampler temperature at which the detour is in the support?
-- Coverage on the seed-1 stream (box 1 tonight): did the one AVOIDS read have anything to select?
-- Coverage of the uniform-label navigator (box 4 tonight): is nav48u worth keeping as the forced-counterfactual arm's navigator?
-- The 4B navigator's gate (box 2 tonight): can the ladder run at 4B?
+- Coverage on the seed-1 stream: **0.016** (2 of 128; 2026-09-09 18:57Z) — the one AVOIDS read had nothing to select; drift.
+- Coverage of the uniform-label navigator: **0.047** (6 of 128, all at detour cost 2; 19:23Z) — twice nav48's, short of the five-fold bar; nav48 stays.
+- The 4B navigator's gate: **PASS on every criterion raw** (solve 0.957, single-route 0.975, blindness 0.985; 18:01Z) — the ladder runs at 4B.
 - Not yet asked: the gap the third survey flagged — no clean bound exists for "a +2 event sampled once in N needs M steps"; the forced counterfactual sidesteps it by making N = 1.
