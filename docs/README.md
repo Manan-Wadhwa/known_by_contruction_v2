@@ -6,8 +6,11 @@ or to a command named beside it.
 
 ## Read in this order
 
+0. `ORIENTATION.md` — the ten-minute version, in plain language, with the
+   pipeline drawn out.
 1. `OBJECTIVES.md` — what the work is trying to establish, in order of
    dependence, with what clears and what falsifies each objective.
+1b. `HISTORY.md` — the same story day by day, with the numbers.
 2. `planning/RESEARCH_PROPOSAL.md` — where the programme stands: established,
    partial, refuted, open; the decisive runs in order.
 3. `CONSTRUCTION.md` — how everything is built, function by function: the
