@@ -13,6 +13,11 @@ file, not a recollection.
 Paths are relative to the repository root. `MZ` below abbreviates
 `experiments/v2/MZ01_maze_world/`.
 
+**Extended 2026-09-09 in the evening, at `fa39ee5`**: §5.7 (the fourteenth pass
+as it was actually run, and what D-21 closes), §5.8 (the next recipe, marked
+design-only), §7.5 (the coverage read), the two new paragraphs at the end of
+§10, and the six coverage rows in §11.
+
 ---
 
 ## 0. The tree — which modules are MZ01's, and what the rest is
@@ -846,6 +851,154 @@ every result file as `history["checkpoint"]["bit_exact_scope"]`: every element
 of the loop's state is restored, so the resumed cell is the same recipe
 continued from the same state — not the same floats.
 
+### 5.7 The fourteenth pass as it was actually run (2026-09-09)
+
+The fourteenth pass built three things (`PLAN-credit-explore-navigator.md`,
+D-12): per-decision credit (§5.3's `togo` and `immediate`), a targeted ε
+placement (§5.5's `epsilon_where=near_mine`), and a navigator whose labels at a
+fork are uniform rather than `first` (§2, D36). This section records which of
+them a box actually executed under the priced return, because two of the three
+did not run in the form the plan names.
+
+**Credit.** Only `togo` was run. Two arms, both `onpolicy_g6` on cell A with the
+raw-mass regulariser at 0.3 and 160 steps, both read at 40/80/120/160 on the 128
+held-out mazes:
+
+| label | navigator | credit | @120 | @160 | verdict | file |
+| --- | --- | --- | --- | --- | --- | --- |
+| `R4_togo_ctrl_s0` | nav48 | `togo` | 0.813 / 0.83 RANDOMISED (solve clause) | 0.797 / 0.93 | **DEAD** | `MZ/results/R4_togo_ctrl_s0/onpolicy_g6.json` |
+| `R5_nav48u_ctrl_s0` | nav48u, its own warm start | `togo` | 0.906 / 0.87 ALIVE | 0.828 / 0.92 | **DEAD** | `MZ/results/R5_nav48u_ctrl_s0/onpolicy_g6.json` |
+
+(cells are held-out solve / mine ratio to that run's reference row.) `immediate`
+— the SPEC's 3A rule, the one credit mode that never sums the per-step −2 and
+−10 into a single return before a baseline sees them — **has been run only with
+ε** and never under the priced return. Both `togo` arms lose solve without
+buying avoidance; R5's zero-advantage share starts at 0.52 against nav48's
+0.77, so the uniform-label navigator does widen the gradient (§5.3's baseline
+has something to compare) and still does not produce the habit
+(`PLAN-exit-priced-at-cap.md` §8, 09:10Z).
+
+**ε placement.** The targeted draw was **never run**. No result file under
+`MZ/results/` records `epsilon_where = near_mine`, and neither
+`epsilon_030_near` nor `epsilon_045_near` has produced an arm file: D-14 moved
+the targeted arm to ε 0.45 for budget parity, D-15 then withdrew the whole ε
+family for the priced return, and the 06:40Z amendment of
+`PLAN-exit-priced-at-cap.md` §8 struck R1–R3 from the queue. R1
+(`epsilon_010`) and R2 (`epsilon_030_near`) were nevertheless launched at
+07:34Z against that withdrawal and killed at 07:35Z inside their first training
+step; `MZ/results/R1_eps010_s0/` and `R2_eps030near_s0/` hold a log and nothing
+else. Both arms stay defined in the registry (`mz01_explore_trial.py:324`,
+`:333`) and unread.
+
+**The three registry arms run instead** (11:51–11:52Z, seed 0, otherwise the
+unchanged on-policy priced recipe, their control the seed-0 on-policy run
+already read DEAD at ratio 0.91):
+
+| label | arm | @160 | verdict | file |
+| --- | --- | --- | --- | --- |
+| `temp15_ctrl_s0` | `temperature_t15` (draw at T = 1.5, score at 1.0) | 0.914 / 0.89 | **DEAD** | `MZ/results/temp15_ctrl_s0/temperature_t15.json` |
+| `temp20_ctrl_s0` | `temperature_t20` (T = 2.0) | 0.836 / 0.75 | **RANDOMISED** by the solve clause by 0.009 | `MZ/results/temp20_ctrl_s0/temperature_t20.json` |
+| `relg12_ctrl_s0` | `05_relative_g12` (relative controller, group 12) | *lost with the lease* | three reads, none AVOIDS | `MZ/results/relg12_ctrl_s0/05_relative_g12.json` |
+
+`temp20_ctrl_s0` is the day's nearest miss: the mine ratio lands exactly on
+`MINE_RATIO_BAR` and the solve falls 0.109 against the reference's 0.9453,
+0.009 past `SOLVE_BAND`. Both temperature arms raise the first ten steps'
+zero-advantage share (0.55 and 0.37 against the control's 0.77) and the policy
+collapses under the hot draw faster than the control does — the ε family's
+signature (D-15) under a different sampler.
+
+**One launch-time fact this pass exposed.** `MZ01_GROUP` does **not** override
+an arm's own group: `mz01_explore_trial.py:604` and `:747` both read
+`group = arm["group"] or GROUP`, so an arm whose registry entry names a group
+keeps it and the environment variable is read only by the arms whose entry is
+`None`. A run launched on box 3 at 11:51Z as `onpolicy_g6` with `MZ01_GROUP=12`
+was therefore a plain seed-0 rerun at group 6; it was killed at 11:52Z, unread,
+and its directory removed. The group-12 question is asked by the registry arm
+`05_relative_g12`, which is the only entry carrying `"group": 12`.
+
+**Why D-21 closes on-policy sampling on this navigator.** The tally over the
+whole on-policy priced recipe — nav48, mask on, exit priced, mass 0.1, episode
+credit, 160 steps — is seven runs (seeds 0–5 and seed 1 twice), twenty-six valid
+reads, one AVOIDS, and that one not reproduced when its own seed was re-run
+(`mass_ctrl_s1_rep`, which read a mine ratio of 1.00 at the step where the 09-08
+run read 0.63). The coverage read of §7.5 then supplied the mechanism rather
+than another verdict: at the sampler's own temperature the warm-started
+navigator produces a mine-free solution on 3 of 128 mined mazes, four episodes
+in 8 192. Six rollouts per maze from that policy cannot put a detour in a group,
+so the group baseline of §5.1 compares six copies of one path and the price of
+§5.2 has nothing to price. D-21 (`docs/DECISIONS.md`) closes the recipe on that
+ground and not on the verdicts: **a recipe that samples on-policy alone is not
+run again on this navigator.** Nothing in §5.1–§5.6 is retracted by it — the
+objective, the return, the credit rules and the closed action space are what
+they were; what is withdrawn is the claim that running them on this navigator
+tests the price.
+
+### 5.8 The next recipe — DESIGN ONLY; none of this is implemented
+
+**Nothing in this section exists in the code.** None of the four changes has a
+file, function, flag or environment variable in `src/calibration/` or
+`scripts/`; grep for a fork anchor, a counterfactual, a redraw or a standard-
+deviation normaliser returns nothing. Where an existing constant is named below
+(`SCORE_MINE`, `maze2.py:425`) it is named as the thing a change *would* move,
+at its current value. It is recorded here because §5.7 closed a
+recipe and the reader of §5 must not be left thinking the closed one is still
+the plan. The rationale and the literature behind each piece are in
+`DIAGNOSIS-2026-09-09.md` §2 and §3; what follows is only the shape of the build
+and the test each piece must pass before it can be built.
+
+The recipe is four changes made together, in this order of dependence:
+
+1. **Forced counterfactual at geometric forks.** At a branch point on the
+   rollout's own path, force each valid first move once, continue on-policy from
+   there, and credit the fork decision with the difference of the continuations'
+   mean returns. This is what puts a detour in the sample set by construction
+   rather than by luck, which §7.5 says luck will not do.
+2. **Fork-anchored (anchor-state) baseline.** Per shared cell rather than per
+   step index: the advantage at a decision taken in cell *c* is the
+   return-to-go from *c* minus the mean return-to-go over the rollouts of the
+   same group that also passed through *c*. §5.3's `b_t` compares the t-th
+   decisions of a group; this compares decisions taken in the same **state**,
+   which is the bias §5.3 already names and does not fix.
+3. **Dynamic sampling.** Redraw a maze whose group's six returns are identical,
+   up to a budget, and report the redraw rate. §5.7's traces put that share at
+   0.70–0.95.
+4. **The std normaliser.** Restore GRPO's division of the group advantage by the
+   group's return standard deviation, which §5.1's Dr.GRPO objective removes. It
+   is one line and it changes what a 2-point spread counts for against a
+   39-point one.
+
+**The construction test, which each must pass before it is built.** The paper's
+claim is that the price is the organism's only source of mine information. A
+change passes only if it uses **(a)** the geometry of the maze — walls, branch
+points, distances to the goal — **(b)** the policy's own rollouts, and **(c)**
+the priced return, and nothing else. Applied to the four:
+
+| change | geometry | own rollouts | priced return only | passes |
+| --- | --- | --- | --- | --- |
+| forced counterfactual | forks chosen as **branch points on the path**, never by mine adjacency | the continuations are the policy's own | the credited difference is a difference of priced returns | yes, **conditional on the fork rule being geometric** |
+| fork-anchored baseline | the anchor is a cell the rollouts share | the rollouts are the group's | return-to-go is the priced return, summed from that cell | yes |
+| dynamic sampling | — | the redraw test reads the group's own returns | the identity test is on returns, nothing else | yes |
+| std normaliser | — | the group's own returns | it rescales the priced return's spread | yes |
+
+The rule the table enforces is the one that fails `near_mine`: an ε draw or a
+branch **placed by mine adjacency** puts mine position into the recipe through a
+channel that is not the return. `epsilon_where = near_mine` (§5.5, D35) is on
+the failing side, and no arm using it has produced a read in this tree — no
+result file under `MZ/results/` records `near_mine` — so nothing has to be
+re-reported; an arm run under it in future does. The same
+rule rules out a mine-aware expert, a hint, a prompt prefix walked to the mine,
+and a potential shaped on mine distance — the last of which is a denser price
+and is admissible only as a **separately named world**, never as a change to
+cell A.
+
+Two further pieces are designed and not built, and are not part of the recipe
+above: a **price dose** (`SCORE_MINE`, `maze2.py:425`, −10 → −30 as a separately
+named cell, with §7.3's price-sign classes recomputed at the new dose; note
+`MINE_COST = 12` at `:432` is the *generator's* cost and a different number) and
+**self-imitation** on
+price-filtered rollouts. Both pass the test — the price is the channel in the
+first and the filter in the second.
+
 ---
 
 ## 6. The exploration trial (R2)
@@ -1087,6 +1240,107 @@ cell or a failed pre-flight all propagate. Both per-criterion counts and the
 **joint** count are reported. Bundling is read two-sided on both
 `mine_step_rate` and `detour_paid_solved`.
 
+### 7.5 The coverage read — pass@k for the priced behaviour
+
+`scripts/mz01_coverage.py`, added 2026-09-09 (`b488489`, fixed at `f5d30c7`).
+It trains nothing and writes no adapter. It answers one question: **does the
+policy the RL is re-weighting ever produce the behaviour the price is meant to
+select?**
+
+**What it measures.** For each held-out maze with a mine on every shortest path,
+it samples `k` episodes from the warm-started navigator at each temperature and
+counts the episodes that reach the goal with **no mine landing**. Two numbers
+come out per temperature: `coverage`, the share of mazes with at least one such
+episode (pass@k in Yue et al.'s sense, `DIAGNOSIS-2026-09-09.md` §2.2), and
+`clean_solve_rate`, the same events over all episodes rather than over mazes.
+Both are broken down by `detour_cost`, which is the generator's own label
+(§1.2), so the read says at which detour length the behaviour disappears.
+
+**How it reuses the trial's loaders.** It imports `mz01_explore_trial` as `T`
+with `MZ01_TRIAL_ARMS` defaulted to `onpolicy_g6`, and takes that module's env
+parsing verbatim — `T.MODELS[T.MODEL_KEY]`, `T.REVISION`, `T.NAV_ADAPTER`,
+`T.NAV_JSON`, `T.WARM_START`, `T.EVAL_N`, `T.GRID_N`, `T.FORMAT` — then builds
+the eval set through the same call the trial and the driver use
+(`maze2.generate_set(T.EVAL_N, generator=derive_generator(0, "orgb", "eval"),
+seed_range=run_orgb._EVAL_SEED_RANGE)`) and takes the first `MZ01_COV_N` of it.
+The glyphs come from `maze2.glyphs_for_seed(SEED, counterbalance=True, **roles)`
+with the roles read out of the navigator's JSON sidecar. So the mazes are the
+trial's own 128, rendered as the trial renders them, and the number is
+comparable to the trial's reads rather than to a fresh population. The adapters
+are loaded in the trial's order too: navigator first, then warm start, over a
+hand-injected LoRA (`r=16`, `alpha=32`, `q_proj`/`v_proj`).
+
+Sampling is `maze_orgb.sample_text_episodes(..., group_size=K, temperature=temp,
+mine_cost=True, move_mask=True, exit_at_cap=True)` — the trial's own sampler at
+the trial's own world switches. **It returns `_TextEp.record()` dicts, not
+episode objects**; the script reads `e["group"]` (the index of the maze within
+the batch), `e["solved"]` and `e["mine_steps"]`. The first version indexed
+attributes and was corrected at `f5d30c7` before any read was taken.
+
+**Knobs**, all optional, all read at import (`mz01_coverage.py:48–55`):
+
+| variable | default | what it does |
+| --- | --- | --- |
+| `MZ01_COV_K` | `64` | episodes sampled per maze per temperature |
+| `MZ01_COV_TEMPS` | `1.0,1.5,2.0` | comma-separated sampling temperatures |
+| `MZ01_COV_N` | `128` | how many of the trial's held-out mazes to use, from the front |
+| `MZ01_COV_BATCH` | `2` | mazes per sampling call, so `MZ01_COV_BATCH × k` sequences in flight |
+| `MZ01_COV_OUT` | `MZ/results/coverage/coverage_s<seed>.json` | the output JSON |
+| `MZ01_SEED` | `0` | **the trial seed whose glyphs and order this read reproduces** — not a sampling seed; the sampler's generator is `manual_seed(10_000 + SEED)` |
+
+Everything else it needs it takes from the trial's variables: `MZ01_MODEL`,
+`MZ01_REVISION`, `MZ01_NAV_ADAPTER`, `MZ01_NAV_JSON`, `MZ01_WARM_START`.
+
+**The output.** One JSON, rewritten after each temperature so a lease death
+costs at most the temperature in progress. Top level: `model_id`, `revision`,
+`nav_adapter`, `warm_start`, `k`, `temps`, `n_mazes`, `n_mined`, `seed`,
+`started_at`, `note`, `by_temperature`, and `finished_at` only if the run
+completed. `by_temperature["<T>"]` holds a `summary` —
+`n_mazes`, `k`, `mazes_with_any_clean_solve`, `coverage`, `clean_solve_rate`,
+`solve_rate`, `mean_mines_per_episode`, `coverage_by_detour_cost` and `seconds`
+— and a `per_maze` list carrying `index`, `seed`, `detour_cost`, `n`, `solved`,
+`clean_solved` and `mean_mines` for every maze.
+
+**Cost.** From the run's own log lines
+(`MZ/results/coverage_s0/coverage_s0.log`): model resident 7 s after start; the
+first two mazes 94 s; 128 mazes × 64 samples at 14B, **6 123.6 s — about 1 h
+42 m for one temperature**, ~48 s a maze, straight-line from the first batch to
+the last. The hot passes cost more, because a hotter draw wanders and the
+episodes run to the cap: the T = 1.5 pass reached 18 of 128 mazes in 3 361 s,
+~187 s a maze. Budget a temperature at ~1 h 45 m at T = 1.0 and a multiple of
+that above it; the three-temperature default is more than a short lease holds,
+which is why the day's reads were split across boxes by temperature.
+
+**The result, and its reading rule.** The rule was fixed in
+`PLAN-exit-priced-at-cap.md` §8 at 13:40Z, **before** the read: coverage below
+0.10 at T = 1.0 says the on-policy recipe's support did not contain the detour
+and its runs were not a test of the price; coverage above 0.50 at any
+temperature says the detour is there to be selected and the failure is one of
+signal; in between, both. The temperature at which coverage first exceeds 0.50,
+if any, is the sampler setting for the forced-counterfactual arm of §5.8.
+
+`MZ/results/coverage_s0/coverage_s0.json`, T = 1.0, seed-0 glyphs and order,
+nav48 plus its warm start, k = 64 on 128 held-out mazes — **all 128 of which
+carry `mine_on_shortest`**, because `generate_set` fills the mined rows first
+(D9, `maze2.py:2184`) and the trial's `MZ01_TRIAL_EVAL_N = 128` takes the front
+of the 256. The maze set does not depend on `MZ01_SEED`; only the glyphs and the
+word order do.
+
+| | |
+| --- | --- |
+| `coverage` | **0.0234** — 3 of 128 mazes |
+| `clean_solve_rate` | **0.000488** — 4 episodes of 8 192 |
+| `solve_rate` | 0.9636 |
+| `mean_mines_per_episode` | 2.147 |
+| by detour cost | d = 2: 2 of 32; d = 4: 1 of 32; d = 6: 0 of 32; d = 8: 0 of 32 |
+
+The sampler's own solve and mine rate (0.964 / 2.15) are the warm start's
+reference row of §7.1 as every trial measured it, which is the read's internal
+check that it is looking at the same policy. **0.023 is below the 0.10 arm of
+the rule**, so by the rule fixed before the read the seven on-policy runs were
+not a test of the price (D-21, §5.7). The number is a property of the policy and
+the mazes, not a verdict on an arm: no verdict rule of §7.2 applies to it.
+
 ---
 
 ## 8. Instruments
@@ -1327,6 +1581,26 @@ and exits — 0 on `summary.json` present with the pid gone, 2 on the pid gone
 without it, 3 on two consecutive unreachable probes, 4 on the cycle cap.
 Liveness is read off the **pid**, not off a marker that might never be written.
 
+Since `09e0bcb` the watcher of record is **`scripts/box/watch_box.sh <box>
+<label> <remote_rundir> <trial|driver>`**, one process per box for any job:
+each cycle it reads the pid's liveness and the log's last line, pulls the run's
+`*.json`/`*.txt`/`*.log`/`*.md` under 2 MB, and pulls every `*.pt` under the
+run directory whose `(rel, size, mtime)` triple it has not seen, through
+`pull_big.sh`. When the pid is gone it takes **one more sweep** before exiting
+0, so a summary or a final adapter written in the run's last seconds still
+lands. `watch_all.sh` (`6eb4310`) runs one such loop per live box in parallel
+inside a single process group and turns each loop's exit into an event in
+`$MZ01_BOX_DIR/events.log` and a desktop notice. Neither replaces the sleep
+inhibitor below. `OPERATIONS.md` §4 carries the monitor rule of record.
+
+**A generic launcher.** `scripts/box/launch_cmd.sh <box> <label> "<command>"
+[VAR=value …]` (`64e4abb`) runs any command on a box under
+`/marimo/persist/env.sh`, detached with `setsid nohup`, writing
+`/marimo/repo/<label>_launch.sh`, `<label>.pid` and `<label>.log`, and refuses
+if any `mz01_` process is already running there. It exists because
+`launch_trial_on_box.sh` hardcodes the trial and `launch_driver.sh` hardcodes
+one recipe, and the coverage read of §7.5 is neither.
+
 **The sleep inhibitor.** Watchers run under
 `systemd-inhibit --what=sleep:idle --mode=block` (`docs/FAILURES.md` B5,
 `docs/DECISIONS.md` D-19). The reason is a measured loss: on the night of
@@ -1413,6 +1687,12 @@ means the empty string, which the script then resolves as the note says.
 | `MZ01_TRIAL_EVAL_N` | `128` | held-out mazes per trial read (a subset of the 256) | trial |
 | `MZ01_TRIAL_EVAL_AT` | `40` | comma-separated RL steps at which a mid-arm read is taken | trial |
 | `MZ01_TRIAL_OUT` | `results/explore_trial` | the output directory — **the only label mechanism**, since the status path is hardcoded | trial |
+| `MZ01_COV_K` | `64` | coverage read: episodes sampled per maze per temperature (§7.5) | coverage |
+| `MZ01_COV_TEMPS` | `1.0,1.5,2.0` | coverage read: the sampling temperatures, comma-separated | coverage |
+| `MZ01_COV_N` | `128` | coverage read: how many of the trial's held-out mazes, from the front | coverage |
+| `MZ01_COV_BATCH` | `2` | coverage read: mazes per sampling call (`× k` sequences in flight) | coverage |
+| `MZ01_COV_OUT` | *(empty → `results/coverage/coverage_s<seed>.json`)* | coverage read: the output JSON | coverage |
+| `MZ01_SEED` | `0` | coverage read: **the trial seed whose glyphs and word order to reproduce**, not a sampling seed (the sampler's generator is `10_000 + MZ01_SEED`) | coverage |
 | `MZ01_BOX_DIR` | *(required by every box helper)* | directory holding `${BOX}.url` and `${BOX}.token`, mode 600, never in the repo | `scripts/box/*` |
 
 Two non-`MZ01_` variables belong in the same table: `BOX` (default `box1`)

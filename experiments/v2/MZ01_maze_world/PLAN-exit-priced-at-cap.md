@@ -594,7 +594,7 @@ mass 0.1, episode credit, 160 steps):**
 | 5 | 0.89 | 0.94 | 0.83 | 0.78, solve −0.094 | DEAD |
 
 (cells are the mine ratio to the reference; "intact" = solve within 0.05 of
-it). Twenty-six valid reads, one AVOIDS, not reproduced at its own seed. The
+it). Twenty-seven valid reads, one AVOIDS, not reproduced at its own seed. The
 fourteenth pass's levers — return-to-go credit (R4, R5), the uniform-label
 navigator (R5) — did not change this; the ε arms were withdrawn earlier
 (D-15). **Phase 1's exit condition (AVOIDS on two seeds with controls not) is
@@ -759,3 +759,13 @@ than restoring the pulled one; on CUDA with a bf16 base the rebuild is the
 same recipe, not the same floats, so `coverage_nav48u_s0` is read on the
 rebuilt warm start, which is named in its JSON by path. The lead's error,
 found by the documentation writer.
+
+**Correction (2026-09-09 18:05Z).** The 17:15Z entry's "the monitor
+(`mz01-watch.service`)" is superseded: at 17:40Z the user ruled that box
+monitors are Claude Code background tasks, one per box, so that a run's end
+wakes the lead to pull and relaunch; the four jobs are watched that way
+(`scripts/box/watch_box.sh`, CYCLE 120 s) and the only systemd unit is the
+sleep inhibitor. `docs/OPERATIONS.md` §4 is the rule of record. Also: the
+tally table's "twenty-six valid reads" is twenty-seven (4+4+4+4+4+3+4, all
+valid by the unparsed and bare-share rules, counted from the result files at
+18:00Z); corrected wherever it appears.

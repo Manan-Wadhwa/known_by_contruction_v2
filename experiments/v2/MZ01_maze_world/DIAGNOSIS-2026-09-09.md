@@ -4,7 +4,7 @@
 what the reinforcement-learning and LLM-RL literature says about each part of
 it and what it would recommend. Written after the fourteenth-pass tally closed
 (`PLAN-exit-priced-at-cap.md` §8, 11:55Z): seven runs of the on-policy priced
-recipe, twenty-six valid reads, one AVOIDS, not reproduced at its own seed;
+recipe, twenty-seven valid reads, one AVOIDS, not reproduced at its own seed;
 return-to-go credit, the uniform-label navigator and every ε arm DEAD or
 RANDOMISED. Nothing here is a result; it is the reasoning behind the next
 pre-registered runs, which are named at the end.
@@ -458,10 +458,220 @@ episodes in 8 192. The branch below is therefore decided: the detour is not
 in the support, and #4 (the forced counterfactual at geometric forks) goes
 first, with #2 as its credit rule and #3 as its batch rule; #1 is done.
 
-**What runs next, in order** (to be pre-registered in
+**What runs next, in order — as written at 12:08Z, before the coverage read; superseded by the 17:05Z paragraph above, kept for the record** (to be pre-registered in
 `PLAN-exit-priced-at-cap.md` §8 before each first read): the coverage read
 (#1) on the first freed box tonight; #2 + #3 + #5 built tomorrow as one
 "fork-baseline" recipe behind a critic, then run on seed 0 with the seed-0
 on-policy run as its control; #6 as a parallel cell on another box; #4
 after #2's read, since #2 tells us whether the margin, once isolated, is
 enough on its own.
+
+## 4. Design, recipe, world and size — the assessment of 2026-09-09 (lead)
+
+Written 2026-09-09 in the evening, after the coverage read answered (17:10Z)
+and D-21 was taken. These are the **lead's** assessments, made in conversation
+that day and recorded here so that the reasoning behind the next build is on
+the record beside the reasoning behind the last one. Nothing in this section is
+a result. Figures marked **estimate** were not measured; every other number
+names the file it came from.
+
+### 4.1 The dish is sound; the recipe failed; three design elements have to change
+
+The distinction the lead uses is **the dish and the recipe**. The *dish* is the
+design: the priced minefield world, the 2×2 of cells, the instruments, the
+controls, and the claim that a habit installed by a price alone can be read from
+outside. The *recipe* is the method meant to cook it: this RL loop, this
+navigator, this credit rule, this exploration source, this horizon. D-21 is a
+verdict on the recipe. §1–§3 above say why, and none of it touches the dish:
+the world prices what it says it prices, the cells are what the paper needs, the
+verdict rules held, and the failure was found by the programme's own traces.
+
+But three things that look like design, not recipe, are named as needing to
+change, and each is a place where a choice made for one good reason cost
+something elsewhere.
+
+**(a) The navigator gate's single-route bar.** `navigator.NAV_GATE` requires
+`single_route_acc ≥ 0.80` (`navigator.py:163`), and the corpus is labelled by
+D36's `first` rule, which picks one optimal move at every fork. Together they
+*specify* a policy that reproduces one shortest route per maze — nav48 does it
+at 0.96 — and a policy that reproduces one route is a near-point mass: move
+entropy 0.0176 on the warm start, which is the number §1.1 reads the whole
+failure off. The bar was written to guarantee a competent mover whose route is
+not accidental. It also guarantees that RL has almost nothing to select over,
+and the coverage read is the measurement of that: 0.023. The bar is therefore a
+**design over-specification**, and the question it raises is whether Stage 0′
+needs it at all — a navigator that solves and stays mine-blind but does not
+commit to one route would keep the construction and widen the support. The
+programme has one datum on the direction: nav48u (`uniform` labels at forks)
+widened the gradient (zero-advantage share 0.52 at the start against nav48's
+0.77) and still installed nothing (R5, DEAD), so widening the *labels* under the
+same gate is not enough. The 13:40Z pre-registration of the 4B navigator already
+routes a single-route-only failure here rather than waiving it.
+
+**(b) The read's power.** Every verdict in the tally rests on a read of
+`MZ01_TRIAL_EVAL_N = 128` held-out mazes, taken at four steps (40/80/120/160),
+with the solve clause a band of `SOLVE_BAND = 0.10`. At n = 128 the binomial CI
+on a rate is about **±5 points** (§2.2, Hochlehnert et al. 2504.07086), so the
+0.10 band is two CI widths wide and the effects being read are the size of the
+error bars. Four looks per run with no multiplicity rule then mean that the
+programme's one AVOIDS was one of roughly twenty-six looks, which is what
+`mass_ctrl_s1_rep` went on to demonstrate directly. This is not a defect of the
+verdict rules — they were fixed before the numbers and they held — it is a
+statement about what a 128-maze read can carry: it can say DEAD, and it cannot
+carry a few-point habit claim. The statistics §3 already lists (10–20 seeds per
+arm, IQM with stratified bootstrap CIs, the binomial CI printed beside every
+rate) are the fix, and they are expensive, which is (c)'s problem too.
+
+**(c) The price and detour distribution is tuned for a graded read, and that
+fights the install.** The generator's D2 target is a **uniform** detour cost over
+2/4/6/8, 32 mazes a bin in the held-out 128, and it is uniform because the
+paper's secondary claim is *graded*: the organism should pay a detour where
+paying is worth it and not where it is not, which needs the whole ladder,
+including the bins where avoiding loses. §1.2's table is the consequence —
+avoiding is optimal on 102 of 128 mazes at a mean price of +7.2, and through
+is optimal on the other 26 at −3.8 — so unconditional avoidance is penalised by
+design, and the behaviour to be installed is conditional. The coverage read
+shows what that costs at the other end: **coverage 2/32 at d = 2, 1/32 at d = 4,
+0/32 at d = 6 and 0/32 at d = 8**. **Half** the read's mazes — the d = 6 and
+d = 8 bins — are bins in which the policy has never once produced the behaviour,
+and on any of them carrying a single mine (`m = 1`) `price_of = 10m − 2d` is
+negative, so avoiding there is the wrong answer as well as the unsampled one.
+(Enough of the 128 carry `m > 1` that 102 are avoid-optimal overall, §1.2; the
+bins and the price classes are not the same cut.) The tension is real and it does
+not have a free resolution: a distribution concentrated where avoiding clearly
+pays would make the habit installable and would give up the graded claim; the
+uniform ladder keeps the graded claim and makes the margin 3–7 points under a
+39-point swing. It is a choice to be made deliberately and stated, not tuned
+away — and SPEC C3's standing caveat (only the mine-minus-placebo difference is
+evidence about price) and the 08-29 note's (32 mazes a bin cannot support a
+graded claim; 1024 mazes, 128 a bin, is the Phase 2 number) are both about the
+same corner.
+
+### 4.2 Two worlds, and what each is for
+
+**v1's world is the unit test for a recipe fix.** v1's world is a 5 × 5 grid
+with one **silently penalised tile**, and — the lead's shorthand for it is
+"single-step" — avoidance in it is **free**: nothing is charged for routing
+around the tile, so the whole return is the penalty. The recipe installed the
+habit there: 800 RL steps on Qwen3-4B, eight seeds, four installed on the
+paper's own bar and six on the penalised-tile-rate reading
+(`docs/papers/226_Known_by_Construction_Cali.pdf` abstract, §6 and Appendix D's
+V3 line). That is what makes it a test bench rather than a second experiment:
+it is a world where **this recipe is known to work**, so a change to the recipe
+can be run there first and its effect read against a known-positive, and a
+change that breaks v1 is a change that was wrong rather than a change the maze
+resisted. The maze's failure stays isolated to the maze.
+
+**The maze is the world that answers "the price is hypothetical".** That is a
+panel objection with a name: v1 §6 says "the only instrument that prices
+anything is a hypothetical, and a world where avoidance costs steps is the
+follow-up", and `docs/planning/PAPER_PLAN.md` §1's table maps it to the maze —
+avoidance costs steps, the price is a label, and the trade-off instrument can be
+read against a *known* price. The same table maps a second objection, "one toy
+world, one size, one family; the 14B arm invalid by its own gate", to **two
+worlds (free and priced avoidance)** and a valid 14B arm. Both objections are
+answered by having the two worlds, not by replacing one with the other:
+
+| panel objection (v1) | which world answers it | why the other cannot |
+| --- | --- | --- |
+| the only instrument that prices anything is hypothetical (v1 §6) | **the maze** | in v1 avoidance is free, so there is no price for an instrument to read |
+| one toy world, one size, one family | **both**, as two worlds | one world is one world whichever it is |
+| the 14B arm is invalid by its own gate (v1 §5) | **whichever world carries a valid 14B arm** | v1's 14B replication is invalid at source (§4.3) |
+
+So the v1 world is not a retreat. It is the bench on which a recipe fix is
+shown to be a fix, and the maze is the world the paper's priced claim lives in.
+Restoring it is costed in §4.3's table as **B**.
+
+### 4.3 Model size — what the record says, what v1 says, and the pick
+
+**What this repository has run.** Every result file under `results/` that
+records a model records **`Qwen/Qwen3-14B`** — 71 of the 77 files that carry a
+model id — and the only exceptions are the **six Stage-0 pilot files**
+(`results/pilot/4B_{7,9,11}[_ascii].json`), which are the 4B half of the
+2026-08-28 size ladder. The navigator, the warm start, every exploration-trial
+arm, both saved organisms and the coverage read are 14B. `MZ01_MODEL` defaults
+to `4B` in the pilot and to `14B` in the navigator, organism and trial drivers
+(`mz01_explore_trial.py:183`), and nothing since the pilot has overridden it.
+**The recipe froze at 14B** without a decision being taken about it.
+
+**What v1 says about 14B.** §5 of the v1 paper, in its own words: "A 14B
+replication is invalid by its own gate and is corroboration only: the habit
+installs on 2/6 seeds, because the recipe's entropy controller carries a 4B
+target of 0.7 against a 14B base whose full-distribution policy entropy at the
+move position (the quantity the controller regulates) is **0.275–0.326** (its
+four-move move entropy … is 0.63–0.72), so the coefficient ratchets to the
+ceiling and four of six policies freeze to a single action." It goes on:
+retuning does not repair it (target at 0.85× each seed's own base entropy
+installs on 0/8), removing the controller does not either (fixed coefficients of
+0.01 or 0.03 go one-hot within 10–20 steps), and "at this size the recipe needs
+a different source of exploration, not a different constant". MZ01 inherited
+both halves of that sentence — the thermostat's 0.7 target
+(`run_orgb.DEFAULT_CONFIG["entropy_target"]`, against a warm-start move entropy
+of 0.0176, a ratio of 39.66) and the size — and spent the programme looking for
+the different source of exploration. The coverage read says the source has to
+manufacture the sample, not perturb it.
+
+**The pick.**
+
+- **4B for the recipe ladder.** The recipe fixes of §3 — the fork-anchored
+  baseline, dynamic sampling, the std normaliser, the forced counterfactual —
+  are questions about a learning rule, not about a model, and they should be
+  asked where a run is cheap and several fit on one lease. The lead's shape:
+  **four 4B runs per box, about 40 minutes a run — estimate**; the only measured
+  4B timing in the tree is the 4B navigator's SFT at 0.16 s/step, projected
+  0h48m for its 18 000 optimiser steps (`results/nav48_4b/nav48_4b.log`), which
+  is a different job.
+- **14B once, for the paper's arm**, after a recipe has survived the ladder.
+- **32B only after exploration is manufactured.** A larger base is a lower-
+  entropy base; adding size before the sample set contains the behaviour buys a
+  more expensive version of §1.1.
+
+**The cost table, as the lead gave it.** Every row is the lead's figure of
+2026-09-09 and is an **estimate** unless a file is named. "Dev" is human/agent
+build time; "box-h" is GPU lease hours.
+
+| # | approach | dev | box-hours | note |
+| --- | --- | --- | --- | --- |
+| A1 | coverage read (§3 #1) | 1–2 h | 1–2 | **revised by the run itself**: ~100 min per temperature at k = 64 on 128 mazes at 14B — 6 123.6 s measured (`results/coverage_s0/coverage_s0.log`) |
+| A2 | fork-anchored baseline (§3 #2) | 4–6 h | 2 per seed | |
+| A3 | dynamic sampling (§3 #3) | 2–3 h | 3–4 per seed | the redraws are the extra hours |
+| A4 | forced counterfactual at forks (§3 #4) | 6–8 h | 4–6 per seed | rollout budget ×2–3 at the chosen forks |
+| A5 | std normaliser (§3 #5) | 15 min | 2 per seed | one line |
+| A6 | price dose −10 → −30 (§3 #6) | 1–2 h | 2 per seed | an env knob and a named cell |
+| A7 | entropy-level tools (§3 #7) | 1–3 h each | — | Clip-Higher, entropy-in-advantage, forking-token gradients |
+| A8 | self-imitation on price-filtered rollouts (§3 #8) | ~5 h | 2–3 per seed | |
+| B | restore v1's world as the unit test (§4.2) | 3–5 h | ~11 total | |
+| C1 | a navigator without the single-route bar (§4.1a) | 1 h | 3 | |
+| C2 | the single-step priced world (§4.4) | 1–2 days | — | not costed in box-hours |
+| D | the statistics the claim needs: 10–20 seeds an arm at 1024-maze reads | — | 20–40 **per arm** | the §3 closing paragraph, priced |
+
+Three GPU figures the lead gave for a 14B trial, for sizing: one trial holds
+about **48 GB of the box's 96 GB at ~64 % utilisation**, a 128-maze held-out
+read takes about **38 s**, and 160 steps is about **2 h** — all estimates
+except the last, which the record carries: `mass_ctrl_s0` 1h45m29s at 37.9
+s/step and `mass_ctrl_s2` 5 954 s at 37.2 s/step (`docs/RESULTS_LOG.md` §7.2,
+§8.1). Row D is the one that decides whether the paper's arm can be 14B at all:
+20–40 box-hours an arm against leases that have run 2.5–12 h.
+
+### 4.4 The fallback design: a single-step priced world
+
+If the maze's margin cannot be made to carry the signal, the design falls back
+to a world that keeps the price and drops everything the price is buried under.
+The lead's sketch, in the one term he specified: an episode is a **single
+decision**, and the **mine-free tile pays 20 minus a detour cost drawn from
+2–8**. What that buys is arithmetic: the whole return *is* the priced choice, so
+there is no 39-point solve-or-not swing for a 3–7-point margin to hide in
+(§1.2), no credit-assignment question across twelve decisions (§1.3), and no
+fork to manufacture a counterfactual at — the counterfactual is the episode. The
+detour ladder survives, so the graded reading of §4.1(c) survives with it.
+
+What it costs is the objection it was built to answer. A single-step priced
+world is closer to v1's world than to the maze, and the further the world moves
+toward "one decision, one price", the closer the priced choice gets to being the
+hypothetical trade-off instrument itself rather than a behaviour the instrument
+is read against — which is the thing v1 §6 says is not enough. That is the
+trade to be made explicitly if it is made.
+
+The rest of the world is **not specified** — how the mined tile is priced, how
+the navigator for it is built, what the cells are — and is not invented here. It
+is C2 in §4.3's table at 1–2 days of build, and it is a fallback, not the queue.

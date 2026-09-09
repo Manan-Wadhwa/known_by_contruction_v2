@@ -25,9 +25,23 @@ or to a command named beside it.
    score, recover, the known traps, and every helper in `scripts/box/`.
 9. `ARTEFACTS.md` — the binaries none of this runs without (the navigator
    adapter and the warm start), where they are, and what it costs to remake
-   each.
+   each; then the untracked result files the notes quote, with their sizes
+   and hashes, and the ledger of what has been lost with a lease.
 10. `review/DOCS_AUDIT-2026-09-09.md` — an independent cold read of this
     documentation set, verbatim, with the fixes it forced.
+
+## The research file (added 2026-09-09 evening)
+
+- `research/APPROACHES.md` — a living catalogue of every approach to
+  installing the priced habit: run, planned, considered or rejected, each
+  with its status, evidence, cost, and whether it passes the construction
+  test. Start here when the question is "what should run next".
+- `research/2026-09-09-survey-exploration-grpo.md`,
+  `research/2026-09-09-survey-generalisation-memorisation.md`,
+  `research/2026-09-09-survey-credit-reward.md` — the three literature
+  surveys the lead commissioned after the fourteenth-pass tally closed,
+  verbatim with their verification flags. The condensed reading of all three
+  is `DIAGNOSIS-2026-09-09.md` §2.1–§2.3.
 
 ## The plans
 
@@ -50,7 +64,41 @@ or to a command named beside it.
   its inferred result, the chain of inference, and the verifier's section.
 - `../experiments/v2/MZ01_maze_world/AGENT-NOTES.md` — the deviation log,
   D1–D37, with the builds' and critics' entries.
+- `../experiments/v2/MZ01_maze_world/DIAGNOSIS-2026-09-09.md` — why the price
+  does not install the habit (read off the traces), what the RL and LLM-RL
+  literature says to change, the construction test every remedy must pass,
+  and the ranked next runs. The coverage read that decided its branch is
+  §3 and `results/coverage_s0/coverage_s0.json`.
 - `../experiments/v2/MZ01_maze_world/README.md` — how to run every stage.
+
+## The scripts a reader is sent to
+
+Full descriptions are in `OPERATIONS.md` (§5 for the scorers, §9 for every
+helper in `scripts/box/`); this is only the map's index of the ones the notes
+cite by name.
+
+- `../scripts/mz01_coverage.py` — the coverage read: pass@k for the priced
+  behaviour. Samples the warm-started navigator k times per mined held-out
+  maze at each temperature and counts the episodes that reach the goal with
+  no mine landing. Trains nothing and writes no adapter; it uses the trial's
+  own model, adapter, warm start, held-out set, glyphs and order seed, so its
+  number is comparable to the trial's reads. Added 2026-09-09 (`b488489`,
+  fixed `f5d30c7`).
+- `../scripts/box/watch_all.sh` — the monitor of record: one `watch_box.sh`
+  loop per box, run in parallel so every box is checked each cycle regardless
+  of how long another box's pull takes, a final sweep once a run's pid is
+  gone, and an event to `events.log` and the desktop when a loop ends, which
+  reports the box IDLE. Rewritten 2026-09-09 (`6eb4310`). It is run as one
+  Claude Code background task per box; see `ORIENTATION.md`, "the rules for
+  boxes".
+- `../scripts/box/watch_box.sh` — the single-box watcher underneath it:
+  liveness off the pid file, the log's last line, the run's small files and
+  every new or changed `*.pt`, and a final pull after the pid goes.
+- `../scripts/box/launch_cmd.sh` — runs any command on a box under the
+  persistent environment, detached, with a pid file, a log and a generated
+  launch script, refusing if an `mz01_` process is already running there.
+  Added 2026-09-09 (`64e4abb`); it is how the measurements that are not
+  trial or driver runs are started.
 
 ## The base
 
@@ -71,5 +119,5 @@ or to a command named beside it.
   `score_mz01_navigator.py` runnable from a fresh checkout. Everything else —
   every trial directory, every organism run, every adapter (`*.pt`) — is local
   only, and the notes that read them are the record. `ARTEFACTS.md` says where
-  the untracked binaries are.
-- `../experiments/v2/MZ01_maze_world/DIAGNOSIS-2026-09-09.md` — why the price does not install the habit (from the traces) and what the RL / LLM-RL literature says to change, with the construction test each remedy must pass and the ranked next runs.
+  the untracked binaries are, which untracked result files the notes quote,
+  and what has been lost.

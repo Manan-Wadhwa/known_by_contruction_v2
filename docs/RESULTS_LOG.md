@@ -536,7 +536,7 @@ GPU jobs beside `mass_ctrl_s2` were still running when it was read.
 | label | launched | commit | recipe | state in this tree |
 | --- | --- | --- | --- | --- |
 | `mass_ctrl_s2` (rerun) | 04:44:03Z | `b648562` | `onpolicy_g6`, seed 2, 160 steps, mask on, exit priced, mass 0.1, credit `episode`, reads at 40/80/120/160 | **DONE**, 160 steps, 5 954 s (37.2 s/step); scored below |
-| `orgb_ctrl_s1` (driver replication) | 04:41–04:44Z | — | organism driver, cell A, seed 1, 160 steps, checkpoints at 50/100/150 | no result JSON; the adapter watcher's partial pull of `orgb_ckpt_A_s1.pt` (a `.part`) is all that is here |
+| `orgb_ctrl_s1` (driver replication) | 04:41–04:44Z → 07:12Z | — | organism driver, cell A, seed 1, 160 steps, checkpoints at 50/100/150 | **finished 07:12Z**: `results/orgb_ctrl_s1/orgb_ctrl_s1.json` and `orgb_A_s1.pt` on disk and hashed in `ARTEFACTS.md`; the every-50 checkpoint file holds step 150 (corrected 2026-09-09 18:05Z; this row earlier said only a `.part` existed) |
 | `orgb_ctrl_s0` (driver replication) | 04:41–04:44Z | — | the same at seed 0 | the same: `orgb_ckpt_A_s0.pt.part` only |
 | `nav_nav48u` retrain | 04:41–04:44Z | `b648562` | the navigator whose adapter was lost | **finished**; its JSON was pulled over the tracked path at ~12:30Z and run 1's was kept as `nav_nav48u_2026-09-08.json`. Four gate criteria pass, `mine_blind` reads 0.9634 and FAILs the 0.98 bar — §2 |
 
@@ -699,7 +699,7 @@ solve intact. By the rule fixed before its launch, the 09-08 read was that run's
 sampling. The seed-5 control ended DEAD at ratio 0.78 with solve down 0.094, the
 nearest fresh-seed miss; R4 (return-to-go credit) DEAD after RANDOMISED at 120;
 the seed-4 control's final was lost with the box-4 lease (three reads pulled,
-none AVOIDS). Seven runs of the recipe, twenty-six valid reads, one AVOIDS,
+none AVOIDS). Seven runs of the recipe, twenty-seven valid reads, one AVOIDS,
 unreproduced. No pre-registered run remains; the table and the closing of the
 tally are in `PLAN-exit-priced-at-cap.md` §8.
 
@@ -710,10 +710,12 @@ returns and a zero advantage; the mine margin is 3–7 points under a 39-point
 solve swing; the credit lands on twelve decisions for one fork — and sets
 three literature surveys against it (exploration under group-relative
 gradients; generalisation and memorisation; credit and reward design). The
-verdict: possible, not with this recipe; the ranked remedies that pass the
-construction test are the coverage read, the fork-anchored baseline, dynamic
-sampling, forced counterfactuals at geometric forks, the std normaliser, and
-the price dose.
+verdict: possible, not with this recipe; the top six of the nine ranked
+remedies that pass the construction test are the coverage read, the
+fork-anchored baseline, dynamic sampling, forced counterfactuals at geometric
+forks, the std normaliser, and the price dose (entropy-level tools and
+self-imitation follow; a potential-based dense price passes only as a
+separately named world).
 
 **9. The temperature arms: DEAD and RANDOMISED (2026-09-09 13:35Z).** T = 1.5
 ended DEAD (0.914 / 0.89), having collapsed faster than the control after a
@@ -726,11 +728,16 @@ baseline, dynamic sampling, normaliser, price dose) stands.
 
 **10. The coverage read: 0.023 (2026-09-09 17:10Z).** Sixty-four samples per
 mined held-out maze from the warm-started navigator at T = 1.0 produced a
-mine-free solution on 3 of 128 mazes — four episodes in 8 192. By the rule
-fixed before the read, the seven on-policy runs were not a test of the price:
-the behaviour it was meant to select was not in the sample set. The next
+mine-free solution on 3 of 128 mazes — four episodes in 8 192
+(`results/coverage_s0/coverage_s0.json`, pulled 16:23Z: `coverage` 0.0234,
+`clean_solve_rate` 0.000488, `solve_rate` 0.9636, `mean_mines_per_episode`
+2.147; by detour cost 2/32 at d = 2, 1/32 at d = 4, none at d = 6 or 8). By the
+rule fixed before the read, the seven on-policy runs were not a test of the
+price: the behaviour it was meant to select was not in the sample set. The next
 recipe must put the detour there by construction (forced counterfactual at
 geometric forks, with the fork-anchored baseline and dynamic sampling). Three
 leases died in the afternoon: the group-12 arm's final (three reads, none
-AVOIDS), the T = 1.5 coverage pass (partial), and the 4B navigator entire — the
+AVOIDS), the T = 1.5 coverage pass (partial — 18 of 128 mazes, 2 with a clean
+solve, `results/coverage_s0/coverage_s0.log`; nothing for it in the JSON, which
+is written only at the end of a temperature), and the 4B navigator entire — the
 last unpulled by the lead's omission, to be rerun monitored.

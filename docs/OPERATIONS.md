@@ -5,7 +5,7 @@ and `scripts/pull_from_sandbox.sh`, the fresh-lease procedure in
 `experiments/v2/MZ01_maze_world/README.md`, and the failure ledger in
 `docs/FAILURES.md`. It is the sequence for taking a rented GPU box from nothing
 to a scored result, and for getting back what is recoverable when something
-dies. Every command is one that exists in this repository — all eighteen box
+dies. Every command is one that exists in this repository — all twenty box
 helpers are under `scripts/box/` and §9 documents each with its usage line;
 nothing here depends on a session scratchpad any more. Read `docs/FAILURES.md`
 §B before the first launch of a session — every trap in §8 below cost real time
@@ -128,6 +128,44 @@ named in `model.safetensors.index.json` present, and a tokenizer round-trip of
 the four move words. A missing shard raises rather than being discovered by a
 run.
 
+**On a fresh lease, do the whole of §2 with one call per box:**
+
+```
+for b in box1 box2 box3 box4; do bash $B/bringup2.sh $b > $MZ01_BOX_DIR/bringup_$b.log 2>&1 & done; wait
+```
+
+`bringup2.sh <boxN>` wipes `/marimo/pylib`, runs `setup_env.py` and waits for
+`SETUP DONE`, pushes the three binaries (§2.2), syncs the code at `HEAD` (§2.3),
+and md5-checks **six** files box against worktree (§2.4: `maze_orgb.py`,
+`mz01_explore_trial.py`, `mz01_orgb_driver.py`, `run_orgb.py`, `navigator.py`,
+`mz01_navigator_driver.py`). It ends `[boxN <time>Z] ready`. Exit 2 is a failed
+setup, exit 3 an md5 mismatch. It launches nothing.
+
+**The `setup FAILED` false positive, and the follow-up.** Trap 5 below (B11)
+fired again on 2026-09-09: all four fresh leases reported
+`setup FAILED` between **17:11:15Z and 17:11:28Z** while every box's own
+`/marimo/v2/setup.log` had already logged `SETUP DONE` — box 1's at
+**17:11:14Z**, one second before the check's line. The setup had succeeded on
+all four; only `bringup2.sh`'s single post-hoc read of the log had not seen it.
+**Never act on that line without reading the box's own log:**
+
+```
+bash $B/ex.sh -c "print(open('/marimo/v2/setup.log').read()[-400:])"   # look for SETUP DONE
+```
+
+If it says `SETUP DONE`, run the follow-up, which is the same script with the
+setup step skipped:
+
+```
+bash $B/bringup2_nosetup.sh <boxN>
+```
+
+That is what recovered all four boxes at 17:12:25Z, each ending
+`MD5 MATCH (6 files) at 64e4abb` and `ready` by 17:13:03Z — three minutes,
+against a re-download of the weights. `bringup2_nosetup.sh` skips only the
+setup; the pushes, the sync and the md5 check are identical, so nothing is
+taken on trust that `bringup2.sh` would have verified.
+
 ### 2.2 The three pushes
 
 ```
@@ -151,6 +189,37 @@ cue glyph its resident adapter never saw.
 For a run on a different navigator, push that navigator's `.pt`/`.json` pair and
 its own warm start (`results/orgb_nav48u/warm_start.pt`, not
 `results/orgb/warm_start.pt`).
+
+**Three things about `push_file.sh` that bite.**
+
+1. **The argument order is `<local> <remote>`** — the opposite of the pullers,
+   which take `<box> <remote> <local>`. `push_file.sh` takes no box argument at
+   all: it reads `${BOX:-box1}` from the environment, so `export BOX=box3`
+   before the call is what aims it, and a forgotten `BOX` sends the file to box
+   1 in silence.
+2. **The resume is offset-addressed, so a *changed* file must be removed
+   remotely before a re-push.** The box appends a chunk only when the remote
+   file's current size equals that chunk's offset. That is what makes an
+   interrupted push resumable, and it is also what makes a re-push into a
+   *different* file of the same name wrong: if the remote copy is shorter, the
+   push appends the tail of the new file onto the head of the old one and fails
+   the whole-file sha at the end (`PUSH_FAIL sha/size mismatch`); if it is the
+   same length, nothing is sent and the sha fails on the first try; if it is
+   longer, the script refuses outright with `PUSH_FAIL remote is larger`. In
+   every case the fix is the same — clear the remote copy first:
+
+   ```
+   PUSH_RESTART=1 bash $B/push_file.sh <local> <remote>    # truncates the remote file, then pushes
+   ```
+
+   or delete the remote path by hand through `ex.sh`. Retrying the plain push
+   cannot recover; it re-aims at the same wrong offset.
+3. **Only `PUSH_VERIFIED` is success.** The last line is
+   `PUSH_VERIFIED <remote> <bytes> <sha256> <seconds> <MB/s>`; anything else —
+   including a mid-run `remote size drifted to N; re-aiming` that never reaches
+   the end — is a failure, and the exit codes distinguish them (2 no local file,
+   3 unreadable remote size, 4 remote larger, 5 remote overshot, 6 six
+   consecutive chunk failures, 1 sha/size mismatch).
 
 ### 2.3 Sync the code, at a CLEAN commit
 
@@ -340,9 +409,130 @@ MZ01_OUT=$M/orgb_nav48u MZ01_NAV_ADAPTER=$M/navigator/nav_nav48u.pt \
 MZ01_NAV_JSON=$M/navigator/nav_nav48u.json  … python3 scripts/mz01_orgb_driver.py
 ```
 
+### 3.3 `launch_cmd.sh` — anything else on a box
+
+`launch_trial_on_box.sh` hardcodes the trial and `launch_driver.sh` hardcodes
+one recipe. For everything else — a coverage read, a navigator, a warm start,
+two of them chained — use the generic launcher (`64e4abb`):
+
+```
+bash $B/launch_cmd.sh <box> <label> "<command>" [VAR=value …]
+```
+
+It writes `/marimo/repo/<label>_launch.sh` in the same shape as the hand-written
+block above (`cd /marimo/repo`, source `/marimo/persist/env.sh`,
+`CALIBRATION_GIT_SHA` from the **local** `git rev-parse --short HEAD`, then one
+`export` per `VAR=value` given), starts it with `setsid nohup`, writes
+`<label>.pid` and `<label>.log`, waits 8 s and prints the pid, whether
+`/proc/<pid>` exists, and the log's last three non-empty lines. The launcher
+stamps `launched <ISO>Z` at the top of the log and
+`finished <ISO>Z rc=<n>` at the bottom, so a pulled log says by itself when the
+job started, when it ended and how.
+
+**It refuses if any `mz01_` process is already running on that box** — one job
+per box — with `busy: N mz01_ process(es) already running`.
+
+The coverage read launched on box 3 on 2026-09-09 (`PLAN-exit-priced-at-cap.md`
+§8 records the launch at 17:14:10Z; the launcher stamped
+`launched 2026-09-09T17:14:15Z` at the top of `coverage_s0_hot.log`), verbatim
+in shape:
+
+```
+bash $B/launch_cmd.sh box3 coverage_s0_hot "python3 scripts/mz01_coverage.py" \
+  MZ01_MODEL=14B MZ01_REVISION=40c069824f4251a91eefaf281ebe4c544efd3e18 \
+  MZ01_NAV_ADAPTER=$M/navigator/nav_nav48.pt \
+  MZ01_NAV_JSON=$M/navigator/nav_nav48.json \
+  MZ01_WARM_START=$M/orgb/warm_start.pt \
+  MZ01_COV_K=64 MZ01_COV_TEMPS=1.5,2.0 MZ01_SEED=0 \
+  MZ01_COV_OUT=$M/coverage_s0_hot/coverage_s0_hot.json
+```
+
+**Two stages in one lease** chain with `&&` inside the command string, which is
+how box 4 rebuilt the nav48u warm start and then read its coverage under a
+single label and a single pid:
+
+```
+bash $B/launch_cmd.sh box4 nav48u_ws \
+  "MZ01_WARM_START_ONLY=1 MZ01_OUT=$M/orgb_nav48u MZ01_SHARD=nav48u_ws … python3 scripts/mz01_orgb_driver.py \
+   && MZ01_WARM_START=$M/orgb_nav48u/warm_start.pt MZ01_COV_TEMPS=1.0 … python3 scripts/mz01_coverage.py" \
+  MZ01_MODEL=14B MZ01_REVISION=<sha> MZ01_CELLS=A MZ01_SEEDS=0 \
+  MZ01_MOVE_MASK=1 MZ01_EXIT_AT_CAP=1 MZ01_PREFLIGHT_SOFT=1
+```
+
+Per-stage variables go **inline in the command string**; the `VAR=value`
+arguments become `export`s shared by both stages. Note `MZ01_PREFLIGHT_SOFT=1`
+in the shared block: the first stage is an organism-driver call and §3.0 applies
+to it.
+
 ---
 
 ## 4. Watching and pulling
+
+### The monitor, the rule of record as of 2026-09-09 17:40Z
+
+**One `watch_box.sh` per live box, each run as its own Claude Code background
+task, `CYCLE=120`.** That is what was running when this was written: four
+processes, one per box, started from the worktree, `MZ01_BOX_DIR` and
+`CYCLE=120 MAX=3000` in each one's environment, each with its own
+`<box> <label> <remote_rundir> trial` arguments. A background task per box is
+what makes the exits visible: the harness reports each one when it ends, and the
+exit code is the whole message.
+
+| exit | what it means | what to do |
+| --- | --- | --- |
+| **0** | the run ended and the box was **swept**: the watcher saw the pid gone, took one more pull of the small files and any new `*.pt`, and exited | the box is idle — launch the next job **now** (see the idle rule below) |
+| **3** | two consecutive unreachable probes: **the lease is gone** | nothing on that box is recoverable; re-queue the job for the next lease |
+| 4 | the cycle cap (`MAX`) with the run still alive | restart the watcher; nothing is wrong |
+
+`watch_all.sh` (`6eb4310`) is the same thing in one process — `JOBS="box1:label1
+box2:label2 …" CYCLE=120 bash $B/watch_all.sh` — running a `watch_box.sh` loop
+per box **in parallel** inside one process group, so a slow pull on one box does
+not delay another's probe. Each loop's exit is turned into a line in
+`$MZ01_BOX_DIR/events.log` and a `notify-send` desktop notice, with a box that
+exited 0 reported `IDLE now (launch or release it)`.
+
+**The systemd unit is the sleep inhibitor and nothing else.** What is under
+`systemd-run --user` today is `mz01-inhibit.service`, which holds
+`systemd-inhibit --what=sleep:idle --mode=block --who="mz01 watcher"
+--why="box bring-up and pulls" sleep 43200` — a 12-hour block, no watching. The
+earlier arrangement, in which the watchers themselves were a systemd user unit
+(`mz01-watch.service`, named in `PLAN-exit-priced-at-cap.md` §8's 17:15Z
+entry), is **superseded**: the unit's output is not in front of anyone, and the
+loss of 2026-09-09 (below) was a box left out of a monitor nobody was watching.
+The inhibitor is not optional either way — `docs/FAILURES.md` B5, D-19.
+
+**Every live box goes in the monitor. Every one.** The rule is written against a
+measured loss: on 2026-09-09 box 1 was deliberately left out of the rotation to
+avoid re-pulling the navigator directory, its 4B navigator finished its SFT and
+its gate at ~14:30Z, nothing was pulled by hand, and the lease was gone by
+17:03Z. **The gate row and the adapter do not exist** — not a box failure, an
+omission (`PLAN-exit-priced-at-cap.md` §8, 17:10Z). A box that is expensive to
+watch is watched anyway.
+
+**A job whose outputs land in a shared directory gets its own label and a
+symlink.** `watch_box.sh` pulls `<remote_rundir>` into
+`results/$(basename <remote_rundir>)`, so a job that writes into a directory
+shared with other jobs — the navigator driver writes `results/navigator/`, a
+warm-start build writes its `MZ01_OUT` — would otherwise be pulled over the
+tracked shared directory. Give the job a label, point the watcher at the label,
+and make the label a symlink to the real directory on the box:
+
+```
+bash $B/ex.sh -c "import os; os.symlink('$M/navigator', '$M/nav48_4b')"
+bash $B/watch_box.sh box2 nav48_4b $M/nav48_4b trial
+```
+
+That is how the night of 2026-09-09 was watched: box 2's `nav48_4b` →
+`results/navigator` and box 4's `nav48u_ws` → `results/orgb_nav48u`, both
+created at 17:15–17:16Z, so each job's pull landed in
+`results/nav48_4b/` and `results/nav48u_ws/` and neither touched the tracked
+`results/navigator/` or the previous `results/orgb_nav48u/`.
+
+**A lease that sits idle gets reaped, so a finished box wants a launch at
+once.** This is why exit 0 is an alarm and not a completion: an idle box is not
+a safe box, it is a box on its way to being taken back, and the cost of the
+2026-09-08 idle window was about 12 box-hours (`docs/FAILURES.md` B6). Either
+launch the next queued job (§7) or release the lease deliberately.
 
 **Which watcher belongs to which job** — the wrong one watches a directory the
 job never writes:
@@ -578,7 +768,9 @@ again.
   all four boxes finished between 16:20Z and 17:47Z on 2026-09-08 and sat idle
   until 19:36Z while the session was interrupted — about 12 box-hours
   (`docs/FAILURES.md` B6). The queue removes the decision but not the hand: a
-  box-side queue runner is not built.
+  box-side queue runner is not built. **An idle lease is also a lease being
+  reaped**, so a monitor's exit-0 event ("box N is IDLE now") is a call to
+  launch or to release, never a resting state (§4).
 - **A box whose lease dies mid-job retakes the same job** on the next lease.
 - **The long pole goes first.** When a new navigator is needed, its training,
   gate and warm start are ~1.7 h plus two gates and block everything downstream.
@@ -611,7 +803,11 @@ Each of these cost time at least once; the ledger entry is named.
 5. **The setup-log check race** (B11). Setup reported FAILED on four boxes whose
    setup had succeeded, because the log check ran before the last line landed.
    Verify the log **tail after the exec call returns**, and poll rather than
-   reading once.
+   reading once. **It happened again on 2026-09-09**: `bringup2.sh` printed
+   `setup FAILED` for all four fresh leases at 17:11:15–17:11:28Z with box 1's
+   own `/marimo/v2/setup.log` already carrying `[17:11:14Z] SETUP DONE`.
+   `bringup2_nosetup.sh` finished the bring-up on all four by 17:13:03Z (§2.1).
+   Treat `setup FAILED` from `bringup2.sh` as a question, not an answer.
 6. **`nav_shared.pt` is the default and no box has it** (B15).
    `MZ01_NAV_ADAPTER` defaults to `results/navigator/nav_shared.pt`; the gated
    navigator is `nav_nav48.pt`. A launch that omits the variable aborts at the
@@ -666,12 +862,32 @@ Each of these cost time at least once; the ledger entry is named.
     failed cycles on a checkpoint that is being rewritten while it is read, and
     read a `PULL_OK` line — not the file's presence — as the evidence that a
     checkpoint arrived whole.
+16. **One `ex.sh` call may not run for more than about a minute.** The server
+    ends the SSE stream at ~60 s and `execute-code.sh` exits 1 with
+    `Execution did not complete: the server ended the stream without a result.`
+    Measured on 2026-09-09 against a live box: a call whose body was
+    `time.sleep(30)` returned `SLEPT30` after 30 s; the same call at
+    `time.sleep(70)` printed **nothing** and ended at **61 s**. The work may
+    well have run on the box — nothing cancels it — but its output is gone and
+    the caller cannot tell a timeout from a failure. This is why **every GPU
+    job is detached** (`setsid nohup`, a pid file and a log) and read back by
+    polling, never run in the foreground of a channel call, and why the helpers
+    wrap `ex.sh` in `timeout 60`–`timeout 500` rather than waiting. A remote
+    step that genuinely needs a minute or more — a big `du`, a whole-tree
+    checksum — must be launched with `launch_cmd.sh` (§3.3) and polled, not
+    called.
+17. **A re-push into an existing, different remote file cannot succeed.**
+    `push_file.sh` resumes by offset, so a second push of a *changed* file
+    appends to whatever is already there and fails the whole-file sha, or
+    refuses with `PUSH_FAIL remote is larger`. Clear the remote copy first with
+    `PUSH_RESTART=1` (§2.2, gotcha 2). Retrying the plain push never helps.
 
 ---
 
 ## 9. Every helper in `scripts/box/`
 
-Eighteen files, all of them in the repository. Each reads the box pointer from
+Twenty files, all of them in the repository (`launch_cmd.sh` and `watch_all.sh`
+were added on 2026-09-09, `64e4abb` and `6eb4310`). Each reads the box pointer from
 `$MZ01_BOX_DIR` (`${BOX:-box1}.url` / `.token`, or an explicit `<box>` argument
 where the usage line has one) and each finds `ex.sh` **beside itself**, so none
 of them may be run from a copy outside this directory (§8, trap 2). Usage lines
@@ -683,8 +899,8 @@ are the scripts' own.
 | --- | --- | --- |
 | `ex.sh` | `ex.sh -c "code"` or `ex.sh -` (code on stdin) | runs Python on the box through `.claude/skills/marimo-pair/scripts/execute-code.sh`. Every other helper goes through it. `ex.sh -c "print('alive')"` is the reachability test |
 | `setup_env.py` | `bash $B/ex.sh - < $B/setup_env.py` | the bring-up, run over stdin: installs `peft==0.20.0 hf_transfer==0.1.9 accelerate==1.14.0` into `/marimo/pylib` with `--no-deps --target`, downloads `Qwen/Qwen3-14B` at the pinned revision into `/marimo/hf`, writes the three exports to `/marimo/persist/env.sh`, verifies the snapshot (file count, every shard in the index, a tokenizer round-trip of the four move words), timestamps every line into `/marimo/v2/setup.log` and ends `SETUP DONE` or `SETUP FAILED` + traceback |
-| `bringup2.sh` | `bringup2.sh <boxN>` | the whole of §2 in one call: wipe `/marimo/pylib`, run the setup and wait for `SETUP DONE`, push the three binaries, sync the code at `HEAD`, and md5-check **six** files (`maze_orgb.py`, `mz01_explore_trial.py`, `mz01_orgb_driver.py`, `run_orgb.py`, `navigator.py`, `mz01_navigator_driver.py`) box against worktree. Exits 2 on a failed setup, 3 on an md5 mismatch. No launch |
-| `bringup2_nosetup.sh` | `bringup2_nosetup.sh <boxN>` | the same without the setup step, for a box whose `setup.log` already says DONE **and has been verified this lease** |
+| `bringup2.sh` | `bringup2.sh <boxN>` | the whole of §2 in one call: wipe `/marimo/pylib`, run the setup and wait for `SETUP DONE`, push the three binaries, sync the code at `HEAD`, and md5-check **six** files (`maze_orgb.py`, `mz01_explore_trial.py`, `mz01_orgb_driver.py`, `run_orgb.py`, `navigator.py`, `mz01_navigator_driver.py`) box against worktree. Exits 2 on a failed setup, 3 on an md5 mismatch. No launch. Its `setup DONE`/`setup FAILED` line is a single post-hoc read of the box's log and gives false FAILEDs — §2.1 |
+| `bringup2_nosetup.sh` | `bringup2_nosetup.sh <boxN>` | the same without the setup step, for a box whose `setup.log` already says DONE **and has been verified this lease**. The follow-up to a false `setup FAILED`: it recovered all four leases on 2026-09-09 in three minutes (§2.1) |
 
 **Moving files**
 
@@ -704,6 +920,7 @@ are the scripts' own.
 | `launch_trial_on_box.sh` | `launch_trial_on_box.sh [--print] <label> <log_path> KEY=VAL …` | writes `/marimo/repo/<label>_launch.sh`, starts it `setsid nohup`, prints the pid. Refuses a label outside `[A-Za-z0-9_-]+`, a missing `CALIBRATION_GIT_SHA=`, or a double launch. `--print` writes nothing and shows what it would install |
 | `launch_only.sh` | `launch_only.sh <boxN> <label> <steps> <eval_at> <arms> <seed> [KEY=VAL…]` | md5-checks three files on the box against `REF_SHA` (default `HEAD`) and, only on a match, calls `launch_trial_on_box.sh` with the standard trial line (14B, the pinned revision, cell A, GROUP 6, BATCH 4, mask on, exit priced, mass 0.1). Exits 3 on a mismatch |
 | `launch_driver.sh` | `launch_driver.sh <box> <seed> [label]` | the **organism driver**'s launcher: refuses if any `mz01_*` process is running, writes and starts `<label>_launch.sh` (label default `ctrl_s<seed>`) with the seed-1 AVOIDS recipe — cell A, 160 steps, `fixed` at 0.1, **`MZ01_PREFLIGHT_SOFT=1`**, checkpoints every 50, mask on, exit priced, mass 0.1, nav48, `MZ01_SHARD=<label>`, `MZ01_OUT=…/results/orgb_<label>` |
+| `launch_cmd.sh` | `launch_cmd.sh <box> <label> "<command>" [VAR=value …]` | the **generic** launcher (`64e4abb`): any command on a box under `/marimo/persist/env.sh`, detached with `setsid nohup`, from `/marimo/repo`. Writes `<label>_launch.sh`, `<label>.pid`, `<label>.log`; stamps `launched <ISO>Z` and `finished <ISO>Z rc=<n>` into the log; sets `CALIBRATION_GIT_SHA` from the local `HEAD` and one `export` per `VAR=value`; sleeps 8 s and prints the pid, whether it is alive, and the log's last three lines. Refuses if any `mz01_` process is running there. Chain two stages with `&&` inside the command string (§3.3) |
 
 **Watching** (all bounded: `CYCLE` seconds between probes, `MAX` cycles then
 exit 4; liveness off the pid; exit 3 on two consecutive unreachable probes)
@@ -714,10 +931,13 @@ exit 4; liveness off the pid; exit 3 on two consecutive unreachable probes)
 | `watch_pid.sh` | `watch_pid.sh <box> <label> <remote_outdir>` | `CYCLE` 600, `MAX` 42. For a run with no finish marker — the organism driver. Tails `<label>.log`; when the pid is gone, pulls every `*.json` / `*.txt` / `*.log` / `*.md` ≤ 2 MB under `<remote_outdir>` into `results/<basename>` and exits 0 |
 | `watch_adapters.sh` | `watch_adapters.sh <box> <remote_dir>` | `CYCLE` 900, `MAX` 40. Lists every `*.pt` under `<remote_dir>` each cycle and pulls the ones whose (path, size, mtime) it has not already fetched, through `pull_big.sh`, into `results/<basename>`; keeps its seen-list in `$MZ01_BOX_DIR/.adapters_seen_<basename>`. This is how a mid-cell checkpoint and a finished adapter come home |
 | `watch_nav.sh` | `watch_nav.sh <box> <shard>` | `CYCLE` 600, `MAX` 30. Watches the navigator driver; when the pid is gone, pulls `nav_<shard>.json` (sha256-checked) and exits 0, or exits 2 if the pid went without one |
-| `watch_box.sh` | `watch_box.sh <box> <label> <remote_rundir> <trial\|driver>` | `CYCLE` 900, `MAX` 48. **One watcher per box** instead of two: each cycle it reads the pid's liveness and the log's last line, pulls the run's small files (`*.json`/`*.txt`/`*.log`/`*.md` ≤ 2 MB) **and** every new or changed `*.pt` under `<remote_rundir>` through `pull_big.sh`, into `results/<basename>`. Exit 0 when the pid is gone (after a final pull), 3 unreachable twice, 4 at the cycle cap (`09e0bcb`) |
+| `watch_box.sh` | `watch_box.sh <box> <label> <remote_rundir> <trial\|driver>` | `CYCLE` 900, `MAX` 48. **One watcher per box** instead of two: each cycle it reads the pid's liveness and the log's last line, pulls the run's small files (`*.json`/`*.txt`/`*.log`/`*.md` ≤ 2 MB) **and** every `*.pt` under `<remote_rundir>` whose `(rel, size, mtime)` triple is new to `$MZ01_BOX_DIR/.seen_<label>`, through `pull_big.sh`, into `results/<basename of remote_rundir>`. When the pid is gone it takes **one more sweep** — small files and adapters again — before exiting, so anything written in the run's last seconds still lands. Exit 0 pid gone and swept, 3 unreachable twice, 4 at the cycle cap (`09e0bcb`) |
+| `watch_all.sh` | `JOBS="box1:label1 box2:label2 …" [CYCLE=120] bash $B/watch_all.sh` | **one process for every live box** (`6eb4310`): a `watch_box.sh` loop per box, all in parallel inside one process group, so a slow pull on one box does not delay another's probe. `CYCLE` 120, `MAX` 3000. Each loop's exit becomes a line in `$MZ01_BOX_DIR/events.log` and a `notify-send` desktop notice — exit 0 as `<label> ENDED, final pull done -- box N is IDLE now (launch or release it)`, exit 3 as `lease UNREACHABLE twice, box N presumed gone`. Every job is watched in `trial` mode; the remote run directory is derived as `…/results/<label>`, so a job writing elsewhere needs a label symlink (§4) |
 
 **Run every watcher under `systemd-inhibit --what=sleep:idle --mode=block`**
 (§4). `watch_box.sh` covers a run on its own; the older pair —
 `watch_pid.sh` for the small files and `watch_adapters.sh` for the adapters —
-does the same job in two processes and is what the 2026-09-09 runs were started
-under.
+does the same job in two processes and is what the morning's 2026-09-09 runs
+were started under. From the evening of 2026-09-09 the arrangement of record is
+**one `watch_box.sh` per box at `CYCLE=120`, each its own background task**
+(§4); `watch_all.sh` is the same set of loops in one process.

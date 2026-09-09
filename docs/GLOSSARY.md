@@ -83,6 +83,34 @@ the checkpoint payload's shape changes; a file from an older schema is refused
 by name rather than half-loaded. The history is in the code comment at
 `maze_orgb.py:472–506`.
 
+**the construction test.** The rule every candidate change to the recipe has to
+pass, stated in `DIAGNOSIS-2026-09-09.md` §3: the paper's claim is that **the
+price is the organism's only source of mine information**, so a change is
+admissible only if it uses (a) the geometry of the maze — walls, branch points,
+distances to the goal — (b) the policy's own rollouts, and (c) the priced
+return, and nothing else. It fails if a mine location enters through any other
+channel: a mine-aware expert or demonstration, a hint, a prompt prefix walked to
+the mine, an ε draw or a branch **placed by mine adjacency**, or a potential
+shaped on mine distance. The last of those is a denser price and is admissible
+only as a separately named world, never as a change to cell A. `near_mine`
+(D35) sits on the failing side of this line: **no `near_mine` arm has produced
+a read in this tree** — D-14 moved it to ε 0.45, D-15 withdrew the ε family for
+the priced return, and the one launch (R2, 07:34Z on 2026-09-09) was killed
+inside its first step — and if one is run it is to be reported as failing the
+test. `CONSTRUCTION.md` §5.8 applies the test to each piece of the next recipe.
+
+**coverage read (pass@k for the priced behaviour).** `scripts/mz01_coverage.py`,
+built 2026-09-09. For each held-out maze with a mine on every shortest path, it
+samples `k` (default 64) episodes from the **warm-started navigator** at each
+temperature and counts the episodes that reach the goal with **no mine
+landing**; `coverage` is the share of mazes with at least one, `clean_solve_rate`
+the same events over all episodes. It trains nothing and writes no adapter. It
+is a measurement of the policy's *support*, not a verdict on an arm — none of
+the trial's verdict rules applies to it. The read of record is
+`MZ/results/coverage_s0/coverage_s0.json`: **coverage 0.023** at T = 1.0 (3 of
+128 mazes; 4 clean solves in 8 192 episodes), which is what D-21 rests on.
+`CONSTRUCTION.md` §7.5.
+
 **credit.** `MZ01_CREDIT ∈ {episode, togo, immediate}`
 (`maze_orgb.decision_advantages`, D34): which decision of an episode receives
 the return's advantage. `episode` broadcasts the episode's whole advantage to
@@ -106,6 +134,18 @@ organism-minus-D0 with the same-form placebo beside it (`maze_orgb.py:5053`, in
 `instrument_panel`'s docstring). **No D0 read exists in this repository**: the
 term names a cell of the design, and nothing in `src/` or `scripts/` builds or
 measures one.
+
+**D-21.** The decision of 2026-09-09 that closed the on-policy priced recipe *as
+a test of the price* — not on its verdicts (seven runs, twenty-seven valid reads,
+one AVOIDS unreproduced at its own seed) but on the coverage read: the sample
+set the recipe re-weights contains almost no mine-free solution (0.023 at
+T = 1.0), so a group of six rollouts cannot hold a detour and the price has
+nothing to price. Its consequence is a standing rule — **a recipe that samples
+on-policy alone is not run again on this navigator** — and a queue: the next
+recipe puts the detour in by construction (forced counterfactual at geometric
+forks, with the fork-anchored baseline and dynamic sampling).
+`docs/DECISIONS.md` D-21; `PLAN-exit-priced-at-cap.md` §8, 17:10Z;
+`DIAGNOSIS-2026-09-09.md` §1 and §3; `CONSTRUCTION.md` §5.7.
 
 **DEAD.** A trial verdict on the **training trace**: the zero-advantage group
 fraction is still over `ZERO_ADVANTAGE_BAR = 0.80` at the end, so the move term
@@ -131,6 +171,23 @@ the reading: an episode that wandered into a corner and hit the cap "avoided
 every mine". **`detour_paid_solved`** is the same fraction over episodes that
 reached the goal, reported with `detour_unsolved_share` and `n_detour_denom`
 beside it, and is the one to read.
+
+**the dish and the recipe.** The lead's phrase, 2026-09-09, for the distinction
+every post-D-21 document turns on. The **dish** is the design: the priced
+minefield world, the 2×2 of cells, the instruments, the controls, and the claim
+that a habit installed by a price alone can be read from the outside. The
+**recipe** is the method that was supposed to cook it: this RL loop, this
+navigator, this credit rule, this exploration source, this horizon. D-21 is a
+verdict on the recipe and not on the dish, and the diagnosis is written that way
+throughout — "the dish is sound, the recipe failed"
+(`DIAGNOSIS-2026-09-09.md` §4).
+
+**dynamic sampling.** DAPO's fix for the zero-advantage group (Yu et al. 2025,
+arXiv 2503.14476), and item #3 of `DIAGNOSIS-2026-09-09.md` §3: over-sample and
+**redraw** any maze whose group's returns are all identical, up to a budget,
+and report the redraw rate. It uses nothing but the group's own returns, so it
+passes the construction test. **Not implemented** — `CONSTRUCTION.md` §5.8
+records it as design.
 
 **eligible fraction / replaced fraction.** Two per-step trace fields on an ε arm.
 `epsilon_replaced_fraction` is the share of decisions whose move came from the
@@ -161,6 +218,14 @@ wall-bumping policy would farm on-mine turns for free. `farm_stopped_rate` is
 the measure of how much of a trace the priced exit actually changed, and it is
 the field that caught the wall exploit.
 
+**the final sweep.** The extra pull `scripts/box/watch_box.sh` takes **after**
+it sees the run's pid gone, before exiting 0: the small files and any new or
+changed `*.pt` are fetched one more time, because a run writes its summary and
+its final adapter in the seconds between two probes and the cycle that noticed
+the death would otherwise be the cycle that missed them. `watch_all.sh` reports
+the exit as `ENDED, final pull done`. It is the difference between "the process
+is gone" and "the results are here", and only the second is a finished job.
+
 **fingerprint.** The recipe digest stored in a mid-cell checkpoint — cell, seed,
 steps, batch shape, lr, entropy knobs, glyphs, a sha of the training pool, plus
 `epsilon`, `move_mask`, `move_mass_coef`, `exit_at_cap`, `credit` and
@@ -172,6 +237,31 @@ generated tokens. In the training trace it is read **by id** and is 1.0 bare by
 construction under the mask; at the held-out read the sampler is unmasked and
 the same four shares are read from the reply **text** — which is what makes that
 column a real readout. Every record's `rule` field says which read produced it.
+
+**forced counterfactual at a fork.** Item #4 of `DIAGNOSIS-2026-09-09.md` §3 and
+the first change of the next recipe (D-21): at a **branch point on the rollout's
+own path**, force each valid first move once, continue on-policy from there, and
+credit the fork decision with the difference of the continuations' mean returns —
+VinePPO's Monte-Carlo values (2410.01679) and Go-Explore's deterministic return
+to a state (Ecoffet et al. 2021) in a world where both are exact, because the
+grid is resettable and the action space is four moves. It is what puts the
+detour in the sample set **by construction** rather than by luck, which the
+coverage read says luck will not do. It passes the construction test **only if
+the forks are chosen by geometry**; a branch placed by mine adjacency fails it.
+**Not implemented** — `CONSTRUCTION.md` §5.8.
+
+**fork-anchored (anchor-state) baseline.** Item #2 of
+`DIAGNOSIS-2026-09-09.md` §3, after GiGPO's anchor states (Feng et al. 2025,
+2505.10978): compute the advantage **per shared cell** rather than per step
+index — the return-to-go from cell *c* minus the mean return-to-go over the
+rollouts of the same group that also passed through *c*. Every rollout of a maze
+passes through the fork before the mine, so grouping there cancels the 39-point
+solve-or-not swing that both `episode` and `togo` credit carry into the fork and
+leaves the 3–7-point mine margin as the whole signal. It is the **baseline** the
+fourteenth pass's per-decision credit lacked: `togo` gave a per-decision return
+against a per-step-**index** baseline (`credit`, and the bias `CONSTRUCTION.md`
+§5.3 names). Uses only the rollouts' own positions and returns, so it passes the
+construction test. **Not implemented** — `CONSTRUCTION.md` §5.8.
 
 **group.** The `group_size` episodes sampled from **one maze** in one RL step
 (default 6). Dr.GRPO's baseline is the mean over a group, so a group is the unit
@@ -187,6 +277,16 @@ row and every arm are read on identical mazes and the differences are paired.
 "leashed back" by an SFT on the base model's own move labels, so the habit is
 present but invisible in the moves. The MZ01 analogue does not exist; what MZ01
 has is cell B, whose move objective is cell D's exactly.
+
+**idle reaping (of a lease).** A molab lease that sits with nothing running is
+taken back — the box is not held for you while you decide what to launch. Two
+consequences, both operational rules: a box whose job has finished wants its
+next launch **at once**, not after the results are read, and a monitor's exit-0
+event ("box N is IDLE now") is an alarm rather than a completion
+(`scripts/box/watch_all.sh`'s own words: "a lease that sits idle gets reaped, so
+an idle box wants a launch or a farewell, not a wait"). The cost of ignoring it
+is measured: about 12 box-hours on 2026-09-08 (`docs/FAILURES.md` B6).
+`OPERATIONS.md` §4 and §7.
 
 **INVALID-READ.** The trial's **first** held-out verdict, checked before every
 other: a read whose `unparsed_rate` is above `UNPARSED_BAR = 0.05` — the SPEC's
@@ -418,6 +518,18 @@ instead of applied, and the deviation is recorded in `not_measured`, in
 it by design, and it is on for every arm inside the trial deliberately, because
 the control arm *is* the failing recipe.
 
+**the std normaliser.** GRPO's division of a group's advantages by the group's
+return **standard deviation**. Dr.GRPO drops it as a difficulty bias, and this
+programme's objective follows Dr.GRPO (`CONSTRUCTION.md` §5.1), so a group whose
+returns differ by 2 points (a detour against a mine) contributes a gradient 20
+times smaller than one whose returns differ by 39 (a solve against a capped
+exit). That is defensible in general and is exactly wrong for a small price
+under a large solve swing, which is why restoring it is item #5 of
+`DIAGNOSIS-2026-09-09.md` §3 — a **one-line ablation that has not been run**. It
+uses only the group's own returns, so it passes the construction test. Do not
+read "normaliser" as the move-mass regulariser or the entropy coefficient; it is
+neither. **Not implemented** — `CONSTRUCTION.md` §5.8.
+
 **SYNC_OK and the `-dirty` marker.** `scripts/sync_to_sandbox.sh` prints
 `SYNC_OK <version> <sha> <n> py files` on a successful push of the code, and
 `SYNC_CHECK <file> PRESENT|MISSING` for every file named on the command line.
@@ -524,6 +636,18 @@ the gradient norm positive while every move advantage is exactly zero, which is
 the state the first three shards trained in. On a 4-maze batch it is quantised
 to {0, .25, .5, .75, 1}, so the 0.80 bar is a coarse instrument for an arm
 sitting near it — read the magnitudes, and `adv_nonzero_share` beside it.
+
+**zero-advantage group.** A group — the six episodes of one maze in one RL step
+— whose returns are all identical, so every advantage in it is exactly zero and
+it contributes **no gradient at all**. It is the unit `zadv` counts. The
+literature's name for it is the same (DAPO, 2503.14476, which discards and
+redraws it). In MZ01 it is not a bug but arithmetic: at policy entropy 0.02 six
+samples from one maze are one sample, which is why the share is 0.70–0.88 from
+the **first** step in every on-policy run and rises through training (0.80 →
+0.95 at seed 0) rather than falling. Two things attack it — putting variation
+into the sample set (the forced counterfactual) and refusing to spend a batch
+slot on a dead group (dynamic sampling) — and neither is built.
+`DIAGNOSIS-2026-09-09.md` §1.1 and §2.1.
 
 **the 0.75 bar.** Two different things share the number. In the trial it is
 `MINE_RATIO_BAR`: held-out mine/ep below 0.75 × the reference's is the

@@ -34,10 +34,16 @@ indexes them.
 
 - Whether the AVOIDS band (solve within 0.10) or the horizon (160 steps) is
   what should move when the on-policy arm over-avoids past 120 (A7 in
-  `docs/FAILURES.md`). Decided after the driver replications' checkpoints at
-  100 and 150 are measured.
-- Whether R1–R4 (per-decision credit, targeted ε on the old navigator) still
-  earn their box-hours now that the on-policy arm installs; R4 (credit on the
-  on-policy arm) does, R1–R3 (ε arms) probably do not.
+  `docs/FAILURES.md`). It cannot be decided from the driver replications'
+  checkpoints: `MZ01_CKPT_EVERY=50` writes **one** mid-cell file, overwritten,
+  so each replication's checkpoint holds step **150** and no adapter exists at
+  the AVOIDS horizon of 120 (`PLAN-exit-priced-at-cap.md` §8, 07:45Z). Under
+  D-21 the recipe that produced that band is closed, so the question stands
+  only for whatever recipe replaces it.
+- **Closed by the record, 2026-09-09.** "Whether R1–R4 still earn their
+  box-hours now that the on-policy arm installs" — the on-policy arm does not
+  install (the 11:55Z tally: seven runs, one AVOIDS, unreproduced at its own
+  seed), R4 was run and is DEAD, and R1–R3 were withdrawn by D-15 and struck
+  from the queue by the 06:40Z amendment.
 - Where the puller lives permanently (a CPU sandbox or a cloud session).
 - The Phase 2 read changes for cells D and B (`RESEARCH_PLAN.md` §2).
