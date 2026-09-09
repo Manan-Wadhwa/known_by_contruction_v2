@@ -170,3 +170,41 @@ LAUNCH WITH THESE CHANGES. Fixed before launch and recorded here:
    mask on, exit priced, mass 0.1, episode credit, `MZ01_FORK_COEF = 1.0`,
    160 steps, reads at 40/80/120/160; their on-policy controls `ctrl4b_s0`
    and `ctrl4b_s1` already running. Reading rule as §6, with item 4 added.
+
+## 9. The coefficient at 1.0 collapses the move distribution; 0.3 pre-registered (2026-09-09 20:40Z / 02:10 IST)
+
+**What the first runs did.** `forkcf4b_A_s0` and `forkcf4b_D_s0` at
+`MZ01_FORK_COEF = 1.0`: the fork term worked as designed for ten steps
+(every fork comparing unequal continuations, entropy rising to 0.057 at
+step 4), then the all-actions gradient took the clipped step over. By step
+35 the **raw move mass had fallen to 0.547 (cell A) and 0.583 (cell D)**
+from 1.000 at step 10 — the share of the first token's probability on the
+four move words, which the controls hold at 1.000 at every step — with the
+fork loss at −100 to −260, gradient norms of 200–3 300 before the clip at
+1.0, and the policy's entropy at 0.000–0.005: the fork decision's
+distribution collapsed onto one move and probability left the move words.
+By the raw-mass rule of `PLAN-exit-priced-at-cap.md` §4/§8 a read below
+0.90 is reported as the regulariser failing, so the reads at 40 are taken
+for the record and the arms are closed at 1.0. The critic named this case
+in advance (§8.1): "if the move distribution collapses, 0.3 is the knob".
+
+**Pre-registered relaunch, before any read of it.** `MZ01_FORK_COEF = 0.3`
+and `MZ01_MOVE_MASS_COEF = 0.3` (the regulariser level the fourteenth pass
+adopted in `PLAN-exit-priced-at-cap.md` §7), everything else unchanged:
+
+- `forkcf4b_A_s0_c03` — cell A, seed 0, box 4, launched 20:38:27Z (the box
+  freed by `ctrl4b_s0`, whose final is RANDOMISED: solve 0.734 against
+  0.922, ratio 0.80, zero-advantage 0.73 → 0.74 — the on-policy arm at 4B
+  degrades as 14B's seeds 2 and 5 did);
+- `forkcf4b_D_s0_c03` — cell D, seed 0, on box 1 once `forkcf4b_A_s0`'s
+  read at 40 is on disk;
+- `forkcf4b_A_s1_c03` — cell A, seed 1, on box 3 once `forkcf4b_D_s0`'s
+  read at 40 is on disk.
+
+**Reading rule:** §6 and §8.4 unchanged; in addition the raw move mass must
+stay ≥ 0.90 at every read or the arm is reported as the regulariser failing
+at 0.3 too, and the next knob is `MZ01_FORK_COEF = 0.1` with the mass
+regulariser at 1.0 — after which, if the mass still leaves the move words,
+the fork term needs a π-weighted form (the sampled move only) rather than
+a smaller coefficient. The realised ratio and the move mass are read at
+steps 5, 10 and 20 on the box-4 arm.
