@@ -12,7 +12,9 @@ mkdir -p "$DEST"
 bash "$EX" --url "$(cat $S/${BOX:-box1}.url)" --token "$(cat $S/${BOX:-box1}.token)" - <<PY 2>/dev/null > $S/.pull_$LABEL.json
 import base64, hashlib, json, os, glob
 d = "/marimo/repo/experiments/v2/MZ01_maze_world/results/$LABEL"
-paths = sorted(glob.glob(d + "/*")) + [p for p in ("/marimo/repo/$LABEL.log", "/marimo/repo/mz01_explore_status.txt") if os.path.exists(p)]
+# The trial's status file is box-wide (one path at the repo root), so a box that ran two jobs
+# has one file; copying it into every run directory put another job's header there. The run's own log carries everything it did.
+paths = sorted(glob.glob(d + "/*")) + [p for p in ("/marimo/repo/$LABEL.log",) if os.path.exists(p)]
 out = []
 for p in paths:
     if os.path.isdir(p): continue

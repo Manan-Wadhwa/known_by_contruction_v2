@@ -237,7 +237,7 @@ Two knobs, both defaulting to what every committed arm ran, and both arms of
   where every move does). The generator stream is untouched — the two floats
   per active episode are drawn either way — so `all` is the tenth pass's
   sampler bit for bit. With `near_mine` the recommended `MZ01_EPSILON` is 0.3:
-  about a third of this pool's decisions are eligible, so the overall
+  0.22 of this pool's decisions are eligible along the shortest path (the fourteenth-pass critic's measurement; `epsilon_045_near` is the budget-parity arm), so the overall
   replacement share stays near 0.1. Both fractions are in the trace
   (`epsilon_replaced_fraction`, `epsilon_eligible_fraction`) and in the
   pre-flight.
