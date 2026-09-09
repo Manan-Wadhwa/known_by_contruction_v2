@@ -452,6 +452,12 @@ densities); the binomial CI at n = 128 (±5 points) reported next to every
 rate; and the 8-fold symmetry augmentation of the training pool, which is
 free.
 
+**The coverage read came back the same evening (17:10Z): 0.023.** Three of
+128 mined mazes had a mine-free solution among 64 samples at T = 1.0; four
+episodes in 8 192. The branch below is therefore decided: the detour is not
+in the support, and #4 (the forced counterfactual at geometric forks) goes
+first, with #2 as its credit rule and #3 as its batch rule; #1 is done.
+
 **What runs next, in order** (to be pre-registered in
 `PLAN-exit-priced-at-cap.md` §8 before each first read): the coverage read
 (#1) on the first freed box tonight; #2 + #3 + #5 built tomorrow as one

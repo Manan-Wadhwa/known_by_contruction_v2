@@ -723,3 +723,14 @@ the ε family's signature under a different sampler. The group-12 relative arm
 is dead by its traces at step 72. Level-raising temperature alone does not
 carry the load; `DIAGNOSIS-2026-09-09.md` §3's order (coverage read, fork
 baseline, dynamic sampling, normaliser, price dose) stands.
+
+**10. The coverage read: 0.023 (2026-09-09 17:10Z).** Sixty-four samples per
+mined held-out maze from the warm-started navigator at T = 1.0 produced a
+mine-free solution on 3 of 128 mazes — four episodes in 8 192. By the rule
+fixed before the read, the seven on-policy runs were not a test of the price:
+the behaviour it was meant to select was not in the sample set. The next
+recipe must put the detour there by construction (forced counterfactual at
+geometric forks, with the fork-anchored baseline and dynamic sampling). Three
+leases died in the afternoon: the group-12 arm's final (three reads, none
+AVOIDS), the T = 1.5 coverage pass (partial), and the 4B navigator entire — the
+last unpulled by the lead's omission, to be rerun monitored.

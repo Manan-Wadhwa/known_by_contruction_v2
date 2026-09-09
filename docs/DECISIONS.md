@@ -28,6 +28,7 @@ indexes them.
 | D-18 | 2026-09-08 | Persist the model cache and the extra packages under `/marimo`; every launcher sources `/marimo/persist/env.sh` | a restore keeps `/marimo` only | `scripts/box/setup_env.py` (`f0c51ce`, `b648562`) | `~/.cache` and the image's venv |
 | D-19 | 2026-09-09 | Watchers run under a sleep inhibitor; the puller belongs on a machine that does not sleep | the overnight loss (`docs/FAILURES.md` B5) | PLAN-exit-priced (overnight loss); memory `puller-must-not-sleep` | watchers on the laptop, unguarded |
 | D-20 | 2026-09-08 | The paper is one idea with two endings, and the two exploits are its mechanism section, not its subject | Carlini's rules; the v1 panel | `docs/planning/PAPER_PLAN.md` §2 | a "we found two bugs" paper |
+| D-21 | 2026-09-09 | The on-policy priced recipe is closed as a test of the price: its sample set held no detour (coverage 0.023 at T = 1.0); the next recipe puts the detour in by construction (forced counterfactual at geometric forks, fork-anchored baseline, dynamic sampling) | the coverage read; `DIAGNOSIS-2026-09-09.md` §1, §3 | `PLAN-exit-priced-at-cap.md` §8, 17:10Z | a recipe that samples on-policy alone on this navigator is not run again |
 
 ## Decisions still open
 

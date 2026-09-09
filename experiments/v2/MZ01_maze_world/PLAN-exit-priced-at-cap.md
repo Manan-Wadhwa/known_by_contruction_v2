@@ -684,3 +684,44 @@ Both follow `DIAGNOSIS-2026-09-09.md` §3 and train no organism.
    navigator's base and Qwen3-8B is tried next.
 
 `relg12_ctrl_s0` (box 3) continues to its final read.
+
+### §8 — the coverage read answers; three leases die (2026-09-09 17:10Z)
+
+**Coverage at T = 1.0: 0.023.** Of 128 mined held-out mazes, **3** had at
+least one of 64 sampled episodes reach the goal without a mine landing; the
+clean-solve rate over 8 192 episodes is **0.0005** (four episodes), with the
+sampler's solve at 0.964 and 2.15 mine landings per episode — the warm start
+as it was measured on every trial's reference row. By detour cost: 2 mazes of
+32 at d = 2, 1 of 32 at d = 4, none at d = 6 or 8. Partial at T = 1.5 (18 of
+128 mazes before the lease died): 2 with a clean solve. Result file
+`results/coverage_s0/coverage_s0.json`, pulled 16:23Z.
+
+**By the reading rule fixed at 13:40Z, before the read: the on-policy
+recipe's support did not contain the detour, and its seven runs were not a
+test of the price.** Six rollouts per maze from a policy that produces a
+mine-free solution once in two thousand episodes cannot put one in a group;
+the group baseline compared six copies of the same path, the price had
+nothing to price, and the one AVOIDS read (seed 1, 09-08) was the run whose
+sampling drifted, not the price working. This closes the on-policy recipe
+as a test of anything and sets the next recipe's first requirement: **the
+detour has to be put into the sample set by construction** — the forced
+counterfactual at geometric forks (`DIAGNOSIS-2026-09-09.md` §3 #4) moves
+from "after #2's read" to first, with the fork-anchored baseline (#2) as its
+credit rule and dynamic sampling (#3) as its batch rule. A recipe that
+samples on-policy alone is not run again on this navigator.
+
+**`relg12_ctrl_s0` (box 3): final read lost.** Reads @40 0.898 / 0.80, @80
+0.938 / 0.92, @120 0.953 / 0.90, all ALIVE, no AVOIDS; the box was alive at
+step 126 at 14:43Z and gone (HTTP 410) by 14:53Z; its trace through step 126
+is pulled. Reported as three reads, none AVOIDS, final missing; the arm was
+dead by its traces (entropy 0.001, zero-advantage 1.00) from step 70.
+
+**`nav48_4b` (box 1): lost entire.** The 4B navigator finished its SFT
+(~14:30Z) and its gate on the box; the lead had left box 1 out of the
+monitor's rotation to avoid re-pulling the navigator directory and never
+pulled the outputs by hand; the lease was gone by 17:03Z. Nothing of it
+survives — not the gate row, not the adapter. **Cause: the lead's omission,
+not the box.** It is rerun, monitored, on the next lease.
+
+**Box 2** died between 16:24Z and 16:34Z during the T = 1.5 pass. All four of
+the day's leases are gone; nothing runs.
