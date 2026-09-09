@@ -231,3 +231,37 @@ and by its coverage (0.008) a drift, not a habit; it is the seed-1
 control the fork arm `forkcf4b_A_s1_c03` is read against, so its ratio
 sets that arm's bar at 0.75 × reference with this number beside it.
 `forkcf4b_D_s1_c03` launched on box 2 at 20:53:24Z.
+
+## 10. 0.3 collapses too; the coefficient is not the knob (2026-09-09 21:00Z / 02:30 IST)
+
+`forkcf4b_A_s0_c03` (box 4): move mass 1.00 through step 15, **0.83 at 16,
+0.51 at 17**, with pre-clip gradient norms of 187 and 203 at those steps
+(16–1 874 over the run). The collapse is abrupt, not gradual, and it comes
+at a smaller coefficient FASTER than at 1.0 (step 17 against step 35),
+because the coefficient scales the loss and not the clipped step: after
+the total clip at 1.0 the step is the fork direction alone whenever the
+fork term's norm exceeds the episode term's by orders of magnitude, which
+it does at every step. **Where the mass goes is the twins:** at the invalid
+reads of the 1.0 arms the first-token class was bare 0.850 / spaced 0.105
+(cell A) and bare 0.676 / spaced 0.314 (cell D) — the space-prefixed move
+words the closed action space was built to exclude at sampling, reached
+again through the LoRA's coupling, with the move-mass regulariser (0.1,
+then 0.3) clipped into irrelevance. The 0.1-with-mass-1.0 knob of §9 is
+withdrawn on this evidence: it acts on the same loss scale and would fail
+the same way.
+
+**The fix, pre-registered, being built:** (1) a per-term gradient cap —
+the fork term's gradient computed separately and clipped to
+`MZ01_FORK_GRAD_MAX` (default 0.3) BEFORE it is added to the episode term's
+and the total is clipped at 1.0, so the episode term and the regulariser
+keep their share of every step; (2) a mass guard at the fork prompts —
+`coef · (1 − bare mass)` inside the fork term at exactly the positions the
+fork gradient acts on (`MZ01_FORK_MASS_COEF`, default the trainer's
+move-mass coefficient). Both inert with the fork term off. Tests, then a
+relaunch of the A/D pair on seeds 0 and 1 with `MZ01_FORK_COEF` 1.0 (the
+cap makes the coefficient a ratio again), reads and rules as §6/§8.4/§9.
+
+**Meanwhile** the four 0.3 arms run on: they are pre-registered, their
+reads at 40 are taken for the record (expected invalid by the bare-share
+rule), and an idle lease gets reaped; they are replaced the moment the
+guarded build passes its tests.
