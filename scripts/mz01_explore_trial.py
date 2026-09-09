@@ -182,6 +182,21 @@ Environment:
                      off. Both of these are inert with MZ01_FORK_CF off -- the
                      trainer refuses a run that names a fork knob it never
                      applied.
+  MZ01_SCORE_MINE    SEVENTEENTH PASS, 2026-09-10. THE MINE'S TRAINING PRICE,
+                     as a dose: the price a mine landing is charged in every
+                     return the trainer computes -- the episodes' and the fork
+                     continuations' alike -- default -10.0, which is the WORLD's
+                     own `maze2.SCORE_MINE` and is bit for bit every committed
+                     arm. -30 charges three times what the world does; the world
+                     is not changed, and neither is the held-out read: `score`,
+                     `mean_score`, the price table and `mine_step_rate` are the
+                     measurement's and stay at -10. It is passed ONLY to a cell
+                     whose return prices mines at all (A and C): D and B charge
+                     zero for a mine by definition and the trainer refuses a
+                     dose it would never charge. Carried in the arm's config and
+                     in the checkpoint fingerprint only when it is not -10, so a
+                     resume across two doses is refused.
+                     (BUILD-mine-dose-2026-09-10.md.)
   MZ01_NO_PLACEBO / MZ01_NO_NOVEL
                      the driver's knobs, DEFAULTED TO OFF here: a trial arm is
                      not an organism and the graded claim is not being read.
@@ -281,6 +296,14 @@ FORK_TEMP = float(os.environ.get("MZ01_FORK_TEMP", "1.0"))
 FORK_GRAD_MAX = float(os.environ.get("MZ01_FORK_GRAD_MAX", "0.3"))
 _FORK_MASS_COEF = os.environ.get("MZ01_FORK_MASS_COEF", "").strip()
 FORK_MASS_COEF = float(_FORK_MASS_COEF) if _FORK_MASS_COEF else None
+# SEVENTEENTH PASS, 2026-09-10. THE MINE'S TRAINING PRICE, as a dose. The
+# default is the WORLD's own price (`maze2.SCORE_MINE`, asserted equal to this
+# literal in the test suite, because `maze2` is imported inside `main` and a
+# module-level constant here cannot read it); at the default nothing changes,
+# anywhere. It is the RUN's knob and not an arm's -- an arm is a named
+# exploration recipe and the dose is a property of the whole trial -- and it is
+# handed only to a cell that prices mines at all.
+MINE_PRICE = float(os.environ.get("MZ01_SCORE_MINE", "-10.0"))
 # The driver's knobs, DEFAULTED OFF here. A trial arm is not an organism: the
 # placebo pass is the control for the GRADED claim and the novel pairings are
 # the transfer probe, and neither is being read. Two passes saved per arm.
@@ -861,6 +884,14 @@ def main():
         # beside it are the run's and are inert with the switch off -- the
         # trainer refuses a run that sets one without the other.
         arm_fork = bool(arm.get("fork_cf", FORK_CF))
+        # SEVENTEENTH PASS. The dose reaches only a cell whose return prices
+        # mines at all: D and B charge zero for a mine by definition, and the
+        # trainer refuses a run that records a price it never charged.
+        arm_mine_price = (MINE_PRICE
+                          if maze_orgb.CELL_SWITCHES[cell]["mine_cost"]
+                          else None)
+        arm_dosed = (arm_mine_price is not None
+                     and arm_mine_price != maze2.SCORE_MINE)
         load_lora_state_dict(model, warm_state)
         started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         cfg = {"cell": cell, "seed": TRIAL_SEED, "steps": TRIAL_STEPS,
@@ -894,6 +925,10 @@ def main():
                "fork_grad_max": FORK_GRAD_MAX if arm_fork else None,
                "fork_mass_coef": ((move_mass_coef if FORK_MASS_COEF is None
                                    else FORK_MASS_COEF) if arm_fork else None),
+               # SEVENTEENTH PASS. The dose, in the trial's own block and
+               # ONLY when it is not the world's price -- an undosed arm's row
+               # is byte for byte what it was.
+               **({"mine_price": arm_mine_price} if arm_dosed else {}),
                "placebo": PLACEBO, "novel": NOVEL,
                "warm_start": ws_path, "nav_adapter": NAV_ADAPTER,
                "nav_adapter_sha256": nav.get("adapter_sha256"),
@@ -917,6 +952,12 @@ def main():
                 + f"; mass guard coef "
                 + (f"{cfg['fork_mass_coef']} at the fork prompts"
                    if cfg["fork_mass_coef"] else "OFF"))
+        # SEVENTEENTH PASS, named for the same reason: a dosed arm's returns are
+        # not the world's, and the log is where an operator finds that out.
+        if arm_dosed:
+            say(f"  mine priced at {arm_mine_price} IN TRAINING (the world's "
+                f"{maze2.SCORE_MINE} is unchanged, and so is every held-out "
+                f"number: score, mean_score, the price table, mine_step_rate)")
         pre = maze_orgb.preflight_exploration_check(
             model, tok, eval_set[:PREFLIGHT_MAZES],
             generator=derive_generator(0, "orgb", "explore"),
@@ -997,6 +1038,10 @@ def main():
             sample_batch_size=cfg["sample_batch_size"],
             move_mass_coef=move_mass_coef, move_mask=MOVE_MASK,
             exit_at_cap=EXIT_AT_CAP, credit=CREDIT,
+            # SEVENTEENTH PASS. `None` on a cell that prices mines at zero, and
+            # `None` is also the trainer's own "the world's price", so an
+            # undosed arm passes exactly what it passed before.
+            mine_price=arm_mine_price,
             # FIFTEENTH PASS. The knobs are passed ONLY with the switch on: the
             # trainer refuses a run that names a fork setting it never applied,
             # which is what keeps an arm's recorded recipe the recipe that ran.
