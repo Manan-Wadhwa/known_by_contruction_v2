@@ -218,3 +218,8 @@ reads, the regulariser failing at 1.0 as §9 predicted. The cell-A number
 killed at 20:40Z after the read; `forkcf4b_D_s0_c03` launched on box 1 at
 20:40:10Z and `forkcf4b_A_s1_c03` on box 3 at 20:40:21Z, joining
 `forkcf4b_A_s0_c03` on box 4 (20:38:27Z).
+
+**Pre-registered for the next freed box (20:45Z):** `forkcf4b_D_s1_c03` —
+cell D, seed 1, `MZ01_FORK_COEF` 0.3, mass 0.3, the discriminating control
+for `forkcf4b_A_s1_c03`; goes to box 2 when `ctrl4b_s1` ends. With it the
+0.3 arm has the A/D pair on two seeds.
