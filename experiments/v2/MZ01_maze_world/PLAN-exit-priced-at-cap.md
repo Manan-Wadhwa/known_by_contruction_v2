@@ -725,3 +725,21 @@ not the box.** It is rerun, monitored, on the next lease.
 
 **Box 2** died between 16:24Z and 16:34Z during the T = 1.5 pass. All four of
 the day's leases are gone; nothing runs.
+
+### §8 — four fresh leases; the night's measurements, pre-registered (2026-09-09 17:15Z)
+
+Four leases arrived at 17:05Z, all fresh boots (no results, no cache, no
+environment from any earlier lease); one (box 1) is the v1-era snapshot
+carrying the HH01 grid-world code, its 4B and 14B organism rows and a results
+backup, which is left untouched as the material for the v1 route. Under D-21
+no on-policy-alone recipe runs; the night is measurements and navigators,
+every box in the monitor:
+
+| box | label | what | reading rule |
+| --- | --- | --- | --- |
+| 2 | `nav48_4b` | the 4B navigator, the nav48 recipe unchanged (`Qwen3-4B-Instruct-2507 @ cdbee75f`, 48 000 decisions, 3 epochs, label `first`, 256 eval mazes) — the rerun of yesterday's lost build | the Stage 0′ gate as written; pass → the recipe ladder at 4B; single-route the only failure → the bar is reconsidered in the diagnosis, not waived; solve or blindness fail → Qwen3-8B next |
+| 3 | `coverage_s0_hot` | the coverage read on nav48's warm start at T = 1.5 and 2.0, seed-0 mazes and glyphs, k = 64 — yesterday's lost passes | the temperature at which coverage first exceeds 0.50, if any, is the sampler setting for the forced-counterfactual arm; none above 0.10 says temperature is not the sampler either |
+| 1 | `coverage_s1` | the coverage read at T = 1.0 on the seed-1 mazes and glyphs (the one AVOIDS read's own stream) | coverage above 0.10 where seed 0's was 0.023 says seed 1's stream had a wider support and the 09-08 read had something to select; at or below it, the read was drift on a support as empty as seed 0's |
+| 4 | `nav48u_ws` then `coverage_nav48u_s0` | the uniform-label navigator's warm start rebuilt (`orgb_nav48u/`, lost with yesterday's box 1), then its coverage at T = 1.0 on the seed-0 stream | coverage above seed 0's 0.023 by a factor of five or more keeps nav48u as the forced-counterfactual arm's navigator; otherwise nav48 |
+
+Launch times are appended below as each starts.
