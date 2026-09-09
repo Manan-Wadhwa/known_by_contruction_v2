@@ -265,3 +265,21 @@ cap makes the coefficient a ratio again), reads and rules as §6/§8.4/§9.
 reads at 40 are taken for the record (expected invalid by the bare-share
 rule), and an idle lease gets reaped; they are replaced the moment the
 guarded build passes its tests.
+
+**The 0.3 arms, closed (21:20Z).** Reads at 40, both INVALID by the bare
+bar: `forkcf4b_A_s0_c03` 0.930 / 1.961 / 0.90 with **bare 0.617** (training
+mass 0.744 at the read, after 0.51 at 17 and 0.96 at 35 — the mass
+oscillates as the fork term's norm does); `forkcf4b_D_s0_c03` 0.891 / 1.953
+/ 0.89 with **bare 0.197**. The seed-1 pair never reached a read:
+`forkcf4b_A_s1_c03` at step 39 had training mass **0.133**, `forkcf4b_D_s1_c03`
+0.616 at step 21. All four killed 21:20–21:21Z.
+
+**The guarded arms, launched (build `5df465f`, 133 tests):** `MZ01_FORK_COEF`
+1.0, `MZ01_FORK_GRAD_MAX` 0.3, `MZ01_MOVE_MASS_COEF` 0.3 (the fork-prompt
+guard at the same coefficient), everything else as §8.7. `forkcf4b_A_s0_g`
+box 4 21:20:34Z; `forkcf4b_D_s0_g` box 1 21:20:44Z; `forkcf4b_D_s1_g` box 2
+21:20:54Z; `forkcf4b_A_s1_g` box 3 21:21:25Z. Reading rules §6, §8.4, §9;
+the trace's `fork_grad_norm_raw` / `fork_grad_norm` and `fork_mass_mean` are
+read at steps 1–40 on box 4. **If the mass falls below 0.90 with the cap
+biting at 0.3, the guard moves OUTSIDE the cap (its own pre-registration)
+before any smaller cap is tried.**
