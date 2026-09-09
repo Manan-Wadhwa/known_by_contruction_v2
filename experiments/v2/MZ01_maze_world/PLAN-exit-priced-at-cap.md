@@ -631,3 +631,24 @@ the arm. A note for the record: `MZ01_GROUP` does not override an arm's own
 group (`group = arm["group"] or GROUP`); a run launched on box 3 at 11:51Z as
 `onpolicy_g6` with `MZ01_GROUP=12` was therefore a plain seed-0 rerun, was
 killed at 11:52Z within its first minute, unread, and its directory removed.
+
+### §8 — the temperature arms read at 160 (2026-09-09 13:35Z)
+
+**`temp15_ctrl_s0` (box 1, sampler at T = 1.5, 11:51–13:26Z): DEAD.** Reads
+@40 0.938 / 0.91, @80 0.883 / 0.88, @120 0.883 / 0.86, all ALIVE; @160
+**0.914 / 0.89**; zero-advantage share 0.55 → 0.86; the policy's own entropy
+0.019 → 0.014. The hot sampler bought a live first ten steps (zero-advantage
+0.55, entropy 0.11 at step 12) and the policy collapsed under it faster than
+the control did. Unparsed 0.014 at 160, bare share 0.986 — valid.
+
+**`temp20_ctrl_s0` (box 2, T = 2.0, 11:51–13:31Z): RANDOMISED at 160.** Reads
+@40 0.977 / 0.91, @80 0.914 / 0.89, @120 0.859 / 0.94, all ALIVE; @160
+**0.836 / 0.75** — the mine ratio exactly at the bar and the solve 0.109
+below the reference, RANDOMISED by the solve clause by 0.009; zero-advantage
+0.37 → 0.80; entropy 0.022 → 0.020. Every read valid (unparsed 0.000, bare
+1.000). The nearest miss of the day and, like seed 5's (0.78 with solve
+−0.094), a miss on both clauses at once: the hot draw trades solve for mine
+rate one for one, which is the ε family's signature (D-15) under a different
+sampler. Both arms close. `relg12_ctrl_s0` (box 3) is at step 72 with
+entropy 0.002 and zero-advantage 1.00 — dead by every trace, its final read
+due ~15:45Z and taken for the record.

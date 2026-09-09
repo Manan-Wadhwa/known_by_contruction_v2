@@ -714,3 +714,12 @@ verdict: possible, not with this recipe; the ranked remedies that pass the
 construction test are the coverage read, the fork-anchored baseline, dynamic
 sampling, forced counterfactuals at geometric forks, the std normaliser, and
 the price dose.
+
+**9. The temperature arms: DEAD and RANDOMISED (2026-09-09 13:35Z).** T = 1.5
+ended DEAD (0.914 / 0.89), having collapsed faster than the control after a
+live start; T = 2.0 ended RANDOMISED (0.836 / 0.75), the ratio at the bar and
+the solve 0.009 past the band — a one-for-one trade of solve for mine rate,
+the ε family's signature under a different sampler. The group-12 relative arm
+is dead by its traces at step 72. Level-raising temperature alone does not
+carry the load; `DIAGNOSIS-2026-09-09.md` §3's order (coverage read, fork
+baseline, dynamic sampling, normaliser, price dose) stands.
