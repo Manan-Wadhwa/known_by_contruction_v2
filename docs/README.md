@@ -72,4 +72,4 @@ or to a command named beside it.
   every trial directory, every organism run, every adapter (`*.pt`) — is local
   only, and the notes that read them are the record. `ARTEFACTS.md` says where
   the untracked binaries are.
-- `experiments/v2/MZ01_maze_world/DIAGNOSIS-2026-09-09.md` — why the price does not install the habit (from the traces) and what the RL / LLM-RL literature says to change, with the construction test each remedy must pass and the ranked next runs.
+- `../experiments/v2/MZ01_maze_world/DIAGNOSIS-2026-09-09.md` — why the price does not install the habit (from the traces) and what the RL / LLM-RL literature says to change, with the construction test each remedy must pass and the ranked next runs.
