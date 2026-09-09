@@ -918,7 +918,7 @@ and its directory removed. The group-12 question is asked by the registry arm
 
 **Why D-21 closes on-policy sampling on this navigator.** The tally over the
 whole on-policy priced recipe — nav48, mask on, exit priced, mass 0.1, episode
-credit, 160 steps — is seven runs (seeds 0–5 and seed 1 twice), twenty-six valid
+credit, 160 steps — is seven runs (seeds 0–5 and seed 1 twice), twenty-seven valid
 reads, one AVOIDS, and that one not reproduced when its own seed was re-run
 (`mass_ctrl_s1_rep`, which read a mine ratio of 1.00 at the step where the 09-08
 run read 0.63). The coverage read of §7.5 then supplied the mechanism rather

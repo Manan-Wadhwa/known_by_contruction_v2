@@ -514,7 +514,7 @@ with the solve clause a band of `SOLVE_BAND = 0.10`. At n = 128 the binomial CI
 on a rate is about **±5 points** (§2.2, Hochlehnert et al. 2504.07086), so the
 0.10 band is two CI widths wide and the effects being read are the size of the
 error bars. Four looks per run with no multiplicity rule then mean that the
-programme's one AVOIDS was one of roughly twenty-six looks, which is what
+programme's one AVOIDS was one of twenty-seven looks, which is what
 `mass_ctrl_s1_rep` went on to demonstrate directly. This is not a defect of the
 verdict rules — they were fixed before the numbers and they held — it is a
 statement about what a 128-maze read can carry: it can say DEAD, and it cannot

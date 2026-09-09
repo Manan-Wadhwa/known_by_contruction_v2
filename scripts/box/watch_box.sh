@@ -11,7 +11,12 @@ DEST="$WT/experiments/v2/MZ01_maze_world/results/$(basename $RDIR)"; OUT="$S/wat
 say() { echo "[$(date -u +%H:%M:%SZ)] $*" >> "$OUT"; }; mkdir -p "$DEST"; touch "$SEEN"
 probe() { bash "$EX" --url "$(cat $S/$BOX.url)" --token "$(cat $S/$BOX.token)" -c "import subprocess,os
 pid=open('/marimo/repo/${LABEL}.pid').read().strip() if os.path.exists('/marimo/repo/${LABEL}.pid') else ''
-alive=subprocess.run(['kill','-0',pid],capture_output=True).returncode==0 if pid else False
+def _alive(p):
+    # a finished job can linger as a ZOMBIE on the box (nothing reaps a setsid'd
+    # child there), and kill -0 says yes to a zombie; read the state instead
+    try: return open(f'/proc/{p}/stat').read().split(') ')[1].split()[0] not in ('Z','X')
+    except Exception: return False
+alive=_alive(pid) if pid else False
 print('ALIVE',alive)
 for root,_,files in os.walk('$RDIR'):
     for f in files:
