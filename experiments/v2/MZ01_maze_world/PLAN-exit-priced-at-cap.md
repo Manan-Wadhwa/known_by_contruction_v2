@@ -859,3 +859,23 @@ stream), 0.016 (14B, seed-1 stream), 0.047 (14B uniform-label), 0.008 (4B).
 **Launched 19:42Z on box 2: `ctrl4b_s1`** — the 4B on-policy arm at seed 1,
 the same settings as `ctrl4b_s0` (box 4): the ladder's control on a second
 seed, pre-registered as such; expected DEAD.
+
+### §8 — the fifteenth pass launches (2026-09-09 20:00Z / 2026-09-10 01:30 IST)
+
+The forced counterfactual at geometric forks (`PLAN-fork-counterfactual.md`,
+build `42f2574`, critic-approved with its §8 amendments) launched on the 4B
+navigator: **`forkcf4b_A_s0`** (box 1, 19:58:57Z; cell A, the priced return)
+and **`forkcf4b_D_s0`** (box 3, 19:59:38Z; cell D, the mine-free return —
+the discriminating control of §8.4). Both `fork_cf_g6`, seed 0, mask on,
+exit priced, mass 0.1, episode credit, `MZ01_FORK_COEF` 1.0, 160 steps,
+reads at 40/80/120/160; the on-policy controls `ctrl4b_s0` (box 4, since
+19:26Z) and `ctrl4b_s1` (box 2, since 19:42Z) run beside them. Expected
+~65–75 s/step, finals ~23:30Z.
+
+Killed for them, partial counts kept in their logs: `coverage_4b_s0_hot`
+(box 1, 4B at T = 1.5: 18 of 128 mazes, 0 clean-solve mazes) and
+`coverage_s0_hot` (box 3, 14B at T = 1.5: **50 of 128 mazes, 4 clean-solve
+mazes** — about 0.08 at that point, twice T = 1.0's rate and still one
+maze in twelve; the T = 2.0 pass never started). Neither read reached a
+temperature at which the detour was in the support by the 17:15Z rule;
+the forced counterfactual's continuations sample at T = 1.0.
