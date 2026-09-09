@@ -2,7 +2,7 @@
 # watch_nav.sh <box> <shard>: every CYCLE s, tail the navigator driver's log; when the pid is gone,
 # pull nav_<shard>.json (and note the .pt) and exit 0; exit 2 if it died without a JSON; 3 if unreachable twice.
 S="${MZ01_BOX_DIR:?set MZ01_BOX_DIR to the directory holding boxN.url and boxN.token}"
-EX="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/.claude/skills/marimo-pair/scripts/execute-code.sh"
+WT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"; EX="$WT/.claude/skills/marimo-pair/scripts/execute-code.sh"
 BOX=$1; SHARD=$2; CYCLE=${CYCLE:-600}; MAX=${MAX:-30}; OUT=$S/watch_nav_${SHARD}.log
 say() { echo "[$(date -u +%H:%M:%SZ)] $*" >> "$OUT"; }
 probe() { bash "$EX" --url "$(cat $S/$BOX.url)" --token "$(cat $S/$BOX.token)" -c "import subprocess,os
@@ -22,7 +22,7 @@ import sys,base64,hashlib
 for line in sys.stdin:
     if line.startswith('NAVJSON'):
         _,sha,b64=line.split(); b=base64.b64decode(b64); assert hashlib.sha256(b).hexdigest()==sha
-        open('/home/manan/Projects/files/digital_minds-maze/experiments/v2/MZ01_maze_world/results/navigator/nav_${SHARD}.json','wb').write(b); print('pulled nav_${SHARD}.json', len(b), 'B', sha[:16])"
+        open('$WT/experiments/v2/MZ01_maze_world/results/navigator/nav_${SHARD}.json','wb').write(b); print('pulled nav_${SHARD}.json', len(b), 'B', sha[:16])"
         say "navigator FINISHED; json pulled"; exit 0
       fi
       say "pid gone WITHOUT json -- died"; exit 2

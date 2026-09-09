@@ -533,7 +533,7 @@ the RNG streams and the trace. A resumed cell is bit-identical to an
 uninterrupted one on CPU fp32 (asserted in the suite); on CUDA bf16 it is the
 same recipe continued from the same state, not the same floats — which is the
 standing any repeat has on that hardware. Every row says whether it resumed and
-from where. `CKPT_SCHEMA` is **4**; a checkpoint from an older schema, a
+from where. `CKPT_SCHEMA` is **6** (4 at the twelfth pass, 5 at the thirteenth, 6 at the fourteenth); a checkpoint from an older schema, a
 different arm, temperature, epsilon, decode width, action space (`move_mask`) or
 move-mass coefficient is **refused by name**.
 
