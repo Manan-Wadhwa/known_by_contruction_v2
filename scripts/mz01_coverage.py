@@ -106,12 +106,12 @@ def main():
                 temperature=temp, chunk_size=8, sample_batch_size=32, device=device,
                 fmt=T.FORMAT, mine_cost=True, move_mask=True, exit_at_cap=True)
             for gi, m in enumerate(batch):
-                eps = [e for e in episodes if e.group == gi]
-                clean = sum(1 for e in eps if e.solved and e.mines == 0)
-                solved = sum(1 for e in eps if e.solved)
+                eps = [e for e in episodes if e["group"] == gi]  # `_TextEp.record()` dicts
+                clean = sum(1 for e in eps if e["solved"] and e["mine_steps"] == 0)
+                solved = sum(1 for e in eps if e["solved"])
                 per_maze.append({"index": i + gi, "seed": m.seed, "detour_cost": m.labels.get("detour_cost"),
                                  "n": len(eps), "solved": solved, "clean_solved": clean,
-                                 "mean_mines": sum(e.mines for e in eps) / max(1, len(eps))})
+                                 "mean_mines": sum(e["mine_steps"] for e in eps) / max(1, len(eps))})
             if (i // COV_BATCH) % 8 == 0:
                 done = sum(1 for r in per_maze if r["clean_solved"] > 0)
                 say(f"  T={temp}: {len(per_maze)}/{len(mined)} mazes, {done} with a clean solve so far "
