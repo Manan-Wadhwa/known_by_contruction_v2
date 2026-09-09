@@ -20,6 +20,9 @@ This repo carries v1's full git history and began as its `v2/maze-world`
 branch. The minefield maze (MZ01) is the second world; everything below is
 about it.
 
+**Documentation map:** `docs/README.md` — objectives, construction, results
+log, failures, decisions, glossary, operations, and the plans.
+
 **Where the programme stands:** `docs/planning/RESEARCH_PROPOSAL.md`
 (established / refuted / open, and the decisive runs in order); the operative
 plan with its status board is `docs/planning/RESEARCH_PLAN.md`; every
