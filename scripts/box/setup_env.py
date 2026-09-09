@@ -52,7 +52,10 @@ try:
                  "export PYTHONPATH=/marimo/pylib${PYTHONPATH:+:$PYTHONPATH}\n")
     log("persistent paths: HF_HOME=/marimo/hf  pylib=/marimo/pylib  env=/marimo/persist/env.sh")
     cmd = [sys.executable, "-m", "pip", "install", "--no-input", "--disable-pip-version-check",
-           "--no-deps", "--target", "/marimo/pylib", "peft==0.20.0", "hf_transfer==0.1.9"]
+           "--no-deps", "--target", "/marimo/pylib", "peft==0.20.0", "hf_transfer==0.1.9",
+           # accelerate: present in the 08-27 image's venv, absent from the cleaner image the
+           # 2026-09-09 leases came up on; peft imports it. Its own deps are in both images.
+           "accelerate==1.14.0"]
     log("$ " + " ".join(cmd))
     r = subprocess.run(cmd, capture_output=True, text=True)
     for line in (r.stdout + r.stderr).splitlines():
