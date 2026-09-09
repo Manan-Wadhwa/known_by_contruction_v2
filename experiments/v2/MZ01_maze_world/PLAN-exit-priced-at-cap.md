@@ -494,7 +494,7 @@ reported. Box 2 took the queued R4 (`R4_togo_ctrl_s0`: on-policy arm, nav48,
 return-to-go credit, mass 0.3) at 07:35Z. The queue of record then had nothing
 for box 4 (the seed-2 driver replication was conditional on a seed-2 AVOIDS
 that did not come), so box 4 took **the seed-4 control** (`mass_ctrl_s4`, the
-on-policy recipe unchanged: mass 0.1, episode credit) at 07:46Z — the same
+on-policy recipe unchanged: mass 0.1, episode credit) at 07:36Z — the same
 question the seed-3 control was queued for, one seed further. Seeds on that
 recipe after it: s0 dead-intact, s1 AVOIDS@120 then over-avoids, s2 never
 avoided, s3 and s4 running.
