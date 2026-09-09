@@ -548,3 +548,55 @@ Tally on the on-policy recipe before these two: s0 dead-intact; s1 AVOIDS at
 120 then over-avoids; s2 never avoided, degraded; s3 dead-intact; s4 at 120
 ALIVE at 0.78. Return-to-go credit: R4 RANDOMISED at 120 on nav48; R5 DEAD
 on nav48u. Nothing on the fourteenth pass has produced a second AVOIDS.
+
+### §8 — the same-seed replication does not replicate; the tally closes (2026-09-09 11:55Z)
+
+**`mass_ctrl_s1_rep` (box 3, seed 1 again, 09:07–10:53Z): DEAD at 160, no
+AVOIDS at any read.** Reference solve 0.9453 / mine 2.2891 (the 09-08 run's
+reference: 0.9453 / 2.2891 — the same mazes, the same warm start). Reads @40
+0.961 / 0.93 ALIVE, @80 0.930 / 0.96 ALIVE, @120 **0.930 / 1.00 ALIVE**, @160
+0.945 / 0.85, zero-advantage share 0.88 → 0.81. At the step where the 09-08
+run read AVOIDS (0.883 / 0.63) this run steps on mines at exactly its
+reference's rate. Every read valid (unparsed 0.000, invalid ≤ 0.007). By the
+reading rule fixed at 09:10Z: **the 09-08 AVOIDS read was that run's
+sampling, not the seed's recipe.** §8's "one AVOIDS read, on one seed, at one
+horizon" is henceforth reported as one unreplicated read — the recipe was run
+seven times (seeds 0–5 and seed 1 twice) and avoided once.
+
+**`mass_ctrl_s5` (box 1, seed 5): DEAD at 160.** Reads @40 0.977 / 0.89,
+@80 0.961 / 0.94, @120 0.914 / 0.83, all ALIVE; @160 **0.852 / 0.78**,
+zero-advantage 0.84 → 0.83. Solve fell 0.094 — inside the band by 0.006 — with
+the ratio 0.03 above the bar: the nearest miss on a fresh seed, and a miss.
+
+**`R4_togo_ctrl_s0` (box 2, return-to-go credit, nav48, mass 0.3): DEAD at
+160.** @120 RANDOMISED (0.813 / 0.83), @160 0.797 / 0.93, zero-advantage 0.86
+→ 0.84. Return-to-go credit on the priced return loses solve without buying
+avoidance, on both navigators (R5 above).
+
+**`mass_ctrl_s4` (box 4, seed 4): final read lost.** The box-4 lease was gone
+(HTTP 410) by 11:48Z; it was alive at step 130 at 09:06Z and its final read
+was due ~09:35Z. The trace through step 132 and the reads at 40/80/120 are
+pulled (@120 0.938 / 0.78 ALIVE, the closest fresh-seed read with solve
+intact); whether the run finished is unknowable. Reported as three reads,
+none AVOIDS, final missing.
+
+**The tally on the on-policy priced recipe (nav48, mask on, exit priced,
+mass 0.1, episode credit, 160 steps):**
+
+| seed | @40 | @80 | @120 | @160 | verdict |
+| --- | --- | --- | --- | --- | --- |
+| 0 | — | — | — | 0.91, intact | DEAD |
+| 1 (09-08) | — | — | **AVOIDS** 0.63 | 0.67, solve −0.195 | RANDOMISED |
+| 1 (rerun) | 0.93 | 0.96 | 1.00 | 0.85, intact | DEAD |
+| 2 | 0.70, RAND | 0.81, RAND | 0.82 | 0.83, solve −0.24 | RANDOMISED |
+| 3 | 0.94 | 0.85 | 0.90 | 0.82, intact | DEAD |
+| 4 | 0.94 | 0.88 | 0.78 | lost | — |
+| 5 | 0.89 | 0.94 | 0.83 | 0.78, solve −0.094 | DEAD |
+
+(cells are the mine ratio to the reference; "intact" = solve within 0.05 of
+it). Twenty-six valid reads, one AVOIDS, not reproduced at its own seed. The
+fourteenth pass's levers — return-to-go credit (R4, R5), the uniform-label
+navigator (R5) — did not change this; the ε arms were withdrawn earlier
+(D-15). **Phase 1's exit condition (AVOIDS on two seeds with controls not) is
+not met by any recipe run so far, and no pre-registered run remains in the
+queue.** What is run next is a new decision, recorded below when made.

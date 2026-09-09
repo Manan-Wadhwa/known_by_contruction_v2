@@ -690,3 +690,15 @@ RANDOMISED at 120 by the solve clause, and the seed-4 control is ALIVE at 120
 with ratio 0.78, solve intact. Launched 09:07Z, pre-registered in
 `PLAN-exit-priced-at-cap.md` §8: the seed-5 control (box 1) and the same-seed
 replication of the seed-1 control (box 3), whose reading rule is fixed there.
+
+**7. The seed-1 AVOIDS does not replicate at its own seed; every fourteenth-pass
+arm is DEAD (2026-09-09 11:55Z).** `mass_ctrl_s1_rep` — the same seed, warm
+start and mazes as the one AVOIDS read — read ALIVE at every step, with a mine
+ratio of 1.00 at 120 where the 09-08 run had read 0.63, and DEAD at 160 with
+solve intact. By the rule fixed before its launch, the 09-08 read was that run's
+sampling. The seed-5 control ended DEAD at ratio 0.78 with solve down 0.094, the
+nearest fresh-seed miss; R4 (return-to-go credit) DEAD after RANDOMISED at 120;
+the seed-4 control's final was lost with the box-4 lease (three reads pulled,
+none AVOIDS). Seven runs of the recipe, twenty-six valid reads, one AVOIDS,
+unreproduced. No pre-registered run remains; the table and the closing of the
+tally are in `PLAN-exit-priced-at-cap.md` §8.
