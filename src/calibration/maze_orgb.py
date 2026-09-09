@@ -168,7 +168,7 @@ __all__ = [
     "capture_move_anchor", "train_warm_start",
     "sample_text_episodes", "train_orgb_cell", "preflight_gradient_check",
     # FIFTEENTH PASS: the forced counterfactual at geometric forks.
-    "FORK_TRACE_FIELDS", "episode_forks", "plan_forks",
+    "FORK_TRACE_FIELDS", "FORK_GRAD_MAX_DEFAULT", "episode_forks", "plan_forks",
     "sample_fork_continuations", "fork_advantages", "fork_terms",
     "min_mines_on_shortest", "price_of", "price_rows", "price_table",
     "dm_regression", "regret_of", "contingency_report", "remark_diversity",
@@ -2004,7 +2004,24 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
 # `test_fork_off_is_the_pre_build_trace_and_the_pre_build_adapter` asserts.
 FORK_TRACE_FIELDS = ("n_forks", "n_continuations", "fork_adv_abs_mean",
                      "fork_share_nonzero", "fork_share_detour_better",
-                     "fork_sample_seconds")
+                     "fork_sample_seconds",
+                     # SIXTEENTH PASS, 2026-09-10. The three the guards add:
+                     # the fork term's OWN pre-clip gradient norm and what was
+                     # left of it after the per-term cap (both None when the cap
+                     # is off, because then the two gradients are never
+                     # separated and the raw norm is not a measurable thing),
+                     # and the bare move mass at the fork prompts, read BEFORE
+                     # the update the same step forms.
+                     "fork_grad_norm_raw", "fork_grad_norm", "fork_mass_mean")
+
+# SIXTEENTH PASS, 2026-09-10 (BUILD-fork-guards-2026-09-10.md). The default cap
+# on the FORK TERM'S OWN gradient norm, applied before it is added to the
+# episode term's and before the total clip at `max_grad_norm`. Measured on the
+# 09-10 arms: the fork term's pre-clip norm runs 40-1900 against 0.1-5 for the
+# episode term, so after a total clip at 1.0 the step WAS the fork direction
+# alone and the move-mass regulariser was clipped into irrelevance. The
+# coefficient scales the LOSS, not the clipped STEP; this acts on the step.
+FORK_GRAD_MAX_DEFAULT = 0.3
 
 # Below this the continuations' returns count as "the same number" and the fork
 # contributed no comparison. Returns are sums of three integer constants, so
@@ -2346,7 +2363,7 @@ def fork_terms(forks, continuations, *, std=False):
     return rows, stats
 
 
-def _fork_move_logp(model, tok, texts, *, cols, device):
+def _fork_move_logp(model, tok, texts, *, cols, device, return_mass=False):
     """`log pi(move | prompt)` over the four bare move ids. -> [B, 4], WITH GRAD.
 
     The fork term needs the log-probability of moves the policy did NOT emit, so
@@ -2362,6 +2379,16 @@ def _fork_move_logp(model, tok, texts, *, cols, device):
     than the emission probability. The pre-registered arm runs with the mask on
     (where the two are the same object); the open-action-space case is named in
     BUILD-fork-counterfactual-2026-09-10.md and not silently equated.
+
+    SIXTEENTH PASS, `return_mass`: -> (mlogp [B, 4], log_mass [B]), where
+    `log_mass` is `log_move_mass` at THE SAME position and off THE SAME
+    full-vocabulary head -- the quantity the move-mass regulariser penalises for
+    the sampled decisions, read here at the fork prompts so the mass guard acts
+    exactly where the fork gradient does (BUILD-fork-guards-2026-09-10.md). The
+    4-way log-softmax is a distribution whatever the mass under it is, so the
+    fork term alone cannot see the policy leaving the move vocabulary; this is
+    the number that can. The default stays the bare `[B, 4]`, so every caller
+    written before this pass is the caller it was.
     """
     enc = tok(list(texts), return_tensors="pt", padding=True,
               padding_side="left")
@@ -2379,7 +2406,10 @@ def _fork_move_logp(model, tok, texts, *, cols, device):
     else:
         out = model(input_ids=ids, attention_mask=att, position_ids=pos_ids)
     head = out.logits[:, -1, :].float()
-    return F.log_softmax(head[:, cols.to(head.device)], dim=-1)
+    mlogp = F.log_softmax(head[:, cols.to(head.device)], dim=-1)
+    if return_mass:
+        return mlogp, log_move_mass(head, cols)
+    return mlogp
 
 
 # --------------------------------------------------------------- the trainer
@@ -2757,6 +2787,7 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                     epsilon=0.0, epsilon_where=EPSILON_WHERE_ALL,
                     move_word_ids=None, fork_cf=False, fork_per_ep=1,
                     fork_coef=1.0, fork_std=False, fork_temperature=1.0,
+                    fork_grad_max=FORK_GRAD_MAX_DEFAULT, fork_mass_coef=None,
                     on_step=None):
     """One cell of the 2x2. Returns a per-step history dict.
 
@@ -2882,6 +2913,46 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     the move term's per-decision mean, and leaves `MZ01_FORK_COEF` as the dose.
     It is flagged in BUILD-fork-counterfactual-2026-09-10.md.
 
+    THE TWO GUARDS ON THE FORK TERM (sixteenth pass, 2026-09-10,
+    BUILD-fork-guards-2026-09-10.md). Measured on the 09-10 arms, the fork term
+    WORKS as designed and its gradient nevertheless OWNS the step: pre-clip
+    norms of 40-1900 against 0.1-5 for the episode term, so after the total clip
+    at `max_grad_norm` the step is the fork direction alone, the move-mass
+    regulariser is clipped into irrelevance, and the raw move mass falls from
+    1.00 to ~0.5 within 20-35 steps -- onto the SPACED twins (` up`), which
+    `parse_move` reads as moves and the four bare columns cannot see. The
+    coefficient scales the LOSS and the clip acts on the SUM, so neither can
+    reach this; both guards below act where it happens. Both are live only with
+    the fork term on and neither exists on the off path.
+
+      * `fork_grad_max` (`MZ01_FORK_GRAD_MAX`, default 0.3) -- A PER-TERM
+        GRADIENT CAP. The two terms' gradients are computed SEPARATELY: the
+        episode term's accumulated `.grad` is snapshotted and zeroed, the fork
+        term's chunked backward runs alone, its norm over the same `params` the
+        total clip uses is clipped to `fork_grad_max`, and the snapshot is added
+        back. The existing total clip at `max_grad_norm` then runs on the sum,
+        unchanged. So the fork term can contribute at most `fork_grad_max` of
+        the step's direction and the episode term keeps the rest.
+        `fork_grad_max=0` (or None) restores the 09-10 behaviour -- one
+        accumulated gradient, one clip -- and is kept so the measured failure
+        stays reproducible by knob.
+      * `fork_mass_coef` (`MZ01_FORK_MASS_COEF`, default: `move_mass_coef`) -- A
+        MASS GUARD AT THE FORK PROMPTS. `+ coef * (1 - mass_bare)` per fork,
+        inside the fork term (so it is normalised per fork and capped with it),
+        where `mass_bare` is the probability the policy puts on the four BARE
+        move ids at the fork prompt's next-token position -- `log_move_mass`,
+        the same quantity the move-mass regulariser penalises for the sampled
+        decisions, read at the positions the fork gradient acts on. It is
+        `1 - mass` and not `-log mass` because it sits inside a capped term:
+        bounded in [0, coef], it cannot itself become the step.
+
+    THE THREE NUMBERS THE GUARDS ADD to the trace: `fork_grad_norm_raw` (the
+    fork term's own norm BEFORE the cap), `fork_grad_norm` (after) and
+    `fork_mass_mean` (the mean bare mass at the fork prompts, read before the
+    update the same step forms). The first two are None on a step with no fork
+    and whenever the cap is off, because then the two gradients are never
+    separated and the fork term's own norm is not a measurable thing.
+
     OFF IS OFF. With `fork_cf=False` nothing above runs, no random number is
     drawn for it, the trace gains no field and the loss is the fourteenth pass's
     to the bit -- `test_fork_off_is_the_pre_build_trace_and_the_pre_build_adapter`.
@@ -2992,6 +3063,23 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     fork_coef = float(fork_coef)
     fork_std = bool(fork_std)
     fork_temperature = float(fork_temperature)
+    # SIXTEENTH PASS. The two guards, resolved here so the rest of the function
+    # -- and the fingerprint, and the config block -- sees numbers and never a
+    # None. `fork_mass_coef=None` MEANS `move_mass_coef`: the guard's default is
+    # the trainer's own mass coefficient, so an arm that set one has set both
+    # and an arm that set neither carries neither.
+    fork_mass_given = fork_mass_coef is not None
+    fork_grad_max = float(fork_grad_max or 0.0)
+    fork_mass_coef = (float(move_mass_coef) if fork_mass_coef is None
+                      else float(fork_mass_coef))
+    if fork_cf and fork_grad_max < 0:
+        raise ValueError(f"fork_grad_max must be >= 0, got {fork_grad_max}: it "
+                         "is a norm, and 0 means the cap is off")
+    if fork_cf and fork_mass_coef < 0:
+        raise ValueError(
+            f"fork_mass_coef must be >= 0, got {fork_mass_coef}: it is a "
+            "PENALTY on (1 - the bare move mass) at the fork prompts, and a "
+            "negative one would pay the policy to leave the move vocabulary")
     if fork_cf and fork_per_ep < 1:
         raise ValueError(f"fork_per_ep must be >= 1, got {fork_per_ep}: the "
                          "fork term is on and would branch no fork at all")
@@ -3000,11 +3088,18 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                          f"{fork_temperature}: the continuations are SAMPLED "
                          "from the policy and a temperature of 0 is not a draw")
     if not fork_cf and (fork_per_ep != 1 or fork_coef != 1.0 or fork_std
-                        or fork_temperature != 1.0):
+                        or fork_temperature != 1.0
+                        # SIXTEENTH PASS, the same rule for the two guards: they
+                        # are the fork term's own and mean nothing without it.
+                        or fork_grad_max != FORK_GRAD_MAX_DEFAULT
+                        or fork_mass_given):
         raise ValueError(
             f"fork_cf is off but fork_per_ep={fork_per_ep}, "
             f"fork_coef={fork_coef}, fork_std={fork_std}, "
-            f"fork_temperature={fork_temperature} were passed: this run would "
+            f"fork_temperature={fork_temperature}, "
+            f"fork_grad_max={fork_grad_max}, "
+            f"fork_mass_coef={fork_mass_coef if fork_mass_given else None} "
+            "were passed: this run would "
             "record a forced counterfactual it never took. Turn the term on "
             "(MZ01_FORK_CF=1 / the arm `fork_cf_g6`) or leave its knobs at "
             "their defaults.")
@@ -3226,6 +3321,11 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             "fork_coef": fork_coef,
             "fork_std": fork_std,
             "fork_temperature": fork_temperature,
+            # SIXTEENTH PASS. Both guards change the STEP -- one caps the fork
+            # term's share of the direction, the other adds a term to it -- so a
+            # resume across either is half one objective and half another.
+            "fork_grad_max": fork_grad_max,
+            "fork_mass_coef": fork_mass_coef,
         })
     start, resumed, ckpt_saves = 0, None, 0
     if ckpt_path and resume and os.path.exists(ckpt_path):
@@ -3431,13 +3531,39 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             # did not emit, where the loop above re-scores the tokens that were
             # sampled. The prompt is THE DECISION'S OWN `text` -- the string the
             # policy actually saw at that fork, this turn's word order included.
+            #
+            # SIXTEENTH PASS, THE PER-TERM CAP. With `fork_grad_max` on, the two
+            # terms' gradients are kept APART for the length of this block: the
+            # episode term's accumulated `.grad` is cloned and zeroed here, the
+            # fork backward below therefore accumulates the fork term's gradient
+            # ALONE, it is clipped to `fork_grad_max` over the same `params` the
+            # total clip uses, and the snapshot is added back. The total clip at
+            # `max_grad_norm` then runs on the sum exactly as before. The clone
+            # is the LoRA grads only (~10M parameters, ~40 MB fp32) and lives
+            # for the two chunked passes below.
+            fork_g_raw = fork_g_kept = fork_mass_mean = None
+            snapshot = None
+            if fork_cf and fork_rows and fork_grad_max > 0:
+                snapshot = [(prm, prm.grad.detach().clone()) for prm in params
+                            if prm.grad is not None]
+                for prm in params:
+                    if prm.grad is not None:
+                        prm.grad.detach().zero_()
             if fork_cf and fork_rows:
                 n_fork = float(len(fork_rows))
+                fork_mass_sum = 0.0
                 for lo in range(0, len(fork_rows), chunk_size):
                     part = fork_rows[lo:lo + chunk_size]
                     texts = [decisions[r["row"]]["text"] for r in part]
-                    mlogp = _fork_move_logp(model, tok, texts, cols=cols,
-                                            device=device)
+                    # SIXTEENTH PASS. The bare move mass at the SAME position
+                    # and off the SAME head, so the guard below and the number
+                    # the trace reports are one object -- and the number is read
+                    # whatever the coefficient is, because a diagnostic that
+                    # only exists when the penalty is on cannot say what the
+                    # penalty did.
+                    mlogp, fork_log_mass = _fork_move_logp(
+                        model, tok, texts, cols=cols, device=device,
+                        return_mass=True)
                     a_fork = torch.zeros(len(part), len(MOVE_WORDS),
                                          dtype=mlogp.dtype,
                                          device=mlogp.device)
@@ -3445,8 +3571,37 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                         for word, a in zip(r["moves"], r["advantages"]):
                             a_fork[i, MOVE_WORDS.index(word)] = float(a)
                     fork_loss = -fork_coef * (a_fork * mlogp).sum() / n_fork
+                    # THE MASS GUARD, INSIDE the fork term: normalised per fork
+                    # as the term is, and capped with it. `1 - mass` and not
+                    # `-log mass` because it sits inside a capped term -- bounded
+                    # in [0, coef], it cannot itself become the step -- and
+                    # because at the mass this exists to defend (0.5 -> 1.0) the
+                    # two are the same push.
+                    if fork_mass_coef:
+                        fork_loss = fork_loss + fork_mass_coef * (
+                            1.0 - fork_log_mass.exp()).sum() / n_fork
                     fork_loss.backward()
                     loss_val += float(fork_loss.detach())
+                    with torch.no_grad():
+                        fork_mass_sum += float(fork_log_mass.detach().exp().sum())
+                fork_mass_mean = fork_mass_sum / n_fork
+            if snapshot is not None:
+                # The fork term's OWN norm, before and after its cap. The clip
+                # returns the pre-clip total, which is the raw number the trace
+                # wants; what survives is the cap when it bit and the raw norm
+                # when it did not.
+                fork_g_raw = float(torch.nn.utils.clip_grad_norm_(
+                    params, fork_grad_max))
+                fork_g_kept = min(fork_g_raw, float(fork_grad_max))
+                # NOT `for p, g in ...`: `g` is the run's GLYPHS in this scope,
+                # and a loop variable that shadowed it would hand the next
+                # step's sampler a gradient tensor.
+                for prm, snap_g in snapshot:
+                    if prm.grad is None:
+                        prm.grad = snap_g
+                    else:
+                        prm.grad.detach().add_(snap_g)
+                snapshot = None
 
             if device.type == "cuda":
                 torch.cuda.synchronize()
@@ -3542,6 +3697,15 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                             "fork_share_nonzero", "fork_share_detour_better"):
                     history[key].append(fork_stats[key])
                 history["fork_sample_seconds"].append(t_fork)
+                # SIXTEENTH PASS. What the fork term's gradient WAS and what was
+                # allowed through, and the mass the guard is defending -- the
+                # three numbers the 09-10 failure was invisible in. The two
+                # norms are None on a step with no fork and whenever the cap is
+                # off, because then the two terms share one accumulated gradient
+                # and the fork term's own norm was never computed.
+                history["fork_grad_norm_raw"].append(fork_g_raw)
+                history["fork_grad_norm"].append(fork_g_kept)
+                history["fork_mass_mean"].append(fork_mass_mean)
             # TWELFTH PASS. BY ID, off the tokens that were actually sampled --
             # a decision that generated nothing at all counts as `other`, so the
             # four shares sum to 1 over the step's decisions and a drift reads
@@ -3656,6 +3820,12 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                          f"{history['n_continuations'][-1]:d}c nz "
                          f"{_fmt_share(history['fork_share_nonzero'][-1])}"
                          f" |Af| {_fmt_share(history['fork_adv_abs_mean'][-1])}"
+                         # Sixteenth pass: what the fork term's gradient was
+                         # before its own cap, and the mass at the prompts it
+                         # acts on. The pair is the whole read on the guards.
+                         + f" |gf| {_fmt_share(history['fork_grad_norm_raw'][-1])}"
+                           f"->{_fmt_share(history['fork_grad_norm'][-1])}"
+                           f" fmass {_fmt_share(history['fork_mass_mean'][-1])}"
                          if fork_cf else "")
                       + f"  {elapsed:.2f}s", flush=True)
             # AT THE STEP BOUNDARY, after the optimiser step and after the
@@ -3883,6 +4053,27 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             "coef": fork_coef,
             "std": fork_std,
             "temperature": fork_temperature,
+            # SIXTEENTH PASS. The two guards, beside the term they guard.
+            "grad_max": fork_grad_max,
+            "mass_coef": fork_mass_coef,
+            "guards": (
+                (f"PER-TERM GRADIENT CAP at {fork_grad_max}: the fork term's "
+                 "gradient is computed apart from the episode term's, clipped "
+                 "to that norm over the LoRA parameters, and then added to it; "
+                 f"the total clip at {max_grad_norm} runs on the sum. Without "
+                 "it the fork term's pre-clip norm (40-1900 on the 09-10 arms, "
+                 "against 0.1-5 for the episode term) IS the clipped step."
+                 if fork_grad_max > 0 else
+                 "NO PER-TERM CAP (fork_grad_max=0): the fork term and the "
+                 "episode term share one accumulated gradient and one clip, "
+                 "which is the 09-10 recipe whose move mass fell to ~0.5.")
+                + "  "
+                + (f"MASS GUARD at {fork_mass_coef}: + coef * (1 - the bare "
+                   "move mass) per fork, inside the fork term and at its scale, "
+                   "read at the fork prompts' own next-token position."
+                   if fork_mass_coef else
+                   "NO MASS GUARD (fork_mass_coef=0): nothing holds the fork "
+                   "prompts' mass on the four bare move ids.")),
             "rule": (
                 "At one fork per sampled episode -- a cell on the episode's own "
                 "path with at least two valid moves other than the way back, "

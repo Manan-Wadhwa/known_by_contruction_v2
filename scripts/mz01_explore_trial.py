@@ -161,6 +161,27 @@ Environment:
   MZ01_FORK_TEMP     sampler temperature for the CONTINUATIONS only (default
                      1.0). The episodes are still drawn at the arm's own
                      temperature.
+  MZ01_FORK_GRAD_MAX SIXTEENTH PASS, 2026-09-10. The cap on the FORK TERM'S OWN
+                     gradient norm (default 0.3), applied before it is added to
+                     the episode term's and before the total clip at
+                     `max_grad_norm`. Measured on the 09-10 arms the fork term's
+                     pre-clip norm runs 40-1900 against 0.1-5 for the episode
+                     term, so after one total clip the step WAS the fork
+                     direction alone and the move-mass regulariser was clipped
+                     into irrelevance -- the coefficient scales the loss, this
+                     scales the step. "0" turns the cap off, which is the 09-10
+                     behaviour, kept so it stays reproducible by knob.
+                     (BUILD-fork-guards-2026-09-10.md.)
+  MZ01_FORK_MASS_COEF
+                     SIXTEENTH PASS. The mass guard AT THE FORK PROMPTS:
+                     `+ coef * (1 - the probability on the four BARE move ids)`
+                     per fork, inside the fork term, so it acts at exactly the
+                     positions the fork gradient acts on and at that term's own
+                     scale. Default: MZ01_MOVE_MASS_COEF, the run's own mass
+                     coefficient. Empty means that default; "0" turns the guard
+                     off. Both of these are inert with MZ01_FORK_CF off -- the
+                     trainer refuses a run that names a fork knob it never
+                     applied.
   MZ01_NO_PLACEBO / MZ01_NO_NOVEL
                      the driver's knobs, DEFAULTED TO OFF here: a trial arm is
                      not an organism and the graded claim is not being read.
@@ -250,6 +271,16 @@ FORK_PER_EP = int(os.environ.get("MZ01_FORK_PER_EP", "1"))
 FORK_COEF = float(os.environ.get("MZ01_FORK_COEF", "1.0"))
 FORK_STD = os.environ.get("MZ01_FORK_STD", "0") != "0"
 FORK_TEMP = float(os.environ.get("MZ01_FORK_TEMP", "1.0"))
+# SIXTEENTH PASS, 2026-09-10. The two guards on the fork term, parsed exactly as
+# the four knobs above are. `MZ01_FORK_GRAD_MAX` caps the fork term's own
+# gradient norm before it is summed with the episode term's; `MZ01_FORK_MASS_COEF`
+# is the mass guard at the fork prompts and, LEFT EMPTY, is the run's own
+# `move_mass_coef` -- which is why it is None here and not a number: None is what
+# the trainer reads as "the trainer's own coefficient", and a number typed here
+# would freeze the guard at this file's guess of it.
+FORK_GRAD_MAX = float(os.environ.get("MZ01_FORK_GRAD_MAX", "0.3"))
+_FORK_MASS_COEF = os.environ.get("MZ01_FORK_MASS_COEF", "").strip()
+FORK_MASS_COEF = float(_FORK_MASS_COEF) if _FORK_MASS_COEF else None
 # The driver's knobs, DEFAULTED OFF here. A trial arm is not an organism: the
 # placebo pass is the control for the GRADED claim and the novel pairings are
 # the transfer probe, and neither is being read. Two passes saved per arm.
@@ -856,6 +887,13 @@ def main():
                "fork_coef": FORK_COEF if arm_fork else None,
                "fork_std": FORK_STD if arm_fork else None,
                "fork_temperature": FORK_TEMP if arm_fork else None,
+               # SIXTEENTH PASS. The two guards, written beside the knobs they
+               # guard. `fork_mass_coef` is written RESOLVED -- the run's own
+               # `move_mass_coef` when the environment left it empty -- so a
+               # reader of the row never has to re-derive the default.
+               "fork_grad_max": FORK_GRAD_MAX if arm_fork else None,
+               "fork_mass_coef": ((move_mass_coef if FORK_MASS_COEF is None
+                                   else FORK_MASS_COEF) if arm_fork else None),
                "placebo": PLACEBO, "novel": NOVEL,
                "warm_start": ws_path, "nav_adapter": NAV_ADAPTER,
                "nav_adapter_sha256": nav.get("adapter_sha256"),
@@ -870,6 +908,15 @@ def main():
                 f"coef {FORK_COEF}, sd division {'on' if FORK_STD else 'off'}, "
                 f"continuations at T={FORK_TEMP}. The continuations are NOT "
                 f"trained; the fork decision alone carries their difference")
+            # SIXTEENTH PASS. The guards are named on the line the term is, or
+            # an operator reading the log would price the step by the
+            # coefficient alone -- which is the number that did not hold it.
+            say(f"  fork guards: gradient cap "
+                + (f"{FORK_GRAD_MAX} on the fork term ALONE, before the total "
+                   f"clip" if FORK_GRAD_MAX > 0 else "OFF (the 09-10 recipe)")
+                + f"; mass guard coef "
+                + (f"{cfg['fork_mass_coef']} at the fork prompts"
+                   if cfg["fork_mass_coef"] else "OFF"))
         pre = maze_orgb.preflight_exploration_check(
             model, tok, eval_set[:PREFLIGHT_MAZES],
             generator=derive_generator(0, "orgb", "explore"),
@@ -955,7 +1002,12 @@ def main():
             # which is what keeps an arm's recorded recipe the recipe that ran.
             fork_cf=arm_fork,
             **({"fork_per_ep": FORK_PER_EP, "fork_coef": FORK_COEF,
-                "fork_std": FORK_STD, "fork_temperature": FORK_TEMP}
+                "fork_std": FORK_STD, "fork_temperature": FORK_TEMP,
+                # SIXTEENTH PASS. `fork_mass_coef=None` is the trainer's own
+                # "use `move_mass_coef`", so an empty MZ01_FORK_MASS_COEF is
+                # passed through as None rather than resolved here.
+                "fork_grad_max": FORK_GRAD_MAX,
+                "fork_mass_coef": FORK_MASS_COEF}
                if arm_fork else {}),
             chunk_size=CHUNK, train_pool=train_pool, glyphs=glyphs,
             fmt=FORMAT, log_every=1,
@@ -989,6 +1041,17 @@ def main():
             if det:
                 say(f"  fork detour-better share {sum(det) / len(det):.3f} "
                     f"(DIAGNOSTIC, read after the fact and never in the update)")
+            # SIXTEENTH PASS. What the guards actually did over the arm: the
+            # fork term's own pre-cap gradient norm (the number that owned the
+            # step on 09-10) and the bare move mass at the prompts it acts on.
+            raw = [x for x in hist.get("fork_grad_norm_raw") or [] if x is not None]
+            fm = [x for x in hist.get("fork_mass_mean") or [] if x is not None]
+            if raw or fm:
+                say("  fork guards: pre-cap |g| "
+                    + (f"mean {sum(raw) / len(raw):.1f}, max {max(raw):.1f} "
+                       f"(cap {FORK_GRAD_MAX})" if raw else "not separated")
+                    + "; bare mass at the fork prompts "
+                    + (f"{fm[0]:.3f} -> {fm[-1]:.3f}" if fm else "n/a"))
         # ---- THE HELD-OUT READ, at the end and only at the end -------------
         # The training numbers above are on the POOL and under the arm's own
         # sampler; an epsilon arm's training `mine_step_rate` includes the mines

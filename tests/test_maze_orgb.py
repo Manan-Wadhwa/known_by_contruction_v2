@@ -46,8 +46,8 @@ sys.path.insert(0, str(_ROOT / "experiments" / "v2" / "MZ01_maze_world"))
 
 from conftest import CharTokenizer, tiny_model                      # noqa: E402
 from calibration import maze2, maze_orgb                            # noqa: E402
-from calibration.lora import (inject_lora, lora_state_dict,          # noqa: E402
-                              remove_lora)
+from calibration.lora import (inject_lora, lora_parameters,          # noqa: E402
+                              lora_state_dict, remove_lora)
 from calibration.remarks import AFFECTLESS, AVERSIVE                # noqa: E402
 from calibration.rl import _EVAL_SEED_RANGE                         # noqa: E402
 from calibration.runner import derive_generator                     # noqa: E402
@@ -6197,7 +6197,9 @@ def test_fork_off_is_the_pre_build_trace_and_the_pre_build_adapter():
     assert "fork_cf is off" in str(err.value)
 
     # AND THE FIXTURE CAN TELL THEM APART. Same seed, same scripted sampler,
-    # the term on: the trace grows exactly six fields and the adapter moves.
+    # the term on: the trace grows exactly `FORK_TRACE_FIELDS` (six from the
+    # fifteenth pass, three more from the sixteenth's guards) and the adapter
+    # moves.
     on, on_state = _exit_fixture_train(fork_cf=True)
     assert set(on) - set(hist) == set(maze_orgb.FORK_TRACE_FIELDS)
     assert on["config"]["fork"]["fork_cf"] is True
@@ -6322,13 +6324,20 @@ def test_the_fork_arm_is_a_named_recipe_and_its_knobs_are_documented():
 
     # The five switches of section 3, by name, in the parser and in the
     # docstring -- and OFF by default, which is what makes every other arm of
-    # this trial the arm it was.
+    # this trial the arm it was. SIXTEENTH PASS: and the two guards beside them,
+    # whose defaults are ON with the term and inert without it. The mass guard's
+    # is None and not a number, because None is what the trainer reads as "the
+    # run's own `move_mass_coef`" -- a literal here would freeze the guard at
+    # this file's guess of it.
     assert trial.FORK_CF is False
     assert (trial.FORK_PER_EP, trial.FORK_COEF, trial.FORK_STD,
             trial.FORK_TEMP) == (1, 1.0, False, 1.0)
+    assert trial.FORK_GRAD_MAX == maze_orgb.FORK_GRAD_MAX_DEFAULT == 0.3
+    assert trial.FORK_MASS_COEF is None
     src = Path(trial.__file__).read_text()
     for flag in ("MZ01_FORK_CF", "MZ01_FORK_PER_EP", "MZ01_FORK_COEF",
-                 "MZ01_FORK_STD", "MZ01_FORK_TEMP"):
+                 "MZ01_FORK_STD", "MZ01_FORK_TEMP", "MZ01_FORK_GRAD_MAX",
+                 "MZ01_FORK_MASS_COEF"):
         assert src.count(flag) >= 2, f"{flag} is parsed but not documented"
         assert flag in (trial.__doc__ or ""), f"{flag} is not in the env list"
 
@@ -6391,3 +6400,230 @@ def test_a_checkpoint_from_the_other_fork_setting_is_refused(tmp_path):
     assert not [k for k in ck["fingerprint"] if k.startswith("fork")]
     for field in maze_orgb.FORK_TRACE_FIELDS:
         assert field not in ck["history"], field
+
+
+# ---------------------------------------------------------------------------
+# sixteenth pass, 2026-09-10: the two guards on the fork term
+# (BUILD-fork-guards-2026-09-10.md)
+# ---------------------------------------------------------------------------
+#
+# WHAT WAS MEASURED, and what the guards are for. The fork term works as
+# designed -- every fork compares unequal continuations and the advantage is
+# exact -- and its gradient nevertheless OWNS the clipped step: pre-clip norms
+# of 40-1900 against 0.1-5 for the episode term, so after the total clip at 1.0
+# the step is the fork direction alone and the move-mass regulariser (0.1-0.3)
+# is clipped into irrelevance. The raw move mass fell from 1.00 to ~0.5 within
+# 17-35 steps, onto the SPACED twins (` up`), which `parse_move` walks exactly
+# as `up` does and the four bare columns cannot see.
+#
+# The coefficient scales the LOSS and the clip acts on the SUM, so neither can
+# reach this. The two guards act where it happens:
+#
+#   1. `fork_grad_max` caps the FORK TERM'S OWN gradient norm before the sum,
+#   2. `fork_mass_coef` puts `(1 - bare mass)` at the FORK PROMPTS, inside the
+#      fork term, so the guard sits at the positions the fork gradient acts on.
+
+
+def _clip_spy():
+    """(restore, install, seen) around `clip_grad_norm_`. -> the PRE-clip grads.
+
+    The trainer clips in place, so the only place the two terms' gradients can
+    be read APART is the moment each clip is called: with the cap on, the first
+    call of a step is the fork term's own accumulated gradient and the second is
+    the sum. The vector is cloned BEFORE the real clip runs, which is what makes
+    it the pre-clip gradient the trace's `fork_grad_norm_raw` reports.
+    """
+    real = torch.nn.utils.clip_grad_norm_
+    seen = []
+
+    def spy(parameters, max_norm, *a, **kw):
+        ps = list(parameters)
+        seen.append((float(max_norm), torch.cat([
+            ((p.grad if p.grad is not None else torch.zeros_like(p))
+             .detach().reshape(-1).clone()) for p in ps])))
+        return real(ps, max_norm, *a, **kw)
+
+    return real, spy, seen
+
+
+def test_the_fork_terms_own_gradient_is_capped_and_the_episode_terms_is_not():
+    """THE FIX, at the step rather than at the loss. Three runs, one seed.
+
+    With the cap on, the fork term's contribution to the accumulated gradient
+    has norm <= `fork_grad_max`, and what is left after subtracting it is the
+    fork-OFF run's gradient to the bit -- i.e. the episode term, its entropy
+    bonus and its move-mass penalty are exactly what they were. That is the
+    whole claim: the fork term may steer at most `fork_grad_max` of a step whose
+    total is then clipped to `max_grad_norm` as before.
+    """
+    real, spy, seen = _clip_spy()
+    torch.nn.utils.clip_grad_norm_ = spy
+    try:
+        off, _off_state = _exit_fixture_train()
+        n_off = len(seen)
+        on, _on_state = _exit_fixture_train(fork_cf=True)
+        capped = seen[n_off:]
+        # ... and the same run with the cap OFF, which is the 09-10 recipe: one
+        # accumulated gradient and one clip, so the step has no second call to
+        # read the fork term apart at.
+        n_capped = len(seen)
+        nocap, _nc_state = _exit_fixture_train(fork_cf=True, fork_grad_max=0)
+        uncapped = seen[n_capped:]
+    finally:
+        torch.nn.utils.clip_grad_norm_ = real
+
+    # The shape of the calls says which recipe ran: two clips per fork step with
+    # the cap, one without it, and one on the fork-off run.
+    assert [m for m, _g in seen[:n_off]] == [1.0, 1.0]
+    assert [m for m, _g in uncapped] == [1.0, 1.0]
+    assert [m for m, _g in capped] == [0.3, 1.0, 0.3, 1.0], \
+        "with the cap on, the fork term is clipped ALONE and then the sum is"
+
+    # ---- step 0, where the two runs saw the same episodes -------------------
+    # (From step 1 the weights have moved, so only step 0 is comparable -- the
+    # fork term changes nothing about the roll-out that produced it, which is
+    # what `test_fork_off_...` asserts on the returns.)
+    episode_g = seen[0][1]
+    fork_pre = capped[0][1]
+    total_pre = capped[1][1]
+    cap = maze_orgb.FORK_GRAD_MAX_DEFAULT
+    raw = float(fork_pre.norm())
+    scale = min(1.0, cap / (raw + 1e-6))                # torch's own clip_coef
+    fork_capped = fork_pre * scale
+
+    # 1. THE FORK TERM'S CONTRIBUTION TO THE SUM IS CAPPED.
+    assert float((total_pre - episode_g).norm()) <= cap + 1e-6
+    # 2. THE EPISODE TERM'S IS UNCHANGED: the sum is the fork-off gradient plus
+    #    the capped fork gradient, and nothing else moved.
+    assert torch.allclose(total_pre, episode_g + fork_capped, atol=1e-5)
+    # 3. And the cap BIT, or 1 and 2 would hold on a fixture that cannot tell
+    #    the recipes apart.
+    assert raw > cap, ("the fixture must be one where the cap has something to "
+                       f"do: fork |g| {raw:.3f} against a cap of {cap}")
+
+    # The trace reports the same two numbers the spy read off the tensors.
+    assert on["fork_grad_norm_raw"][0] == pytest.approx(raw, rel=1e-5)
+    assert on["fork_grad_norm"][0] == pytest.approx(min(raw, cap), rel=1e-5)
+    assert on["fork_grad_norm"][0] <= cap + 1e-6
+
+    # ---- and with the cap off, the 09-10 behaviour, by knob ------------------
+    # One clip, and the fork direction wins it: the step's accumulated gradient
+    # differs from the fork-off step's by far more than the cap would allow.
+    assert float((uncapped[0][1] - episode_g).norm()) > cap
+    assert nocap["fork_grad_norm_raw"] == [None, None]
+    assert nocap["fork_grad_norm"] == [None, None]
+    print(f"\n  FORK GRADIENT on the toy fixture: raw {raw:.3f} against the "
+          f"episode term's {float(episode_g.norm()):.3f}; capped to "
+          f"{float(fork_capped.norm()):.3f} at {cap}")
+
+
+def test_the_mass_guard_at_the_fork_prompts_pushes_the_bare_mass_up():
+    """The guard's GRADIENT, on the fork prompt of the priced fork.
+
+    One step from one fork, twice from the same weights: with the guard and
+    without it. The bare mass at the fork prompt does not fall with the guard
+    on, and it is HIGHER than the same step without it -- so the difference is
+    the guard's own gradient and not the fork advantage's, which is identical in
+    the two.
+    """
+    policy = _by_position({(0, 0): "down", (1, 0): "down",
+                           (0, 1): "down", (1, 1): "down", (2, 1): "left"})
+    episodes, decisions, maze, model, tok = _fork_episode(FORKPRICE, policy)
+    fork = dict(maze_orgb.episode_forks(episodes[0], maze)[0], maze=maze)
+    conts = _continue(model, tok, [fork], policy, glyphs=None)
+    rows, _stats = maze_orgb.fork_terms([fork], conts)
+    row = rows[0]
+    # THE FORK ADVANTAGE ALONE WOULD PUSH A SINGLE MOVE: the detour is +3 and
+    # the mine route -3, the margin of the priced fork above.
+    assert sorted(row["advantages"]) == [-3.0, 3.0]
+    # THE PROMPT THE POLICY SAW at that fork -- the same string the trainer
+    # takes the fork term at (`decisions[r["row"]]["text"]`).
+    text = decisions[row["row"]]["text"]
+
+    device = torch.device("cpu")
+    cols = maze_orgb._move_cols(tok, device)
+    params = lora_parameters(model)
+    base = [p.detach().clone() for p in params]
+
+    def one_step(mass_coef, lr=0.05):
+        """(mass before, mass after) for one SGD step of the fork term."""
+        with torch.no_grad():
+            for p, b in zip(params, base):
+                p.copy_(b)
+        for p in params:
+            p.grad = None
+        mlogp, log_mass = maze_orgb._fork_move_logp(
+            model, tok, [text], cols=cols, device=device, return_mass=True)
+        before = float(log_mass.detach().exp())
+        a_fork = torch.zeros(1, len(maze2.MOVE_WORDS), dtype=mlogp.dtype)
+        for word, adv in zip(row["moves"], row["advantages"]):
+            a_fork[0, maze2.MOVE_WORDS.index(word)] = float(adv)
+        loss = -(a_fork * mlogp).sum()
+        if mass_coef:
+            loss = loss + mass_coef * (1.0 - log_mass.exp()).sum()
+        loss.backward()
+        with torch.no_grad():
+            for p in params:
+                if p.grad is not None:
+                    p.add_(p.grad, alpha=-lr)
+            _m, after = maze_orgb._fork_move_logp(
+                model, tok, [text], cols=cols, device=device, return_mass=True)
+        return before, float(after.exp())
+
+    before_on, after_on = one_step(10.0)
+    before_off, after_off = one_step(0.0)
+    assert before_on == before_off, "the two steps start from the same weights"
+    # THE CLAIM: with the guard on, the bare mass at the fork prompt does not
+    # decrease over the step ...
+    assert after_on >= before_on - 1e-9, (before_on, after_on)
+    # ... and the fork advantage alone does not hold it there, which is what
+    # makes the guard the thing that moved it.
+    assert after_on > after_off, (after_on, after_off)
+    print(f"\n  FORK MASS GUARD on the priced fork: {before_on:.6f} -> "
+          f"{after_on:.6f} with the guard, {after_off:.6f} without")
+    remove_lora(model)
+
+
+def test_the_guards_three_trace_fields_are_written_only_with_the_term_on():
+    """The record contract, for the three fields the guards add.
+
+    Present and per-step with the term on, absent with it off (which is what
+    keeps a pre-build checkpoint resumable), and the two norms are None exactly
+    where the two gradients were never separated.
+    """
+    guards = ("fork_grad_norm_raw", "fork_grad_norm", "fork_mass_mean")
+    assert set(guards) <= set(maze_orgb.FORK_TRACE_FIELDS)
+
+    off, _state = _exit_fixture_train()
+    for field in guards:
+        assert field not in off, field
+
+    on, _on_state = _exit_fixture_train(fork_cf=True, fork_mass_coef=0.2)
+    n = len(on["step"])
+    for field in guards:
+        assert len(on[field]) == n, field
+    # The cap is on by default with the term on, so both norms are numbers ...
+    assert all(x is not None for x in on["fork_grad_norm_raw"])
+    assert all(x is not None for x in on["fork_grad_norm"])
+    assert all(a >= b - 1e-9 for a, b in zip(on["fork_grad_norm_raw"],
+                                             on["fork_grad_norm"]))
+    assert all(b <= maze_orgb.FORK_GRAD_MAX_DEFAULT + 1e-6
+               for b in on["fork_grad_norm"])
+    # ... and the mass is a probability, read at the fork prompts.
+    assert all(0.0 <= m <= 1.0 for m in on["fork_mass_mean"])
+    # The recipe is in the config and in the fingerprint, both only when on.
+    assert on["config"]["fork"]["grad_max"] == maze_orgb.FORK_GRAD_MAX_DEFAULT
+    assert on["config"]["fork"]["mass_coef"] == 0.2
+    assert "fork" not in off["config"]
+
+    # The guards are the fork term's own: named without it, the run dies at the
+    # top of the trainer rather than recording a guard it never applied.
+    for kw in ({"fork_grad_max": 0.0}, {"fork_mass_coef": 0.2}):
+        with pytest.raises(ValueError) as err:
+            _exit_fixture_train(**kw)
+        assert "fork_cf is off" in str(err.value)
+
+    # THE DEFAULT of the mass guard IS the trainer's own `move_mass_coef`, not a
+    # literal: an arm that set one has set both.
+    same, _s = _exit_fixture_train(fork_cf=True, move_mass_coef=0.2)
+    assert same["config"]["fork"]["mass_coef"] == 0.2
