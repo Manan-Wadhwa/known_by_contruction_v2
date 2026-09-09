@@ -933,26 +933,57 @@ objective, the return, the credit rules and the closed action space are what
 they were; what is withdrawn is the claim that running them on this navigator
 tests the price.
 
-### 5.8 The next recipe — DESIGN ONLY; none of this is implemented
+### 5.8 The next recipe — item 1 is BUILT; items 2–4 are DESIGN ONLY
 
-**Nothing in this section exists in the code.** None of the four changes has a
-file, function, flag or environment variable in `src/calibration/` or
-`scripts/`; grep for a fork anchor, a counterfactual, a redraw or a standard-
-deviation normaliser returns nothing. Where an existing constant is named below
-(`SCORE_MINE`, `maze2.py:425`) it is named as the thing a change *would* move,
-at its current value. It is recorded here because §5.7 closed a
-recipe and the reader of §5 must not be left thinking the closed one is still
-the plan. The rationale and the literature behind each piece are in
+**Amended 2026-09-10 (fifteenth pass).** Item 1, the forced counterfactual at
+geometric forks, **is now implemented and tested**; it is off by default and
+nothing that does not set its switch is changed by it. Where it lives:
+
+* `src/calibration/maze_orgb.py` — `episode_forks` (the geometric fork rule),
+  `plan_forks` (the uniform draw on the run's own generator),
+  `_launch_continuations` / `sample_fork_continuations` (the forced first move
+  and the on-policy continuation, priced by `episode_return`),
+  `fork_advantages` / `fork_terms` (`A(a) = R(a) − mean R` and the step's read),
+  `_fork_move_logp` (`log π(a | fork prompt)` over the four bare move ids), and
+  the `fork_cf` / `fork_per_ep` / `fork_coef` / `fork_std` / `fork_temperature`
+  arguments of `train_orgb_cell`.
+* `scripts/mz01_explore_trial.py` — the arm `fork_cf_g6` and the environment
+  switches `MZ01_FORK_CF` (default off), `MZ01_FORK_PER_EP` (1),
+  `MZ01_FORK_COEF` (1.0), `MZ01_FORK_STD` (0), `MZ01_FORK_TEMP` (1.0).
+* `tests/test_maze_orgb.py` — the price margin, the construction test (a maze
+  whose mine accessors raise), the budget and its pricing, and the byte-identity
+  of the switch-off path against the pre-build trace and adapter.
+* The build report, including what the plan left open and what was read
+  conservatively: `MZ/BUILD-fork-counterfactual-2026-09-10.md`.
+
+**Items 2, 3 and 4 do not exist in the code.** None of them has a file,
+function, flag or environment variable in `src/calibration/` or `scripts/`;
+grep for a fork-anchored baseline, a redraw or a standard-deviation normaliser
+on the GROUP advantage returns nothing (`MZ01_FORK_STD` divides one fork's
+continuations, which is item 1's own knob and not item 4). Where an existing
+constant is named below (`SCORE_MINE`, `maze2.py:425`) it is named as the thing
+a change *would* move, at its current value. This section is recorded here
+because §5.7 closed a recipe and the reader of §5 must not be left thinking the
+closed one is still the plan. The rationale and the literature behind each piece are in
 `DIAGNOSIS-2026-09-09.md` §2 and §3; what follows is only the shape of the build
 and the test each piece must pass before it can be built.
 
 The recipe is four changes made together, in this order of dependence:
 
-1. **Forced counterfactual at geometric forks.** At a branch point on the
-   rollout's own path, force each valid first move once, continue on-policy from
-   there, and credit the fork decision with the difference of the continuations'
-   mean returns. This is what puts a detour in the sample set by construction
-   rather than by luck, which §7.5 says luck will not do.
+1. **Forced counterfactual at geometric forks — BUILT, 2026-09-10.** At a branch
+   point on the rollout's own path, force each valid first move once, continue
+   on-policy from there, and credit the fork decision with the difference of the
+   continuations' mean returns. This is what puts a detour in the sample set by
+   construction rather than by luck, which §7.5 says luck will not do. As built:
+   one fork per sampled episode, drawn uniformly among the path's forks with the
+   run's own generator; a fork is a cell with ≥ 2 valid moves other than the way
+   back, and those moves — not the way back — are the ones forced; the
+   continuation's budget is the episode cap minus the prefix's steps; the term
+   is `−(coef / n_forks) · Σ_a A(a) log π(a | the fork's own prompt)` added to
+   the existing loss, and the continuations are **not** trained. Measured on the
+   n = 9 pool, 0.61 of a shortest-route episode's decisions are forks and a fork
+   has 2.31 valid moves on average, so the continuations cost about 1.8–3.6× the
+   episode's own decisions at one fork per episode.
 2. **Fork-anchored (anchor-state) baseline.** Per shared cell rather than per
    step index: the advantage at a decision taken in cell *c* is the
    return-to-go from *c* minus the mean return-to-go over the rollouts of the
@@ -975,7 +1006,7 @@ the priced return, and nothing else. Applied to the four:
 
 | change | geometry | own rollouts | priced return only | passes |
 | --- | --- | --- | --- | --- |
-| forced counterfactual | forks chosen as **branch points on the path**, never by mine adjacency | the continuations are the policy's own | the credited difference is a difference of priced returns | yes, **conditional on the fork rule being geometric** |
+| forced counterfactual | forks chosen as **branch points on the path**, never by mine adjacency — as built, `episode_forks` reads `maze.neighbours` (walls and the grid edge) and the episode's own positions, and a test runs it against a maze whose `is_mine`, `mines`, `at` and `rows` all raise | the continuations are the policy's own | the credited difference is a difference of priced returns | yes, **and the condition is now tested**: the only mine reads on the fork path are `maze2.step` naming a landing, `maze2.render` drawing the tile the policy is entitled to see, and `episode_return` pricing it |
 | fork-anchored baseline | the anchor is a cell the rollouts share | the rollouts are the group's | return-to-go is the priced return, summed from that cell | yes |
 | dynamic sampling | — | the redraw test reads the group's own returns | the identity test is on returns, nothing else | yes |
 | std normaliser | — | the group's own returns | it rescales the priced return's spread | yes |

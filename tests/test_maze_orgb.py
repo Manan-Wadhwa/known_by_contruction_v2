@@ -5764,3 +5764,630 @@ def test_the_pre_registered_togo_near_mine_arm_trains_end_to_end():
     import run_orgb
     assert ("credit", "credit") in run_orgb.RESUME_RECIPE_KEYS
     assert ("epsilon_where", "epsilon_where") in run_orgb.RESUME_RECIPE_KEYS
+
+
+# ---------------------------------------------------------------------------
+# fifteenth pass, 2026-09-10: the forced counterfactual at geometric forks
+# (PLAN-fork-counterfactual.md; the coverage reads of 2026-09-09 that put the
+# detour in the warm start's sample set at 0.016-0.06)
+# ---------------------------------------------------------------------------
+#
+# THE FIVE CLAIMS, in the plan's own order (section 5):
+#
+#   1. On a maze with one fork where one move steps onto a mine and the other
+#      detours at cost 2, the two continuations' returns differ by the price
+#      margin (10 - 2*2 = 6) and A(detour) > 0 > A(mine).
+#   2. Fork selection and continuation LAUNCH never read a mine.
+#   3. The continuation's step budget is the cap minus the prefix's steps, and a
+#      continuation that hits it is priced as an unsolved episode at the cap.
+#   4. With the switch off the loss and the trace are the pre-build trainer's.
+#   5. (this file's own addition) the arm, its knobs, and what one step costs.
+
+# ONE FORK, TWO PRICES. From the start (0,0) both `down` (onto the mine at
+# (1,0), then the goal) and `right` (three floor cells around) reach the goal;
+# the mine route is 2 decisions, the detour 4. 10 - 2*2 = 6 is the margin, and
+# the cap is 2 * shortest = 4, which is exactly what the detour needs.
+FORKPRICE = """
+S..
+*.#
+G..
+"""
+# The SAME WALLS with the mine somewhere else. Selection must not be able to
+# tell it from FORKPRICE: same forks, same forced moves, same budgets.
+FORKPRICE_MOVED_MINE = """
+S..
+..#
+G.*
+"""
+# A world whose start has ONE valid move, so the fork is at decision 1 and the
+# prefix is 1 step long: cap 8, budget 7. From the fork (1,1) the non-reverse
+# valid moves are `left` (into a two-cell pocket the goal hangs off) and
+# `right` (onto a mine under a wall).
+FORKBUDGET = """
+#S##
+..*.
+.##.
+G...
+"""
+
+
+class _MineBlind:
+    """A maze whose every mine accessor RAISES. The construction test's tool.
+
+    Section 1 of the plan: mine positions may not choose the fork, the move, the
+    episodes kept or what is compared. A wrapper is better than a monkeypatch
+    here because it is the OBJECT the builder is handed, so every way of
+    reaching a mine through it raises by name at the line that did it: the two
+    accessors (`is_mine`, `mines`), the tile reader `at`, and `rows` -- the
+    layout, which SPELLS the mines with `*` and is the way a fork rule could
+    read one without calling anything.
+
+    What is delegated, and why each is geometry the rule is allowed to use:
+    `is_open` and `neighbours` (a wall or the grid edge, never a mine), `n`,
+    `start`, `goal`, and `labels` -- of which the builder reads `cap` and
+    nothing else (`episode_forks` takes the cap off the EPISODE's record, and
+    `_TextEp.__init__` off the maze's; neither reads `n_mines`,
+    `mines_on_shortest_dag` or `branch_points`).
+    """
+
+    MINE_READ = "the fork builder read a MINE"
+    BLIND_TO = ("is_mine", "mines", "at", "rows")
+
+    def __init__(self, maze):
+        self.__dict__["_maze"] = maze
+
+    def __getattr__(self, name):                     # walls, edges, labels ...
+        if name in _MineBlind.BLIND_TO:
+            raise AssertionError(f"{self.MINE_READ}: {name}")
+        return getattr(self.__dict__["_maze"], name)
+
+
+def _by_position(table, default="up"):
+    """A deterministic scripted policy keyed by the agent's own position.
+
+    Not `_oracle_reply`: the shortest path is recomputed from wherever the agent
+    stands, so a forced detour would be walked straight back through the mine
+    and the two continuations would be the same episode. A position table is the
+    only stub that can hold a route open.
+    """
+    def policy(prompt, _generator=None):
+        _maze, pos, _on_mine = _read_state(prompt)
+        return table.get(tuple(pos), default)
+    return policy
+
+
+def _fork_episode(layout, policy, *, seed=900, group_size=1, **kw):
+    """(episodes, decisions, maze, model, tok) for one scripted roll-out.
+
+    The model and the tokenizer come back because the fork continuations are
+    sampled with them; the caller removes the LoRA when it is done.
+    """
+    maze = maze2.from_layout(layout, seed=seed)
+    model, tok = _model()
+    old = maze_orgb._sample_replies
+    maze_orgb._sample_replies = _ScriptedSampler(policy)
+    try:
+        episodes, decisions = maze_orgb.sample_text_episodes(
+            model, tok, [maze], group_size=group_size,
+            generator=torch.Generator().manual_seed(0), fmt=ASCII,
+            device=torch.device("cpu"), chunk_size=4, **kw)
+    finally:
+        maze_orgb._sample_replies = old
+    return episodes, decisions, maze, model, tok
+
+
+def _continue(model, tok, forks, policy, **kw):
+    """`sample_fork_continuations` under a scripted policy. -> [dict]."""
+    old = maze_orgb._sample_replies
+    maze_orgb._sample_replies = _ScriptedSampler(policy)
+    try:
+        return maze_orgb.sample_fork_continuations(
+            model, tok, forks, generator=torch.Generator().manual_seed(0),
+            fmt=ASCII, device=torch.device("cpu"), sample_batch_size=4, **kw)
+    finally:
+        maze_orgb._sample_replies = old
+
+
+def test_the_two_continuations_differ_by_the_price_margin():
+    """PLAN section 5 test 1. THE COMPARISON THIS PASS EXISTS TO MANUFACTURE.
+
+    One fork, two valid moves: `down` steps onto the mine and reaches the goal
+    in 2 decisions, `right` walks around it in 4. The margin is the price the
+    whole programme is about -- 10 for the mine against 2 x 2 for the extra
+    steps -- and it has to come out of the CONTINUATIONS' own returns, priced by
+    `episode_return` on their own landings, with no hand-written number
+    anywhere.
+    """
+    # The mine route for the episode itself, so the fork's `taken` move is the
+    # one the diagnostic is written about; and the detour held open by position.
+    policy = _by_position({(0, 0): "down", (1, 0): "down",     # the episode
+                           (0, 1): "down", (1, 1): "down", (2, 1): "left"})
+    episodes, _decisions, maze, model, tok = _fork_episode(FORKPRICE, policy)
+    ep = episodes[0]
+    assert ep["solved"] and ep["landings"] == ["mine", "goal"]
+    assert maze.labels["cap"] == 4 and maze.labels["shortest_len"] == 2
+
+    forks = maze_orgb.episode_forks(ep, maze)
+    # The start is a fork (two valid moves, no way back to exclude) and so is
+    # the mine cell it walked to; the FIRST is the one this test prices.
+    # `episode_forks` is PURE GEOMETRY and returns no maze object -- `plan_forks`
+    # is what attaches the episode's own maze -- so the fixture attaches it here
+    # rather than going through the random draw it does not want.
+    fork = dict(forks[0], maze=maze)
+    assert fork["pos"] == (0, 0) and fork["moves"] == ["down", "right"]
+    assert fork["taken"] == "down" and fork["prefix_steps"] == 0
+    assert fork["budget"] == 4 == maze.labels["cap"]
+
+    conts = _continue(model, tok, [fork], policy, glyphs=None)
+    got = {c["move"]: c for c in conts}
+    assert sorted(got) == ["down", "right"]
+    # The mine route: 2 decisions, one mine, solved.
+    assert got["down"]["landings"] == ["mine", "goal"]
+    assert got["down"]["mine_steps"] == 1 and got["down"]["steps"] == 2
+    # The detour: 4 decisions, no mine, solved -- and 4 is the whole budget, so
+    # it fits by exactly the margin the cap leaves.
+    assert got["right"]["landings"] == ["floor", "floor", "floor", "goal"]
+    assert got["right"]["mine_steps"] == 0 and got["right"]["steps"] == 4
+    assert got["down"]["return"] == 6.0 and got["right"]["return"] == 12.0
+
+    # THE MARGIN, as the plan writes it: 10 * m - 2 * d.
+    margin = got["right"]["return"] - got["down"]["return"]
+    assert margin == 6.0 == 10 - 2 * 2
+
+    # ... and the advantage that carries it to the fork decision.
+    rows, stats = maze_orgb.fork_terms([fork], conts)
+    assert len(rows) == 1
+    adv = dict(zip(rows[0]["moves"], rows[0]["advantages"]))
+    assert adv["right"] == +3.0 and adv["down"] == -3.0
+    assert adv["right"] > 0 > adv["down"]
+    assert abs(sum(adv.values())) < 1e-12, "a difference reward sums to zero"
+    # The step's own read of it (section 4).
+    assert stats["n_forks"] == 1 and stats["n_continuations"] == 2
+    assert stats["fork_adv_abs_mean"] == 3.0
+    assert stats["fork_share_nonzero"] == 1.0
+    # The DIAGNOSTIC: the best continuation stepped on fewer mines than the move
+    # the episode took. It is read here and it is fed to nothing -- the loss is
+    # built from `rows[...]["advantages"]` alone.
+    assert stats["fork_share_detour_better"] == 1.0
+
+    # The sd division is a knob, and it is OFF at two continuations by design:
+    # dividing by |R1 - R2| / 2 would turn every fork into the same +-1 and
+    # delete the margin above.
+    assert maze_orgb.fork_advantages([6.0, 12.0], std=True) == [-3.0, 3.0]
+    three = maze_orgb.fork_advantages([6.0, 12.0, 12.0], std=True)
+    assert abs(sum(three)) < 1e-12 and max(abs(a) for a in three) < 2.0
+    remove_lora(model)
+
+
+def test_fork_selection_and_launch_never_read_the_mines():
+    """PLAN section 5 test 2, and section 1 -- THE CONSTRUCTION TEST.
+
+    Against a maze whose every mine accessor raises, the fork rule, the draw and
+    the launch all run and return exactly what they return against the real
+    maze. The claim is not "no mine is ever read": the WORLD reads one to name a
+    landing (`maze2.step`) and the OBSERVATION draws one in the picture
+    (`maze2.render`), and the organism is entitled to both. The claim is that
+    nothing in the BUILDER -- which cell to branch at, which moves to force,
+    which episodes contribute, what is compared -- can see one.
+
+    WHERE BLINDNESS STOPS, said out loud: `sample_fork_continuations` DOES raise
+    on a blind maze, at `maze2.step`'s `is_mine` on the very first forced move.
+    The plan's "only the pricing raises" cannot be literally true, because a
+    landing has to be NAMED `mine` before `episode_return` can price it. So the
+    line is drawn where it actually is -- selection and launch are blind, the
+    world is not -- and the invariance below says the same thing from the other
+    side.
+    """
+    policy = _by_position({(0, 0): "down", (1, 0): "down"})
+    episodes, _decisions, maze, model, tok = _fork_episode(FORKPRICE, policy)
+    ep = episodes[0]
+    blind = _MineBlind(maze)
+
+    # The wrapper really is blind, and blind in every direction a builder could
+    # reach a mine through -- the two accessors, the tile reader, and the layout
+    # that spells the mines with `*`.
+    assert _MineBlind.BLIND_TO == ("is_mine", "mines", "at", "rows")
+    for name in _MineBlind.BLIND_TO:
+        with pytest.raises(AssertionError) as err:
+            getattr(blind, name)
+        assert _MineBlind.MINE_READ in str(err.value)
+    with pytest.raises(AssertionError):
+        blind.is_mine(maze.start)
+    # ... while every piece of GEOMETRY it is allowed to use still answers.
+    assert blind.is_open((1, 0)) and not blind.is_open((1, 2))
+    assert list(blind.neighbours((0, 0))) == list(maze.neighbours((0, 0)))
+
+    # 1. THE FORK RULE runs blind, and gives the same forks.
+    assert maze_orgb.episode_forks(ep, blind) == maze_orgb.episode_forks(
+        ep, maze)
+    # 2. THE DRAW runs blind, and draws the same fork.
+    kw = dict(generator=torch.Generator().manual_seed(3), per_episode=1)
+    picked = maze_orgb.plan_forks([ep], [blind], **kw)
+    real = maze_orgb.plan_forks(
+        [ep], [maze], generator=torch.Generator().manual_seed(3),
+        per_episode=1)
+    assert len(picked) == 1
+    for key in ("pos", "moves", "taken", "t", "prefix_steps", "budget", "row"):
+        assert picked[0][key] == real[0][key], key
+    # 3. THE LAUNCH runs blind: the continuation episodes are positioned at the
+    #    fork with the remaining budget, one per valid move, before the world is
+    #    ever asked what is on a cell.
+    conts = maze_orgb._launch_continuations(picked)
+    assert [c["move"] for c in conts] == ["down", "right"]
+    assert all(c["ep"].pos == picked[0]["pos"] for c in conts)
+    assert all(c["ep"].cap == picked[0]["budget"] for c in conts)
+
+    # 4. AND THE MINE-INVARIANCE, which is the property the three above are for:
+    #    the same walls with the mine somewhere else give the same fork, the
+    #    same forced moves and the same budget. Only the PRICES differ.
+    other = maze2.from_layout(FORKPRICE_MOVED_MINE, seed=901)
+    assert other.rows[1][2] == "#" and maze.rows[1][2] == "#"
+    assert other.mines != maze.mines
+    assert maze_orgb.episode_forks(ep, other) == maze_orgb.episode_forks(
+        ep, maze)
+
+    # 5. WHERE IT STOPS. The world names the landing, and that is the read the
+    #    pricing needs; it is not the builder's.
+    with pytest.raises(AssertionError) as err:
+        _continue(model, tok, picked, policy)
+    assert _MineBlind.MINE_READ in str(err.value)
+    remove_lora(model)
+
+
+def test_a_continuation_is_priced_at_the_cap_minus_the_prefix():
+    """PLAN section 5 test 3. The budget, and what spending it costs.
+
+    The fork is at decision 1 of an episode whose cap is 8, so the budget is 7.
+    Two continuations, two ways of not solving: one walks a two-cell pocket for
+    all 7 decisions, the other bumps a wall and is farm-stopped after 4 -- and
+    THEY PAY THE SAME, because an unsolved continuation is charged at its own
+    remaining cap (D33). That is the whole content of "priced as an unsolved
+    episode at the cap".
+    """
+    # The episode walks in; at the fork it goes left. The continuations: `left`
+    # into the pocket (1,0)<->(2,0), which never reaches the goal below it;
+    # `right` onto the mine at (1,2), under a wall, where the default `up` bumps.
+    policy = _by_position({(0, 1): "down", (1, 1): "left",
+                           (1, 0): "down", (2, 0): "up"})
+    episodes, _decisions, maze, model, tok = _fork_episode(FORKBUDGET, policy)
+    ep = episodes[0]
+    cap = maze.labels["cap"]
+    assert cap == 8 and maze.labels["shortest_len"] == 4
+
+    forks = maze_orgb.episode_forks(ep, maze)
+    assert [f["t"] for f in forks] == [1], \
+        "the start has one valid move, so the only fork is the second decision"
+    fork = dict(forks[0], maze=maze)          # `plan_forks`'s one addition
+    assert fork["pos"] == (1, 1) and fork["moves"] == ["left", "right"]
+    # THE BUDGET: the cap minus the steps already taken to reach the fork, and
+    # `up` -- the way back to (0,1) -- is not one of the moves compared.
+    assert fork["prefix_steps"] == 1 and fork["budget"] == cap - 1 == 7
+    assert "up" not in fork["moves"]
+
+    conts = _continue(model, tok, [fork], policy)
+    got = {c["move"]: c for c in conts}
+    assert all(c["budget"] == 7 for c in conts)
+
+    # (a) SPENDS THE BUDGET. Seven legal decisions, no goal.
+    left = got["left"]
+    assert left["steps"] == 7 and not left["solved"]
+    assert left["landings"] == ["floor"] * 7 and left["mine_steps"] == 0
+    assert left["return"] == maze2.SCORE_STEP * 7 == -14.0
+
+    # (b) ENDS EARLY. The forced move lands on the mine, then three bumps end
+    #     it -- and it is charged at 7 decisions, not at the 4 it took.
+    right = got["right"]
+    assert right["steps"] == 4 and not right["solved"]
+    assert right["landings"] == ["mine", "blocked", "blocked", "blocked"]
+    assert right["mine_steps"] == 1
+    assert right["return"] == maze2.SCORE_STEP * 7 + maze2.SCORE_MINE == -24.0
+    # The old price would have made the wall the cheaper option by 6 (-8 - 10
+    # against -14); it is now the dearer one by 10, which is the mine alone.
+    assert maze2.score_landings(right["landings"]) == -18.0
+    assert right["return"] < left["return"]
+
+    # A continuation is priced by the SAME function and the SAME switches as any
+    # episode of the run: with the priced exit off it pays for its own decisions.
+    off = _continue(model, tok, [fork], policy, exit_at_cap=False)
+    assert {c["move"]: c["return"] for c in off} == {
+        "left": maze2.SCORE_STEP * 7,
+        "right": maze2.SCORE_STEP * 4 + maze2.SCORE_MINE}
+    # ... and on a mine-free cell (B/D) the continuation's price carries no mine
+    # either, which is what keeps the term out of a cell defined without one.
+    free = _continue(model, tok, [fork], policy, mine_cost=False)
+    assert {c["move"]: c["return"] for c in free} == {"left": -14.0,
+                                                     "right": -14.0}
+    remove_lora(model)
+
+
+# ---------------------------------------------------------------------------
+# THE PRE-BUILD NUMBERS, captured by running `_exit_fixture_train()` on the code
+# at `8d459d1` -- the commit this pass was written against, and the last one
+# with no fork term in the trainer at all. `MZ01_FORK_CF` off must reproduce it
+# to the bit: the trace, the adapter and the trace's own KEY SET, because a
+# trace that merely grew a field would still refuse every checkpoint written
+# before this build (`set(ck["history"]) != set(history)`).
+#
+# IF THIS EVER FAILS AFTER A TOY OR A TORCH CHANGE rather than after a change to
+# the trainer, re-derive it: check out the pre-build commit, run
+# `_exit_fixture_train()` there and paste the numbers back. Do not relax the
+# comparison -- an approximate bit-identity claim is not one.
+# ---------------------------------------------------------------------------
+_PRE_FORK_TRACE = {
+    'adv_abs_mean': [21.176470588235293, 19.935897435897438],
+    'adv_nonzero_share': [1.0, 1.0],
+    'capped_rate': [0.8333333333333334, 0.6666666666666666],
+    'complaint_rate_on_mine': [0.0, 0.0],
+    'complaint_rate_other': [0.0, 0.0],
+    'contingency_train': [0.0, 0.0],
+    'distinct_remarks': [0, 0],
+    'entropy_coef': [0.01, 0.009796617032008986],
+    'episode_length': [11.333333333333334, 8.666666666666666],
+    'epsilon_eligible_fraction': [0.0, 0.0],
+    'epsilon_eligible_fraction_mean': 0.0,
+    'epsilon_replaced_fraction': [0.0, 0.0],
+    'epsilon_replaced_fraction_mean': 0.0,
+    'exit_return_share': [0.8333333333333334, 0.6666666666666666],
+    'farm_stopped_rate': [0.0, 0.5],
+    'final_move_mass': 0.0148039568358889,
+    'first_token_class': [
+        {'bare': 0.0, 'capitalised': 0.0, 'n': 68, 'other': 1.0,
+         'rule': 'id', 'spaced': 0.0},
+        {'bare': 0.0, 'capitalised': 0.0, 'n': 52, 'other': 1.0,
+         'rule': 'id', 'spaced': 0.0}],
+    'grad_norm': [6.74459981918335, 11.781900405883789],
+    'invalid_rate': [0.07352941176470588, 0.3269230769230769],
+    'log_importance_ratio': [None, None],
+    'log_importance_ratio_mean': None,
+    'loss': [-1.7882237434387207, 1.2576565742492676],
+    'mean_return': [-94.33333333333333, -44.333333333333336],
+    'mine_step_rate': [7.5, 3.0],
+    'move_dist': [[0.44117647409439087, 0.5147058963775635, 0.0,
+                   0.04411764815449715],
+                  [0.5, 0.3461538553237915, 0.0, 0.1538461595773697]],
+    'move_mass': [0.0119123529533253, 0.0148039568358889],
+    'n_decisions': [68, 52],
+    'n_trainable': 256,
+    'on_mine_state_rate': [0.6029411764705882, 0.34615384615384615],
+    'on_step_errors': [],
+    'policy_entropy': [1.1109593545689302, 1.0133292033122137],
+    'remark_share': [0.0, 0.0],
+    'return_sd': [31.94613522095522, 21.921577396609845],
+    'solve_rate': [0.16666666666666666, 0.3333333333333333],
+    'step': [0, 1],
+    'unparsed_rate': [0.0, 0.0],
+    'within_group_return_sd': [24.620871955473472, 21.455836117599773],
+    'yell_episode_mean': [0.0, 0.0],
+    'yell_mean': [-0.20588235294117646, 0.3076923076923077],
+    'yell_within_group_sd': [0.0, 0.0],
+    'zero_advantage_group_fraction': [0.0, 0.0],
+    'zero_advantage_group_fraction_mean': 0.0,
+    'zero_advantage_steps_move': 0,
+    'zero_advantage_steps_yell': 0,
+    'zero_signal_steps': 0,
+}
+_PRE_FORK_ADAPTER_SHA = (
+    "6a96d877f9c47e4694edfc0fa9e67842c8952d73c84f280199a78488bacdbdbc")
+
+
+def test_fork_off_is_the_pre_build_trace_and_the_pre_build_adapter():
+    """PLAN section 5 test 4. `MZ01_FORK_CF` OFF IS THE FOURTEENTH PASS.
+
+    Asserted with `==` and a sha over the fp64 bytes rather than a tolerance,
+    against numbers recorded from the pre-build commit. The second half runs the
+    same fixture with the term ON and asserts it MOVES -- or the first half
+    would be a claim about a fixture that cannot tell the two apart.
+    """
+    hist, state = _exit_fixture_train()
+    for key, want in _PRE_FORK_TRACE.items():
+        assert hist[key] == want, (key, hist[key], want)
+    assert _adapter_sha(state) == _PRE_FORK_ADAPTER_SHA
+
+    # THE TRACE DID NOT EVEN GROW A FIELD, which is what lets a checkpoint from
+    # before this build still resume (the trainer refuses a resume whose trace
+    # has fields this build does not write).
+    for field in maze_orgb.FORK_TRACE_FIELDS:
+        assert field not in hist, field
+    assert "fork" not in hist["config"]
+
+    # A knob without its switch is a run that would record a counterfactual it
+    # never took, and it dies at the top of the trainer, by name.
+    with pytest.raises(ValueError) as err:
+        _exit_fixture_train(fork_coef=0.5)
+    assert "fork_cf is off" in str(err.value)
+
+    # AND THE FIXTURE CAN TELL THEM APART. Same seed, same scripted sampler,
+    # the term on: the trace grows exactly six fields and the adapter moves.
+    on, on_state = _exit_fixture_train(fork_cf=True)
+    assert set(on) - set(hist) == set(maze_orgb.FORK_TRACE_FIELDS)
+    assert on["config"]["fork"]["fork_cf"] is True
+    assert on["config"]["fork"]["coef"] == 1.0
+    assert sum(on["n_forks"]) > 0, "the fixture must contain a fork at all"
+    assert on["loss"] != hist["loss"]
+    assert any(not torch.equal(on_state[k], state[k]) for k in state)
+    # The sampled EPISODES are the same episodes: the fork term is added to the
+    # loss and changes nothing about the roll-out that produced it. (The
+    # continuations draw from the same generator afterwards, so only step 0's
+    # sampler is comparable -- from step 1 the weights have moved.)
+    assert on["n_decisions"][0] == hist["n_decisions"][0]
+    assert on["mean_return"][0] == hist["mean_return"][0]
+
+
+def test_the_fork_term_reaches_the_fork_decision_and_costs_what_it_costs():
+    """PLAN section 5's fifth claim, and section 6's COST, measured on the toy.
+
+    Three things at once, because they are one run:
+
+      * the fork term's gradient is the one the plan writes -- the coefficient
+        on `log pi(a | the fork's own prompt)` is exactly `-coef * A(a)/n_forks`
+        at the fork's four move columns, and zero everywhere else;
+      * the continuations are NOT trained: no continuation decision is ever
+        re-scored, so the number of rows the loss touches is unchanged;
+      * what it costs, as the plan's own unit -- continuation decisions against
+        the step's own decisions (section 6 budgets "about 2-2.5x the sampling
+        of the on-policy step").
+    """
+    model, tok = _model()
+    device = torch.device("cpu")
+    cols = maze_orgb._move_cols(tok, device)
+    texts = ["grid one ", "grid two "]
+    mlogp = maze_orgb._fork_move_logp(model, tok, texts, cols=cols,
+                                      device=device)
+    assert mlogp.shape == (2, len(maze2.MOVE_WORDS))
+    assert torch.allclose(mlogp.exp().sum(-1), torch.ones(2), atol=1e-5), \
+        "log pi(a | fork) is a distribution over the four move ids"
+    adv = {"down": -3.0, "right": 3.0}
+    coef, n_forks = 2.0, 2.0
+    a_fork = torch.zeros(2, len(maze2.MOVE_WORDS), dtype=mlogp.dtype)
+    for word, a in adv.items():
+        a_fork[:, maze2.MOVE_WORDS.index(word)] = a
+    loss = -coef * (a_fork * mlogp).sum() / n_forks
+    grad, = torch.autograd.grad(loss, mlogp)
+    for j, word in enumerate(maze2.MOVE_WORDS):
+        want = -coef * adv.get(word, 0.0) / n_forks
+        assert torch.allclose(grad[:, j], torch.full((2,), want)), word
+    remove_lora(model)
+
+    # ---- and end to end, on a real step -------------------------------------
+    seen = {}
+    real_cont = maze_orgb.sample_fork_continuations
+    real_rescore = maze_orgb._rescore
+
+    def spy_cont(*a, **kw):
+        out = real_cont(*a, **kw)
+        seen.setdefault("continuations", []).extend(out)
+        return out
+
+    def spy_rescore(model_, tok_, rows, **kw):
+        seen.setdefault("rescored", []).extend(rows)
+        return real_rescore(model_, tok_, rows, **kw)
+
+    maze_orgb.sample_fork_continuations = spy_cont
+    maze_orgb._rescore = spy_rescore
+    try:
+        hist, _state = _exit_fixture_train(fork_cf=True)
+    finally:
+        maze_orgb.sample_fork_continuations = real_cont
+        maze_orgb._rescore = real_rescore
+
+    main_decisions = sum(hist["n_decisions"])
+    cont_decisions = sum(c["steps"] for c in seen["continuations"])
+    assert len(seen["continuations"]) == sum(hist["n_continuations"])
+    # THE CONTINUATIONS ARE NOT TRAINED: `_rescore` -- the one function that
+    # takes a gradient over sampled tokens -- saw the step's own decisions and
+    # not one continuation decision.
+    assert len(seen["rescored"]) == main_decisions
+    print(f"\n  FORK COST on the toy fixture: {main_decisions} episode "
+          f"decisions, {cont_decisions} continuation decisions over "
+          f"{sum(hist['n_forks'])} forks and "
+          f"{sum(hist['n_continuations'])} continuations "
+          f"({cont_decisions / main_decisions:.2f}x the episodes' decisions; "
+          f"the sampling of a step is 1 + that)")
+    assert cont_decisions > 0
+    # Every trace field of section 4 is written once per step, and the counts
+    # are counts of the things that happened.
+    n = len(hist["step"])
+    for field in maze_orgb.FORK_TRACE_FIELDS:
+        assert len(hist[field]) == n, field
+    assert all(c >= 2 * f for c, f in zip(hist["n_continuations"],
+                                          hist["n_forks"]) if f)
+
+
+def test_the_fork_arm_is_a_named_recipe_and_its_knobs_are_documented():
+    """PLAN sections 3 and 7: the arm, the five switches, and the docstring.
+
+    `fork_cf_g6` differs from the cell-A control `onpolicy_g6` in EXACTLY ONE
+    THING -- the fork term -- so a difference between them is the term's. And
+    every flag is spelled the way the plan spells it, in the module's own env
+    list, or an operator reading the docstring would set a variable nothing
+    reads.
+    """
+    trial = _trial_module()
+    by_name = {a["name"]: a for a in trial.ARMS}
+    arm = by_name["fork_cf_g6"]
+    assert arm["fork_cf"] is True and arm["group"] == 6
+    assert arm["mode"] == "fixed", \
+        "the thermostat is held still, as it is on every cell-A arm"
+    control = by_name["onpolicy_g6"]
+    for key in ("mode", "group"):
+        assert arm[key] == control[key], key
+    assert "epsilon" not in arm and "sample_temperature" not in arm, \
+        "the fork arm must not also move the sampler -- that would be two things"
+    # The two committed cell-A defaults are untouched: this is a NAMED
+    # selection (MZ01_TRIAL_ARMS=fork_cf_g6), never a new default.
+    assert list(trial.ARM_NAMES[5:9]) == [
+        "temperature_t15", "temperature_t20", "epsilon_010", "epsilon_020"]
+    assert "fork_cf_g6" not in trial.DEFAULT_ARMS
+    assert trial.ARM_NAMES[-1] == "fork_cf_g6"
+
+    # The five switches of section 3, by name, in the parser and in the
+    # docstring -- and OFF by default, which is what makes every other arm of
+    # this trial the arm it was.
+    assert trial.FORK_CF is False
+    assert (trial.FORK_PER_EP, trial.FORK_COEF, trial.FORK_STD,
+            trial.FORK_TEMP) == (1, 1.0, False, 1.0)
+    src = Path(trial.__file__).read_text()
+    for flag in ("MZ01_FORK_CF", "MZ01_FORK_PER_EP", "MZ01_FORK_COEF",
+                 "MZ01_FORK_STD", "MZ01_FORK_TEMP"):
+        assert src.count(flag) >= 2, f"{flag} is parsed but not documented"
+        assert flag in (trial.__doc__ or ""), f"{flag} is not in the env list"
+
+
+def test_the_pre_registered_fork_arm_trains_end_to_end():
+    """CRITIC. `fork_cf_g6`'s OWN recipe, which nothing else in the suite runs.
+
+    The bit-identity fixture runs the fork term under the default thermostat on
+    cell A; the ARM is `fixed` -- the controller off, the coefficient held, no
+    epsilon and no hot draw -- and that combination has to survive the trainer's
+    four mode guards with a third loss term in the step. It is run on cell A,
+    which is the cell the term exists for: the price is what the continuations
+    are compared by.
+    """
+    trial = _trial_module()
+    arm = next(a for a in trial.ARMS if a["name"] == "fork_cf_g6")
+    plan = maze_orgb.exploration_plan(
+        arm["mode"], measured_entropy=0.02,
+        thermostat_off=bool(arm.get("thermostat_off")))
+    assert plan["epsilon"] == 0.0 and plan["off_policy"] is False
+    hist, _state = _exit_fixture_train(
+        fork_cf=arm["fork_cf"], explore_mode=plan["mode"],
+        entropy_target=plan["entropy_target"],
+        entropy_coef=plan["entropy_coef"],
+        sample_temperature=plan["sample_temperature"])
+    n = len(hist["step"])
+    assert n == 2
+    for field in maze_orgb.FORK_TRACE_FIELDS:
+        assert len(hist[field]) == n, field
+    assert sum(hist["n_forks"]) > 0
+    # The controller really was off, and the fork term did not turn it back on.
+    assert hist["entropy_coef"] == [plan["entropy_coef"]] * n
+    assert hist["config"]["fork"]["per_episode"] == 1
+    assert hist["config"]["fork"]["temperature"] == 1.0
+    assert hist["config"]["explore"]["mode"] == "fixed"
+
+
+def test_a_checkpoint_from_the_other_fork_setting_is_refused(tmp_path):
+    """A resume across the fork term would be half one objective and half another.
+
+    The fork knobs are in the fingerprint ONLY when the term is on -- which is
+    what keeps a fork-off run's fingerprint byte for byte the fourteenth pass's
+    and a checkpoint written before this build resumable -- and the key's
+    PRESENCE is the mismatch in both directions, because `_checkpoint_mismatch`
+    unions the two fingerprints' keys.
+    """
+    want = {"schema": 6, "cell": "A", "fork_cf": True, "fork_coef": 1.0}
+    got_off = {"schema": 6, "cell": "A"}
+    bad = maze_orgb._checkpoint_mismatch(want, got_off)
+    assert any("fork_cf" in line for line in bad)
+    assert maze_orgb._checkpoint_mismatch(got_off, want), \
+        "and the other way round: an ON checkpoint under an OFF run"
+    assert maze_orgb._checkpoint_mismatch(got_off, got_off) == []
+    # A fork-off run against a checkpoint written before this build resumes: the
+    # fingerprint has no fork key at all on either side.
+    fresh, _state, saves = _ckpt_train(
+        ckpt_path=str(Path(tmp_path) / "fork_off.pt"), ckpt_every=2, steps=2)
+    ck = maze_orgb.load_cell_checkpoint(str(Path(tmp_path) / "fork_off.pt"))
+    assert saves == [2] and ck["fingerprint"]["schema"] == 6
+    assert not [k for k in ck["fingerprint"] if k.startswith("fork")]
+    for field in maze_orgb.FORK_TRACE_FIELDS:
+        assert field not in ck["history"], field

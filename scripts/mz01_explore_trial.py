@@ -141,6 +141,26 @@ Environment:
                      `epsilon_030_near` sets it; this is the fallback for an arm
                      that does not, and it is inert on any arm whose epsilon
                      rate is 0 (`plan_epsilon_where`).
+  MZ01_FORK_CF       FIFTEENTH PASS, DEFAULT OFF. "1" turns on the FORCED
+                     COUNTERFACTUAL AT GEOMETRIC FORKS: at one fork per sampled
+                     episode -- a cell on the episode's own path with at least
+                     two valid moves other than the way back, drawn by geometry
+                     -- every one of those moves is forced once, the policy
+                     continues on-policy from each under the cap minus the
+                     prefix's steps, and the fork decision is credited with the
+                     difference of the continuations' priced returns. The arm
+                     `fork_cf_g6` sets it; the continuations are NOT trained.
+                     Off, the loss and the trace are the fourteenth pass's bit
+                     for bit. (PLAN-fork-counterfactual.md.)
+  MZ01_FORK_PER_EP   forks branched per sampled episode (default 1).
+  MZ01_FORK_COEF     weight of the fork term in the loss (default 1.0). The
+                     term is normalised per FORK, so this is comparable to the
+                     move term's per-decision mean.
+  MZ01_FORK_STD      "1" divides the fork advantages by the continuations'
+                     return sd, at three or more of them (default 0).
+  MZ01_FORK_TEMP     sampler temperature for the CONTINUATIONS only (default
+                     1.0). The episodes are still drawn at the arm's own
+                     temperature.
   MZ01_NO_PLACEBO / MZ01_NO_NOVEL
                      the driver's knobs, DEFAULTED TO OFF here: a trial arm is
                      not an organism and the graded claim is not being read.
@@ -220,6 +240,16 @@ EXIT_AT_CAP = os.environ.get("MZ01_EXIT_AT_CAP", "1") != "0"
 # that does not name it. Both default to the recipe the committed arms ran.
 CREDIT = os.environ.get("MZ01_CREDIT", "").strip() or "episode"
 EPSILON_WHERE = os.environ.get("MZ01_EPSILON_WHERE", "").strip() or "all"
+# FIFTEENTH PASS. The forced counterfactual at geometric forks, OFF unless the
+# arm or the environment turns it on. The four knobs beside it are the run's;
+# the switch itself is per ARM (`fork_cf_g6` sets it), for the reason
+# `epsilon_where` is: an arm is a NAMED recipe, and a switch that could only be
+# set from the environment would make two arms of one trial the same arm.
+FORK_CF = os.environ.get("MZ01_FORK_CF", "0") != "0"
+FORK_PER_EP = int(os.environ.get("MZ01_FORK_PER_EP", "1"))
+FORK_COEF = float(os.environ.get("MZ01_FORK_COEF", "1.0"))
+FORK_STD = os.environ.get("MZ01_FORK_STD", "0") != "0"
+FORK_TEMP = float(os.environ.get("MZ01_FORK_TEMP", "1.0"))
 # The driver's knobs, DEFAULTED OFF here. A trial arm is not an organism: the
 # placebo pass is the control for the GRADED claim and the novel pairings are
 # the transfer probe, and neither is being read. Two passes saved per arm.
@@ -336,6 +366,31 @@ ARMS = (
              "MINE-ADJACENT decisions (eligible share 0.22 -> replacement share "
              "0.10, epsilon_010's) replaced by a uniform valid move that does "
              "NOT land on a mine"},
+    # ---- fifteenth pass, 2026-09-10: the FORCED COUNTERFACTUAL. ------------
+    #
+    # Every arm above buys its comparison by CHANCE: a hotter draw or a uniform
+    # replacement has to happen to produce a detour, and the coverage reads of
+    # 2026-09-09 put the detour in this navigator's sample set at 0.016-0.06.
+    # A policy that finds a mine-free solution once in two to five thousand
+    # episodes cannot put one into a group of six, so the price never acts on a
+    # comparison that contains one. This arm makes the comparison BY
+    # CONSTRUCTION: at one fork per sampled episode every valid move is forced
+    # once, the policy continues from each, and the fork decision is credited
+    # with the difference of the continuations' priced returns.
+    #
+    # `fixed` (thermostat off, coefficient held at MZ01_ENTROPY_COEF) and no
+    # epsilon, so it differs from `onpolicy_g6` -- the cell-A control -- in
+    # EXACTLY ONE THING: the fork term. Its knobs are the environment's
+    # (MZ01_FORK_PER_EP / _COEF / _STD / _TEMP) and their defaults are the
+    # pre-registered ones.
+    #
+    # A NAMED SELECTION, never a default: MZ01_TRIAL_ARMS=fork_cf_g6, so every
+    # committed cell-A trial stays re-runnable from its own command line.
+    {"name": "fork_cf_g6", "mode": "fixed", "group": 6, "fork_cf": True,
+     "note": "the COMPARISON, BY CONSTRUCTION: at one geometric fork per "
+             "episode every valid move is forced once and the policy continues "
+             "on-policy from each; the fork decision is credited with the "
+             "difference of the continuations' priced returns"},
 )
 ARM_NAMES = tuple(a["name"] for a in ARMS)
 # The five D arms for the D trial, the four tenth-pass cell-A arms for anything
@@ -769,6 +824,12 @@ def main():
              or maze_orgb.EPSILON_WHERE_ALL),
             epsilon=arm_eps)
         arm_off = bool(arm.get("thermostat_off"))
+        # FIFTEENTH PASS, resolved the way the rate and the targeting rule are:
+        # the ARM's own switch first, because `fork_cf_g6` means the forced
+        # counterfactual whatever MZ01_FORK_CF happens to be. The four knobs
+        # beside it are the run's and are inert with the switch off -- the
+        # trainer refuses a run that sets one without the other.
+        arm_fork = bool(arm.get("fork_cf", FORK_CF))
         load_lora_state_dict(model, warm_state)
         started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         cfg = {"cell": cell, "seed": TRIAL_SEED, "steps": TRIAL_STEPS,
@@ -786,12 +847,29 @@ def main():
                # three places `score_mz01_explore._action_space` looks.
                "credit": CREDIT,
                "epsilon_where": arm_where,
+               # FIFTEENTH PASS. The arm's own switch and the run's knobs, in
+               # the trial's own block beside them. Written whatever the switch
+               # says, so a reader of two arm files can see which of them ran
+               # the fork term without knowing this build's default.
+               "fork_cf": arm_fork,
+               "fork_per_ep": FORK_PER_EP if arm_fork else None,
+               "fork_coef": FORK_COEF if arm_fork else None,
+               "fork_std": FORK_STD if arm_fork else None,
+               "fork_temperature": FORK_TEMP if arm_fork else None,
                "placebo": PLACEBO, "novel": NOVEL,
                "warm_start": ws_path, "nav_adapter": NAV_ADAPTER,
                "nav_adapter_sha256": nav.get("adapter_sha256"),
                "role_glyphs": dict(roles), "git_sha": git_sha()}
         say(f"ARM {name}: cell {cell} {maze_orgb.CELL_SWITCHES[cell]}, mode "
             f"{arm['mode']}, GROUP={group} -- {arm['note']}")
+        # FIFTEENTH PASS. The switch is NAMED WHEN IT IS ON, as `move_mask` and
+        # the return rule are named when they are off: a line that says nothing
+        # is the default, and this one is not.
+        if arm_fork:
+            say(f"  fork counterfactual ON: {FORK_PER_EP} fork(s) per episode, "
+                f"coef {FORK_COEF}, sd division {'on' if FORK_STD else 'off'}, "
+                f"continuations at T={FORK_TEMP}. The continuations are NOT "
+                f"trained; the fork decision alone carries their difference")
         pre = maze_orgb.preflight_exploration_check(
             model, tok, eval_set[:PREFLIGHT_MAZES],
             generator=derive_generator(0, "orgb", "explore"),
@@ -872,6 +950,13 @@ def main():
             sample_batch_size=cfg["sample_batch_size"],
             move_mass_coef=move_mass_coef, move_mask=MOVE_MASK,
             exit_at_cap=EXIT_AT_CAP, credit=CREDIT,
+            # FIFTEENTH PASS. The knobs are passed ONLY with the switch on: the
+            # trainer refuses a run that names a fork setting it never applied,
+            # which is what keeps an arm's recorded recipe the recipe that ran.
+            fork_cf=arm_fork,
+            **({"fork_per_ep": FORK_PER_EP, "fork_coef": FORK_COEF,
+                "fork_std": FORK_STD, "fork_temperature": FORK_TEMP}
+               if arm_fork else {}),
             chunk_size=CHUNK, train_pool=train_pool, glyphs=glyphs,
             fmt=FORMAT, log_every=1,
             # NO CHECKPOINT: an arm is a few dozen steps and is discarded
@@ -888,6 +973,22 @@ def main():
             f"{hist['epsilon_eligible_fraction_mean']}, |A| "
             f"{hist['adv_abs_mean'][-1]:.3f} nonzero "
             f"{hist['adv_nonzero_share'][-1]:.3f}")
+        if arm_fork and hist.get("n_forks"):
+            # PLAN section 6's reading rule is written about these two numbers:
+            # a fork-advantage share above 0.5 with no AVOIDS says the
+            # comparison exists and the price does not move the policy; below
+            # 0.1 says the geometry is not picking the forks the mines are at.
+            n_f = sum(hist["n_forks"])
+            n_c = sum(hist["n_continuations"])
+            live = [x for x in hist["fork_share_nonzero"] if x is not None]
+            det = [x for x in hist["fork_share_detour_better"] if x is not None]
+            share = f"{sum(live) / len(live):.3f}" if live else "n/a"
+            say(f"  forks {n_f} over {len(hist['n_forks'])} steps, {n_c} "
+                f"continuations ({n_c / max(1, n_f):.1f} per fork); share with "
+                f"a difference {share}")
+            if det:
+                say(f"  fork detour-better share {sum(det) / len(det):.3f} "
+                    f"(DIAGNOSTIC, read after the fact and never in the update)")
         # ---- THE HELD-OUT READ, at the end and only at the end -------------
         # The training numbers above are on the POOL and under the arm's own
         # sampler; an epsilon arm's training `mine_step_rate` includes the mines

@@ -167,6 +167,9 @@ __all__ = [
     "build_warm_start_corpus", "warm_start_corpus_contingency",
     "capture_move_anchor", "train_warm_start",
     "sample_text_episodes", "train_orgb_cell", "preflight_gradient_check",
+    # FIFTEENTH PASS: the forced counterfactual at geometric forks.
+    "FORK_TRACE_FIELDS", "episode_forks", "plan_forks",
+    "sample_fork_continuations", "fork_advantages", "fork_terms",
     "min_mines_on_shortest", "price_of", "price_rows", "price_table",
     "dm_regression", "regret_of", "contingency_report", "remark_diversity",
     "measure_organism", "instrument_panel", "relearn_read",
@@ -1716,6 +1719,35 @@ def _sample_replies(model, tok, texts, *, max_new_tokens, temperature,
     return out
 
 
+def _decision_texts(tok, episodes, orders, glyphs, fmt):
+    """The chat-templated prompt of ONE decision for each episode. -> [str].
+
+    THE PROMPT IS THE MAZE AND THE CURRENT POSITION, and nothing else -- no
+    history, no reply so far, no step counter (`maze2.render` + `maze2.
+    maze_prompt`, plus this turn's word order). That is what makes the world
+    Markov in the position for the policy as well as for the environment, and it
+    is why a fork continuation can be a FRESH roll-out started at the fork cell:
+    there is no history for it to carry (FIFTEENTH PASS, PLAN-fork-
+    counterfactual section 2.3).
+
+    Extracted from `sample_text_episodes`'s own loop so that the roll-out and
+    the fork continuations render the same prompt from the same three calls,
+    rather than from two copies of them that could drift apart. Pure: it draws
+    no random numbers (the caller draws `orders`).
+    """
+    out = []
+    for ep, order in zip(episodes, orders):
+        grid = render(ep.maze, glyphs, ep.pos, fmt=fmt)
+        out.append(apply_chat(
+            tok,
+            [{"role": "user",
+              "content": maze_prompt(grid, glyphs.goal, order,
+                                     agent=glyphs.agent, fmt=fmt, pos=ep.pos,
+                                     goal_pos=ep.maze.goal)}],
+            add_generation_prompt=True, tokenize=False))
+    return out
+
+
 def sample_text_episodes(model, tok, mazes, *, group_size, generator,
                          glyphs=None, temperature=1.0, chunk_size=8,
                          device=None, fmt=FMT_ASCII, mine_cost=True,
@@ -1842,16 +1874,7 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
             if not active:
                 break
             orders = random_move_orders(len(active), generator=generator)
-            texts = []
-            for ep, order in zip(active, orders):
-                grid = render(ep.maze, g, ep.pos, fmt=fmt)
-                texts.append(apply_chat(
-                    tok,
-                    [{"role": "user",
-                      "content": maze_prompt(grid, g.goal, order, agent=g.agent,
-                                             fmt=fmt, pos=ep.pos,
-                                             goal_pos=ep.maze.goal)}],
-                    add_generation_prompt=True, tokenize=False))
+            texts = _decision_texts(tok, active, orders, g, fmt)
             # Only passed when it is actually wanted, so a scripted sampler
             # written against the pre-R2 signature keeps working on every other
             # path (the same courtesy `maze2.rollout` pays `stop_on_parse`).
@@ -1929,6 +1952,434 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
         rec["fmt"] = fmt
         records.append(rec)
     return records, decisions
+
+
+# ------------------------------------- the forced counterfactual at a fork
+#
+# FIFTEENTH PASS, 2026-09-10 (PLAN-fork-counterfactual.md).
+#
+# WHY. The coverage reads of 2026-09-09 put the DETOUR in the warm start's
+# sample set at 0.016-0.06: a policy that finds a mine-free solution once in two
+# to five thousand episodes cannot put one into a group of six, so no on-policy
+# recipe on this navigator is a test of the price. The price can only act on a
+# comparison that CONTAINS a detour. This section makes that comparison by
+# construction: at a fork the policy itself walked through, every valid move is
+# taken once and the policy continues from each, and the fork decision is
+# credited with the difference of what followed.
+#
+# THE CONSTRUCTION TEST (PLAN section 1), which every line below is written
+# against. The organism's ONLY source of mine information is the priced return.
+# This build may use (a) maze GEOMETRY -- walls and the grid edge; (b) the
+# policy's own roll-outs; (c) the priced return. It may NOT use mine positions
+# to choose WHERE to branch, WHICH move to force, WHICH episodes to keep, or
+# WHAT to compare. So:
+#
+#   * `episode_forks` reads `maze.neighbours` (which is `is_open`, i.e. "not a
+#     wall and on the grid") and the episode's own positions. It never calls
+#     `is_mine`, never touches `maze.mines`, never reads `maze.at`, and never
+#     looks at a label. `tests/test_maze_orgb.py::
+#     test_fork_selection_and_launch_never_read_the_mines` runs it against a
+#     maze whose every mine accessor RAISES.
+#   * `plan_forks` draws uniformly among those forks with the run's own
+#     generator. No return, no landing and no label enters the draw.
+#   * `_launch_continuations` builds one continuation per valid move, in
+#     `MOVE_WORDS` order. Which moves exist is geometry; which of them is a mine
+#     is not asked.
+#   * `episode_return` on the continuation's own landings is the ONE place a
+#     mine is read -- the pricing, which is exactly what the organism is
+#     entitled to. Beyond it, `maze2.step` reads `is_mine` to NAME a landing and
+#     `maze2.render` draws the mine tile in the observation: those are the WORLD
+#     and the PERCEPT, not this builder, and they are the same two calls every
+#     on-policy episode already makes.
+#
+# WHAT IS NOT TRAINED. The continuations are a value estimate, not data (PLAN
+# section 2.6): their decisions receive no gradient in this build. The only
+# gradient the fork term carries is on the FORK DECISION's own move
+# distribution.
+
+# The trace fields the fork term adds, and the ONLY fields it adds. They are
+# written ONLY when `fork_cf` is on, so with the switch off the trace is the
+# fourteenth pass's trace key for key -- which is what makes a checkpoint from
+# before this build resumable and what
+# `test_fork_off_is_the_pre_build_trace_and_the_pre_build_adapter` asserts.
+FORK_TRACE_FIELDS = ("n_forks", "n_continuations", "fork_adv_abs_mean",
+                     "fork_share_nonzero", "fork_share_detour_better",
+                     "fork_sample_seconds")
+
+# Below this the continuations' returns count as "the same number" and the fork
+# contributed no comparison. Returns are sums of three integer constants, so
+# this is exact arithmetic; the constant is `ADVANTAGE_TOL` for the reason the
+# move term's own share uses it -- one bar, read in two places.
+FORK_ADVANTAGE_TOL = ADVANTAGE_TOL
+
+
+def _fmt_share(x):
+    """A share or a mean for the log line, with None printed as `n/a`."""
+    return "n/a" if x is None else f"{float(x):.2f}"
+
+
+def _reverse_move(pos, prev):
+    """The move word that walks from `pos` back to `prev`, or None. GEOMETRY."""
+    if prev is None or tuple(prev) == tuple(pos):
+        return None
+    for word, (dr, dc) in DELTAS.items():
+        if (pos[0] + dr, pos[1] + dc) == tuple(prev):
+            return word
+    return None
+
+
+def episode_forks(episode, maze):
+    """The GEOMETRIC forks on one episode's own path. -> [dict].
+
+    PLAN section 2.2. A fork is a cell the episode made a decision at, at which
+    at least two moves are VALID -- not a wall, not off the grid -- other than
+    the move that would return to the cell it came from. `maze.neighbours` is
+    the maze's own validity function and it is the only thing about the maze
+    this reads: MINE POSITIONS ARE NEVER READ HERE, and `maze.labels
+    ["branch_points"]` (a generator-level count over every open cell, not over
+    the path) is not read either.
+
+    Each entry carries what a continuation needs and what the diagnostic reads:
+
+        {"episode": the episode's index, "group": its maze index,
+         "t": the decision index the fork was taken at,
+         "row": that decision's row in the flat decision list,
+         "pos": the fork cell, "moves": the valid non-reverse moves,
+         "taken": the move the episode actually played there (may be None, or a
+                  move that is not in `moves` -- a wall bump, or a step back),
+         "prefix_steps": t, "cap": the episode's cap,
+         "budget": cap - t, the continuation's own step budget}
+
+    THE REVERSE IS EXCLUDED FROM `moves`, NOT ONLY FROM THE COUNT. Section 2.2
+    defines the fork by the moves that are not the way back, and those are the
+    alternatives the comparison is about; forcing the way back as well would add
+    a continuation that re-treads the prefix under a shortened budget, is almost
+    never solvable, and would therefore drag every fork's mean return down and
+    inflate |A| at forks where nothing is actually at stake. See
+    BUILD-fork-counterfactual-2026-09-10.md, which flags this as the reading
+    taken of section 2.3's "every valid move".
+
+    A cell the episode visited TWICE is two forks (two decisions, two prefixes,
+    two budgets), which is the honest reading of "a cell on the episode's own
+    path": the counterfactual is about the DECISION, not about the cell.
+    """
+    positions = [tuple(p) for p in episode["positions"]]
+    rows = list(episode["decisions"])
+    moves_played = list(episode["moves"])
+    cap = int(episode["labels"]["cap"])
+    # The three lists are one per decision by construction (`_TextEp.apply`
+    # appends to all three), and the fork term's loss is taken at
+    # `decisions[row]` -- so a record whose lists disagree would credit one
+    # decision's prompt with another decision's counterfactual. By name, here,
+    # rather than by an IndexError three functions later.
+    if not (len(positions) == len(rows) == len(moves_played)):
+        raise ValueError(
+            f"episode {episode.get('index')} has {len(positions)} positions, "
+            f"{len(rows)} decision rows and {len(moves_played)} moves: a fork "
+            "would be credited to a decision that is not the one it was taken "
+            "at")
+    out = []
+    for t, pos in enumerate(positions):
+        back = _reverse_move(pos, positions[t - 1] if t else None)
+        # `maze.neighbours` yields in MOVE_WORDS order, so the continuations of
+        # a fork are always built in one fixed order whatever the turn's word
+        # order was.
+        moves = [w for w, _nxt in maze.neighbours(pos) if w != back]
+        if len(moves) < 2:
+            continue
+        out.append({
+            "episode": episode.get("index"),
+            "group": episode.get("group"),
+            "t": t,
+            "row": rows[t],
+            "pos": pos,
+            "moves": moves,
+            "taken": moves_played[t],
+            "prefix_steps": t,
+            "cap": cap,
+            "budget": cap - t,
+        })
+    return out
+
+
+def plan_forks(episodes, mazes, *, generator, per_episode=1):
+    """One fork per sampled episode (or `per_episode`), drawn uniformly. -> [].
+
+    PLAN section 2.2: "The fork is drawn uniformly at random among the
+    episode's forks with the run's own generator", and an episode whose path has
+    no fork contributes no fork term. The draw is `torch.randperm` on the run's
+    generator, so `per_episode > 1` takes DISTINCT forks of the same episode and
+    `per_episode = 1` is the uniform draw the plan names.
+
+    `mazes[episode["group"]]` is the episode's own maze -- the group index IS
+    the index into the batch (`sample_text_episodes` builds them that way).
+
+    NOTHING HERE READS A RETURN, A LANDING OR A MINE. Which episodes contribute
+    is decided by geometry alone: "has this path a fork".
+    """
+    picked = []
+    for ep in episodes:
+        maze = mazes[int(ep["group"])]
+        forks = episode_forks(ep, maze)
+        if not forks:
+            continue
+        k = max(0, min(int(per_episode), len(forks)))
+        if k <= 0:
+            continue
+        draw = torch.randperm(len(forks), generator=generator)[:k].tolist()
+        for j in sorted(int(i) for i in draw):
+            fk = dict(forks[j])
+            fk["maze"] = maze
+            picked.append(fk)
+    return picked
+
+
+def _launch_continuations(forks, *, max_consecutive_blocked=MAX_CONSECUTIVE_BLOCKED):
+    """One `_TextEp` per (fork, valid move), positioned AT the fork. -> [dict].
+
+    THE STATE A CONTINUATION STARTS FROM IS THE FORK CELL AND THE REMAINING
+    BUDGET, and that is the whole state: the prompt is the maze and the current
+    position (`_decision_texts`), so the world is Markov in the position for the
+    policy too and there is no history to carry (PLAN section 2.3).
+
+    The FIRST MOVE IS TAKEN BY THE ENVIRONMENT -- `_TextEp.apply` with the move
+    word itself as the "reply", so the world's own `maze2.step` walks it and
+    prices the landing exactly as it would any move. No policy call is made for
+    it: the plan says the move is FORCED, and sampling a reply only to overwrite
+    its move word (the epsilon path's `force_prefix`) would cost a decode per
+    continuation and buy nothing, because a continuation's tokens are never
+    trained.
+
+    Separated from the sampling so the CONSTRUCTION TEST can run the launch on a
+    maze whose mine accessors raise: everything up to the world's own step is
+    geometry.
+    """
+    conts = []
+    for j, fk in enumerate(forks):
+        for word in fk["moves"]:
+            ep = _TextEp(len(conts), fk["maze"], fk["group"],
+                         max_consecutive_blocked=max_consecutive_blocked)
+            # The two fields that make this a continuation and not an episode:
+            # it starts at the FORK CELL, with the cap MINUS the prefix's steps.
+            ep.pos = tuple(fk["pos"])
+            ep.cap = int(fk["budget"])
+            conts.append({"fork": j, "move": word, "ep": ep,
+                          "episode": fk.get("episode"),
+                          "group": fk.get("group"), "budget": int(fk["budget"])})
+    return conts
+
+
+@torch.no_grad()
+def sample_fork_continuations(model, tok, forks, *, generator, glyphs=None,
+                              fmt=FMT_ASCII, temperature=1.0,
+                              sample_batch_size=8, device=None,
+                              max_new_tokens=REPLY_MAX_NEW_TOKENS,
+                              max_consecutive_blocked=MAX_CONSECUTIVE_BLOCKED,
+                              mine_cost=True, exit_at_cap=True, move_cols=None):
+    """Force every valid move once, continue on-policy, price each. -> [dict].
+
+    PLAN section 2.3-2.4. One continuation per (fork, valid move): the first
+    move is `a`, taken by the environment; every later decision is sampled from
+    the policy under the SAME prompt rendering (`_decision_texts`), the same
+    decode window, the same action space (`move_cols`) and the same
+    `MAX_CONSECUTIVE_BLOCKED` rule as a normal episode, at `temperature` -- the
+    continuations' own (`MZ01_FORK_TEMP`). They run in LOCKSTEP across every
+    fork of the step, exactly as the roll-out does, so the cost is (longest
+    continuation) batched generations and not (continuations x length) single
+    ones.
+
+    THE PRICING is `episode_return` on the continuation's own landings with its
+    OWN remaining cap -- the same function, the same switches and the same
+    `solved` check as any episode of this run. A continuation that spends its
+    budget without reaching the goal is therefore charged at that budget (D33),
+    which is what makes "the detour is two steps longer" cost two steps and not
+    the whole cap.
+
+    THE SWITCHES ARE THE RUN'S, NOT LITERALS. Section 2.4 writes
+    `mine_cost=True` because this pass is cell A; passing the CELL's own switch
+    is the same number there and keeps a mine-free cell (B/D) mine-free if the
+    term is ever turned on inside one. `exit_at_cap` likewise: with the priced
+    exit off, a continuation is priced by the decisions it took, as every other
+    episode of that run is.
+
+    NO EPSILON. The continuations estimate what the POLICY would do from each
+    move; a uniform draw inside them would price a different policy from the one
+    the fork term updates.
+
+    Each entry: {"fork": index into `forks`, "move": the forced move,
+    "landings", "solved", "steps", "mine_steps", "positions", "moves",
+    "return", "budget"}.
+    """
+    dev = device or next(model.parameters()).device
+    check_format(fmt)
+    g = format_glyphs(glyphs or Glyphs(), fmt)
+    conts = _launch_continuations(
+        forks, max_consecutive_blocked=max_consecutive_blocked)
+    was_training = getattr(model, "training", False)
+    if hasattr(model, "eval"):
+        model.eval()
+    try:
+        # THE FORCED FIRST MOVE, by the environment. `row` is -1: a continuation
+        # decision has no row in the flat decision list because it is never
+        # re-scored and never trained (section 2.6).
+        for c in conts:
+            c["ep"].apply(c["move"], -1, ())
+        while True:
+            active = [c for c in conts if not c["ep"].done]
+            if not active:
+                break
+            eps = [c["ep"] for c in active]
+            orders = random_move_orders(len(active), generator=generator)
+            texts = _decision_texts(tok, eps, orders, g, fmt)
+            extra = {} if move_cols is None else {"move_cols": move_cols}
+            gens = _sample_replies(model, tok, texts,
+                                   max_new_tokens=max_new_tokens,
+                                   temperature=temperature, generator=generator,
+                                   batch_size=int(sample_batch_size),
+                                   device=dev, **extra)
+            for c, order, gen in zip(active, orders, gens):
+                _n_move, reply = _split_reply_tokens(tok, gen)
+                c["ep"].apply(reply, -1, order)
+    finally:
+        if was_training and hasattr(model, "train"):
+            model.train()
+    out = []
+    for c in conts:
+        ep = c["ep"]
+        cap = ep.cap if exit_at_cap else None
+        out.append({
+            "fork": c["fork"], "move": c["move"], "episode": c["episode"],
+            "group": c["group"], "budget": c["budget"],
+            "landings": list(ep.landings), "solved": bool(ep.solved),
+            "steps": len(ep.moves), "mine_steps": int(ep.mines),
+            "positions": [list(p) for p in ep.positions],
+            "moves": list(ep.moves),
+            "return": episode_return(ep.landings, mine_cost=mine_cost, cap=cap,
+                                     solved=ep.solved),
+        })
+    return out
+
+
+def fork_advantages(returns, *, std=False):
+    """`A(a) = R(a) - mean_a' R(a')` over ONE fork's continuations. -> [float].
+
+    PLAN section 2.5, the difference reward. Centred on the fork's own mean and
+    STOPPED, exactly as `group_advantages` centres a maze's group -- so the
+    advantages sum to zero and the term is a comparison between the moves at one
+    junction rather than a level.
+
+    `std=True` (`MZ01_FORK_STD`) divides by the continuations' return sd, and
+    ONLY with three or more of them: with two, the sd is |R1 - R2| / 2 and the
+    division turns every fork into the same +-1 whatever the price margin was,
+    which deletes the one quantity this pass exists to measure. Population sd,
+    as `_mean_group_sd` uses. A fork whose continuations all scored the same
+    gets exact zeros and no division.
+    """
+    vals = [float(r) for r in returns]
+    if not vals:
+        return []
+    mean = sum(vals) / len(vals)
+    adv = [v - mean for v in vals]
+    if std and len(vals) >= 3:
+        sd = (sum(a * a for a in adv) / len(adv)) ** 0.5
+        if sd > FORK_ADVANTAGE_TOL:
+            adv = [a / sd for a in adv]
+    return adv
+
+
+def fork_terms(forks, continuations, *, std=False):
+    """The fork term's inputs and its diagnostics, from the priced roll-outs.
+
+    -> (rows, stats), where `rows` is one entry per fork that has at least two
+    continuations --
+
+        {"fork": j, "row": the fork DECISION's row in the flat decision list,
+         "moves": [word, ...], "advantages": [A(a), ...], "returns": [R(a), ...]}
+
+    -- and `stats` is PLAN section 4's read of the step:
+    `fork_adv_abs_mean` (the mean |A| over every continuation),
+    `fork_share_nonzero` (forks whose continuations' returns are not all the
+    same number) and `fork_share_detour_better`.
+
+    `fork_share_detour_better` IS A DIAGNOSTIC AND NOTHING READS IT BACK. It is
+    the share of forks at which the best-returning continuation stepped on FEWER
+    MINES than the continuation of the move the episode actually took -- read
+    after the fact, from the continuations' own landings, over the forks where
+    the taken move HAS a continuation (an episode that bumped a wall or stepped
+    back at its fork has no counterpart to compare, and is left out of that
+    share's denominator rather than counted as a failure). It is computed here,
+    beside the advantages, only so a reader can see that it is computed from the
+    same rows the advantages are and fed to nobody: the loss is built from
+    `rows["advantages"]` alone.
+    """
+    by_fork = {}
+    for c in continuations:
+        by_fork.setdefault(int(c["fork"]), []).append(c)
+    rows, adv_all, nonzero, better, comparable = [], [], 0, 0, 0
+    for j, fk in enumerate(forks):
+        cs = by_fork.get(j) or []
+        if len(cs) < 2:
+            continue
+        rets = [c["return"] for c in cs]
+        adv = fork_advantages(rets, std=std)
+        rows.append({"fork": j, "row": fk.get("row"),
+                     "moves": [c["move"] for c in cs],
+                     "returns": list(rets), "advantages": list(adv)})
+        adv_all.extend(abs(a) for a in adv)
+        if max(rets) - min(rets) > FORK_ADVANTAGE_TOL:
+            nonzero += 1
+        # ---- the diagnostic, and it stops here -----------------------------
+        taken = next((c for c in cs if c["move"] == fk.get("taken")), None)
+        if taken is not None:
+            comparable += 1
+            best = max(cs, key=lambda c: c["return"])
+            if best["mine_steps"] < taken["mine_steps"]:
+                better += 1
+    stats = {
+        "n_forks": len(rows),
+        "n_continuations": sum(len(by_fork.get(r["fork"]) or []) for r in rows),
+        "fork_adv_abs_mean": (sum(adv_all) / len(adv_all)) if adv_all else None,
+        "fork_share_nonzero": (nonzero / len(rows)) if rows else None,
+        "fork_share_detour_better": ((better / comparable) if comparable
+                                     else None),
+    }
+    return rows, stats
+
+
+def _fork_move_logp(model, tok, texts, *, cols, device):
+    """`log pi(move | prompt)` over the four bare move ids. -> [B, 4], WITH GRAD.
+
+    The fork term needs the log-probability of moves the policy did NOT emit, so
+    there are no sampled ids to re-score: what it scores is the 4-way
+    distribution at the position that predicts the first generated token, which
+    under the closed action space (`move_mask`) IS the policy's move
+    distribution -- the same `log_softmax(head[:, cols])` `_rescore` reads the
+    action's log-prob and the entropy bonus off, at the same position, from the
+    same left-padded encoding with explicit `position_ids`.
+
+    WITH `move_mask=False` the sampler draws the first token from the whole
+    vocabulary and this 4-way read is then the RESTRICTED distribution rather
+    than the emission probability. The pre-registered arm runs with the mask on
+    (where the two are the same object); the open-action-space case is named in
+    BUILD-fork-counterfactual-2026-09-10.md and not silently equated.
+    """
+    enc = tok(list(texts), return_tensors="pt", padding=True,
+              padding_side="left")
+    ids = enc["input_ids"].to(device)
+    att = enc["attention_mask"].to(device)
+    pos_ids = (att.cumsum(-1) - 1).clamp(min=0)
+    global _USE_LOGITS_TO_KEEP
+    if _USE_LOGITS_TO_KEEP:
+        try:
+            out = model(input_ids=ids, attention_mask=att, position_ids=pos_ids,
+                        use_cache=False, logits_to_keep=1)
+        except TypeError:
+            _USE_LOGITS_TO_KEEP = False
+            out = model(input_ids=ids, attention_mask=att, position_ids=pos_ids)
+    else:
+        out = model(input_ids=ids, attention_mask=att, position_ids=pos_ids)
+    head = out.logits[:, -1, :].float()
+    return F.log_softmax(head[:, cols.to(head.device)], dim=-1)
 
 
 # --------------------------------------------------------------- the trainer
@@ -2304,7 +2755,9 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                     explore_mode=DEFAULT_EXPLORE_MODE, explore_knobs=None,
                     sample_temperature=None, sample_batch_size=None,
                     epsilon=0.0, epsilon_where=EPSILON_WHERE_ALL,
-                    move_word_ids=None, on_step=None):
+                    move_word_ids=None, fork_cf=False, fork_per_ep=1,
+                    fork_coef=1.0, fork_std=False, fork_temperature=1.0,
+                    on_step=None):
     """One cell of the 2x2. Returns a per-step history dict.
 
     CONTRACT: LoRA must already be injected AND already warm-started -- every
@@ -2397,6 +2850,41 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     off-policy bias is still MEASURED rather than corrected (see the IMPORTANCE
     WEIGHT paragraph: `near_mine` makes the behaviour policy a state-dependent
     mixture, which is more off-policy and not less).
+
+    THE FORCED COUNTERFACTUAL AT A FORK (`fork_cf`, DEFAULT OFF, fifteenth
+    pass, PLAN-fork-counterfactual.md). With it on, one fork per sampled episode
+    is drawn by GEOMETRY (`plan_forks`: a cell on the episode's own path with at
+    least two valid moves other than the way back), every one of those moves is
+    forced once, the policy continues on-policy from each under the remaining
+    budget (`sample_fork_continuations`), and the fork decision is credited with
+    the difference of the continuations' priced returns:
+
+        fork term = -(fork_coef / n_forks) * sum_forks sum_a A(a) log pi(a|fork)
+
+    with `A(a) = R(a) - mean_a' R(a')` (`fork_advantages`; `fork_std` divides by
+    the continuations' sd at three or more of them). `log pi(a|fork)` is the
+    4-way log-softmax over the bare move ids at the fork's own prompt -- the
+    same distribution the move term's first token is scored under -- so the term
+    is a policy-gradient step on the fork decision ALONE, off-policy at that one
+    token by construction.
+
+    THE EXISTING UPDATE IS UNTOUCHED: the sampled episodes' per-decision term,
+    the group baseline, the yell term, the entropy bonus and the mass term run
+    exactly as they do with the switch off, and the fork term is ADDED to the
+    loss. The continuations are NOT trained (PLAN section 2.6): they are the
+    value estimate, not data, so no continuation decision is ever re-scored.
+
+    NORMALISED PER FORK, which the plan leaves open. Section 2.5 writes the term
+    as a bare sum; summing over the step's ~24 forks would put a term two orders
+    of magnitude above the move term (which is divided by the step's ~300
+    decisions) at `fork_coef` 1.0. Dividing by the number of forks makes the
+    fork term "the mean over forks of -sum_a A(a) log pi(a)", the same shape as
+    the move term's per-decision mean, and leaves `MZ01_FORK_COEF` as the dose.
+    It is flagged in BUILD-fork-counterfactual-2026-09-10.md.
+
+    OFF IS OFF. With `fork_cf=False` nothing above runs, no random number is
+    drawn for it, the trace gains no field and the loss is the fourteenth pass's
+    to the bit -- `test_fork_off_is_the_pre_build_trace_and_the_pre_build_adapter`.
 
     MID-CELL CHECKPOINT / RESUME (R1, 2026-08-29). With `ckpt_path` set and
     `ckpt_every > 0` the loop writes the WHOLE loop state -- adapter, AdamW
@@ -2493,6 +2981,33 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     if epsilon_where not in EPSILON_WHERES:
         raise ValueError(f"epsilon_where must be one of {list(EPSILON_WHERES)}, "
                          f"got {epsilon_where!r}")
+    # FIFTEENTH PASS. The fork knobs are checked at the TOP, before a single
+    # episode is drawn, for the reason every other knob here is: a launch line
+    # typo must not cost a lease. A run that recorded a fork knob it never
+    # applied is the same failure the epsilon guards exist to refuse, so a fork
+    # setting that is not the default with the term OFF is named rather than
+    # silently ignored.
+    fork_cf = bool(fork_cf)
+    fork_per_ep = int(fork_per_ep)
+    fork_coef = float(fork_coef)
+    fork_std = bool(fork_std)
+    fork_temperature = float(fork_temperature)
+    if fork_cf and fork_per_ep < 1:
+        raise ValueError(f"fork_per_ep must be >= 1, got {fork_per_ep}: the "
+                         "fork term is on and would branch no fork at all")
+    if fork_cf and fork_temperature <= 0:
+        raise ValueError("fork_temperature must be > 0, got "
+                         f"{fork_temperature}: the continuations are SAMPLED "
+                         "from the policy and a temperature of 0 is not a draw")
+    if not fork_cf and (fork_per_ep != 1 or fork_coef != 1.0 or fork_std
+                        or fork_temperature != 1.0):
+        raise ValueError(
+            f"fork_cf is off but fork_per_ep={fork_per_ep}, "
+            f"fork_coef={fork_coef}, fork_std={fork_std}, "
+            f"fork_temperature={fork_temperature} were passed: this run would "
+            "record a forced counterfactual it never took. Turn the term on "
+            "(MZ01_FORK_CF=1 / the arm `fork_cf_g6`) or leave its knobs at "
+            "their defaults.")
     sample_t = (float(temperature) if sample_temperature is None
                 else float(sample_temperature))
     off_policy = abs(sample_t - float(temperature)) > 1e-12
@@ -2629,6 +3144,12 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         "complaint_rate_other", "contingency_train", "unparsed_rate",
         "remark_share", "on_mine_state_rate", "distinct_remarks",
     )}
+    # FIFTEENTH PASS. The fork term's own six fields, and ONLY when the term is
+    # on: with the switch off the trace is key for key the fourteenth pass's, so
+    # a checkpoint written before this build still resumes and every existing
+    # trace reader is untouched.
+    if fork_cf:
+        history.update({k: [] for k in FORK_TRACE_FIELDS})
     history["examples"] = []
     zero_move = zero_yell = zero_signal = 0
     coef = float(entropy_coef)
@@ -2691,6 +3212,21 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         "detector": getattr(detector, "__name__", str(detector)),
         "history_replies": int(history_replies or 0),
     }
+    # FIFTEENTH PASS. The fork term changes the LOSS and consumes the run's own
+    # generator, so a resume across it would be half one objective and half
+    # another -- the same reason `credit`, `epsilon` and `exit_at_cap` are here.
+    # ADDED ONLY WHEN IT IS ON, so a fork-off run's fingerprint is byte for byte
+    # the fourteenth pass's and a checkpoint from before this build resumes; the
+    # key's PRESENCE is itself the mismatch in both directions, because
+    # `_checkpoint_mismatch` unions the keys of the two fingerprints.
+    if fork_cf:
+        fingerprint.update({
+            "fork_cf": True,
+            "fork_per_ep": fork_per_ep,
+            "fork_coef": fork_coef,
+            "fork_std": fork_std,
+            "fork_temperature": fork_temperature,
+        })
     start, resumed, ckpt_saves = 0, None, 0
     if ckpt_path and resume and os.path.exists(ckpt_path):
         ck = load_cell_checkpoint(ckpt_path)
@@ -2808,11 +3344,39 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             move_adv = decision_advantages(
                 episodes, len(decisions), credit=credit, mine_cost=mine_cost,
                 exit_at_cap=exit_at_cap)
+
             if yell_on:
                 keys = [(d["group"], bool(d["on_mine"])) for d in decisions]
                 yell_adv = yell_advantages([d["yell"] for d in decisions], keys)
             else:
                 yell_adv = [0.0] * len(decisions)
+
+            # ---- FIFTEENTH PASS: the forced counterfactual at a fork --------
+            # AFTER the roll-out and its advantages, BEFORE the loss, and timed
+            # on its own clock so `sample_seconds` keeps meaning "what the
+            # step's own episodes cost" and the continuations' price is a number
+            # of its own (PLAN section 4). The whole block is inside
+            # `if fork_cf`: with the term off not one random number is drawn for
+            # it, and `move_adv` / `yell_adv` above are untouched either way --
+            # the fork term is a THIRD term on a fifth object (the fork
+            # decision's move distribution), not a change to the two.
+            fork_rows, fork_stats, t_fork = [], None, 0.0
+            if fork_cf:
+                t_f0 = time.perf_counter()
+                forks = plan_forks(episodes, batch, generator=gen,
+                                   per_episode=fork_per_ep)
+                conts = sample_fork_continuations(
+                    model, tok, forks, generator=gen, glyphs=g, fmt=fmt,
+                    temperature=fork_temperature,
+                    sample_batch_size=(sample_batch_size or chunk_size),
+                    device=device, max_new_tokens=max_new_tokens,
+                    max_consecutive_blocked=max_consecutive_blocked,
+                    mine_cost=mine_cost, exit_at_cap=exit_at_cap,
+                    move_cols=(cols if move_mask else None))
+                fork_rows, fork_stats = fork_terms(forks, conts, std=fork_std)
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                t_fork = time.perf_counter() - t_f0
 
             # ---- the loss, teacher-forced and chunked ----------------------
             optimiser.zero_grad(set_to_none=True)
@@ -2850,6 +3414,31 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 for r in rows:
                     if r["move"] in MOVE_WORDS:
                         move_counts[MOVE_WORDS.index(r["move"])] += 1
+
+            # ---- the fork term, on the fork decisions alone -----------------
+            # A SECOND CHUNKED PASS over the FORK PROMPTS, added to the same
+            # accumulated gradient. It is not folded into the loop above because
+            # it scores a different object: the 4-way move distribution at the
+            # fork's prompt (`_fork_move_logp`), including the moves the policy
+            # did not emit, where the loop above re-scores the tokens that were
+            # sampled. The prompt is THE DECISION'S OWN `text` -- the string the
+            # policy actually saw at that fork, this turn's word order included.
+            if fork_cf and fork_rows:
+                n_fork = float(len(fork_rows))
+                for lo in range(0, len(fork_rows), chunk_size):
+                    part = fork_rows[lo:lo + chunk_size]
+                    texts = [decisions[r["row"]]["text"] for r in part]
+                    mlogp = _fork_move_logp(model, tok, texts, cols=cols,
+                                            device=device)
+                    a_fork = torch.zeros(len(part), len(MOVE_WORDS),
+                                         dtype=mlogp.dtype,
+                                         device=mlogp.device)
+                    for i, r in enumerate(part):
+                        for word, a in zip(r["moves"], r["advantages"]):
+                            a_fork[i, MOVE_WORDS.index(word)] = float(a)
+                    fork_loss = -fork_coef * (a_fork * mlogp).sum() / n_fork
+                    fork_loss.backward()
+                    loss_val += float(fork_loss.detach())
 
             if device.type == "cuda":
                 torch.cuda.synchronize()
@@ -2933,6 +3522,18 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             history["epsilon_eligible_fraction"].append(
                 sum(1 for d in decisions if d.get("epsilon_eligible"))
                 / len(decisions))
+            # FIFTEENTH PASS. PLAN section 4, counted off the continuations
+            # themselves rather than restated from the knobs: how many forks the
+            # geometry found, how many continuations they cost, what the fork
+            # advantages had to multiply, the share of forks whose continuations
+            # differed at all, and the share at which the best continuation
+            # stepped on fewer mines than the move the episode took (a
+            # diagnostic, never read back into the update -- see `fork_terms`).
+            if fork_cf:
+                for key in ("n_forks", "n_continuations", "fork_adv_abs_mean",
+                            "fork_share_nonzero", "fork_share_detour_better"):
+                    history[key].append(fork_stats[key])
+                history["fork_sample_seconds"].append(t_fork)
             # TWELFTH PASS. BY ID, off the tokens that were actually sampled --
             # a decision that generated nothing at all counts as `other`, so the
             # four shares sum to 1 over the step's decisions and a drift reads
@@ -3038,6 +3639,16 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                       + (f"  |A| {history['adv_abs_mean'][-1]:.2f} "
                          f"nz {history['adv_nonzero_share'][-1]:.2f}"
                          if credit != CREDIT_EPISODE else "")
+                      # Fifteenth pass, the same courtesy: only on the arm the
+                      # fork term runs on, so every earlier log line is the line
+                      # it always was. `nz` here is the share of forks whose
+                      # continuations differed at all -- PLAN section 6's own
+                      # reading rule is written about that number.
+                      + (f"  forks {history['n_forks'][-1]:d}/"
+                         f"{history['n_continuations'][-1]:d}c nz "
+                         f"{_fmt_share(history['fork_share_nonzero'][-1])}"
+                         f" |Af| {_fmt_share(history['fork_adv_abs_mean'][-1])}"
+                         if fork_cf else "")
                       + f"  {elapsed:.2f}s", flush=True)
             # AT THE STEP BOUNDARY, after the optimiser step and after the
             # entropy controller's update, so `next_step` is a step that has not
@@ -3255,6 +3866,35 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         "fmt": fmt,
         "scoring": {"step": maze2.SCORE_STEP, "mine": maze2.SCORE_MINE,
                     "goal": maze2.SCORE_GOAL, "mine_in_return": mine_cost},
+        # FIFTEENTH PASS. The fork block, present ONLY when the term ran, so a
+        # row from any earlier arm is byte for byte what it was and a reader of
+        # the JSON never has to infer the recipe from a knob's default.
+        **({"fork": {
+            "fork_cf": True,
+            "per_episode": fork_per_ep,
+            "coef": fork_coef,
+            "std": fork_std,
+            "temperature": fork_temperature,
+            "rule": (
+                "At one fork per sampled episode -- a cell on the episode's own "
+                "path with at least two valid moves other than the way back, "
+                "drawn uniformly by GEOMETRY with the run's own generator -- "
+                "every one of those moves is forced once (the first move taken "
+                "by the environment) and the policy continues on-policy from "
+                "each under the cap MINUS the prefix's steps. Each continuation "
+                "is priced by `episode_return` on its own landings; the fork "
+                "decision's term is -(coef / n_forks) * sum_a A(a) log pi(a | "
+                "the fork's own prompt), A(a) = R(a) - mean R. The "
+                "continuations are NOT trained: they are the value estimate, "
+                "not data."),
+            "mine_information": (
+                "The fork, the forced moves and what is compared are chosen "
+                "from walls and the episode's own path alone. A mine enters "
+                "ONLY through `episode_return` on a continuation's landings -- "
+                "the pricing -- and through the observation the policy reads. "
+                "`fork_share_detour_better` is read AFTER the update is formed "
+                "and is fed to nothing."),
+        }} if fork_cf else {}),
         "algorithm": ("two-term Dr.GRPO over disjoint token sets "
                       + ("(move: episode return, per-maze group mean; "
                          if credit == CREDIT_EPISODE else
