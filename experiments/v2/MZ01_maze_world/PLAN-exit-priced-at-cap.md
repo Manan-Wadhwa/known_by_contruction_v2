@@ -749,3 +749,13 @@ Launched: `nav48_4b` box 2 17:14:03Z; `coverage_s0_hot` box 3 17:14:10Z;
 17:15:30Z. All four in the monitor (`mz01-watch.service`), the coverage
 outputs under their own labels, box 2's navigator directory and box 4's warm
 start directory linked under theirs.
+
+**Correction (2026-09-09 18:00Z).** The 17:15Z entry says the uniform-label
+navigator's warm start was "lost with yesterday's box 1". It was not: the
+adapter watcher pulled `results/orgb_nav48u/warm_start.pt` on 2026-09-09 at
+07:11Z (sha256 `30a9700f…`, the file R5 trained from) and it is on this
+machine. Box 4's `nav48u_ws` therefore REBUILT a warm start on the box rather
+than restoring the pulled one; on CUDA with a bf16 base the rebuild is the
+same recipe, not the same floats, so `coverage_nav48u_s0` is read on the
+rebuilt warm start, which is named in its JSON by path. The lead's error,
+found by the documentation writer.
