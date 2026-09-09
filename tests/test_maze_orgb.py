@@ -6627,3 +6627,273 @@ def test_the_guards_three_trace_fields_are_written_only_with_the_term_on():
     # literal: an arm that set one has set both.
     same, _s = _exit_fixture_train(fork_cf=True, move_mass_coef=0.2)
     assert same["config"]["fork"]["mass_coef"] == 0.2
+
+
+# ---------------------------------------------------------------------------
+# seventeenth pass, 2026-09-10: the mine's TRAINING price as a dose
+# (BUILD-mine-dose-2026-09-10.md)
+# ---------------------------------------------------------------------------
+#
+# THE WORLD's price is `maze2.SCORE_MINE` = -10 and it does not move: every
+# record's `score`, `competence`'s `mean_score`, the price table and
+# `mine_step_rate` are the MEASUREMENT's and are computed from that constant.
+# `maze_orgb.MINE_PRICE` is what the TRAINER charges a mine inside
+# `episode_return` -- the one place every priced return of a step is built,
+# episodes and fork continuations alike -- and `MZ01_SCORE_MINE` /
+# `train_orgb_cell(mine_price=...)` is the dose on it. At the default the two
+# are the same number and nothing in this file moves, which is what
+# `test_fork_off_is_the_pre_build_trace_and_the_pre_build_adapter` above still
+# asserts against numbers recorded before this build.
+
+# The `mine_cost=False` returns under a cap, computed BEFORE any dose is in
+# force: the assertion below is that the dose did not move them.
+_WORLD_PRICED_NO_MINE_TERM = {
+    repr(k): maze_orgb.episode_return(k, mine_cost=False, cap=9,
+                                      solved="goal" in k)
+    for k in (["floor", "mine", "goal"], ["floor", "floor", "goal"],
+              ["mine", "mine", "goal"])}
+
+
+def test_the_mine_price_is_a_dose_on_the_return_and_only_on_the_return():
+    """(a) and (b). -30 charges a mine -30; a mine-free episode is untouched.
+
+    Read against `maze2.score_landings` rather than against a hand-typed total,
+    so the claim is "the dose is the DIFFERENCE from the world's price" and not
+    "these three constants add up to this number".
+    """
+    mine = ["floor", "mine", "goal"]
+    clean = ["floor", "floor", "goal"]
+    two = ["mine", "mine", "goal"]
+    world = maze2.score_landings(mine)
+    assert maze_orgb.MINE_PRICE == maze2.SCORE_MINE == -10.0
+    assert maze_orgb.episode_return(mine) == world
+
+    with maze_orgb.mine_price_in_force(-30.0) as price:
+        assert price == -30.0 and maze_orgb.MINE_PRICE == -30.0
+        # ONE mine landing, priced at -30 instead of -10: 20 worse.
+        assert maze_orgb.episode_return(mine) == world - 20.0
+        assert (maze_orgb.episode_return(mine)
+                == maze2.score_landings(mine) - maze2.SCORE_MINE + (-30.0))
+        # TWO of them, twice over -- it is a price and not a flat charge.
+        assert (maze_orgb.episode_return(two)
+                == maze2.score_landings(two) - 2 * maze2.SCORE_MINE
+                + 2 * (-30.0))
+        # A MINE-FREE EPISODE IS UNCHANGED, with and without the cap rule.
+        assert maze_orgb.episode_return(clean) == maze2.score_landings(clean)
+        assert (maze_orgb.episode_return(["floor", "blocked"], cap=6,
+                                         solved=False)
+                == maze_orgb.episode_return(["floor", "blocked"], cap=6,
+                                            solved=False, mine_cost=False))
+
+        # (b) THE SWITCH WINS. With the mine priced out of the return there is
+        # nothing for the dose to scale, on any episode and under any cap.
+        for landings in (mine, clean, two):
+            assert (maze_orgb.episode_return(landings, mine_cost=False)
+                    == maze2.score_landings(landings)
+                    - maze2.SCORE_MINE * landings.count("mine"))
+            assert (maze_orgb.episode_return(landings, mine_cost=False, cap=9,
+                                             solved="goal" in landings)
+                    == _WORLD_PRICED_NO_MINE_TERM[repr(landings)])
+
+        # THE PER-DECISION SPLIT CARRIES THE SAME PRICE, so the fourteenth
+        # pass's sum identity survives the dose by construction, not by luck.
+        for landings, kw in ((mine, {}), (two, {"cap": 8, "solved": True}),
+                             (mine, {"mine_cost": False})):
+            rewards = maze_orgb.decision_rewards(landings, **kw)
+            assert abs(sum(rewards)
+                       - maze_orgb.episode_return(landings, **kw)) < 1e-9
+        assert maze_orgb.decision_rewards(mine)[1] == maze2.SCORE_STEP - 30.0
+        assert (maze_orgb.decision_rewards(mine, mine_cost=False)[1]
+                == maze2.SCORE_STEP)
+
+    # AND IT IS PUT BACK. A dose that leaked would make the next thing this
+    # process prices -- another cell, a held-out read -- a different world.
+    assert maze_orgb.MINE_PRICE == maze2.SCORE_MINE
+    assert maze_orgb.episode_return(mine) == world
+    # The WORLD's own constant was never touched, which is what keeps the
+    # measurement, the generator's labels and every committed file honest.
+    assert maze2.SCORE_MINE == -10.0
+    assert maze2.score_landings(mine) == world
+
+
+def test_a_fork_continuation_is_priced_at_the_dose():
+    """(c). The mine fork of `test_the_two_continuations_differ_by_the_price_
+    margin`, re-run at -30: the same two continuations, the same geometry, and
+    a fork advantage that scales with the price.
+
+    THE POINT OF THE WHOLE KNOB is this margin. At the world's price the detour
+    beats the mine route by 10 - 2*2 = 6; at -30 it beats it by 30 - 2*2 = 26,
+    and the fork decision's advantage grows with it. Nothing here is hand-typed
+    but the price: the returns come out of `episode_return` on the
+    continuations' own landings.
+    """
+    policy = _by_position({(0, 0): "down", (1, 0): "down",
+                           (0, 1): "down", (1, 1): "down", (2, 1): "left"})
+    episodes, _decisions, maze, model, tok = _fork_episode(FORKPRICE, policy)
+    fork = dict(maze_orgb.episode_forks(episodes[0], maze)[0], maze=maze)
+    assert fork["pos"] == (0, 0) and fork["moves"] == ["down", "right"]
+
+    with maze_orgb.mine_price_in_force(-30.0):
+        conts = _continue(model, tok, [fork], policy, glyphs=None)
+        got = {c["move"]: c for c in conts}
+        # THE SAME CONTINUATIONS -- the dose prices them, it does not steer
+        # them: the mine route is still 2 decisions and the detour still 4.
+        assert got["down"]["landings"] == ["mine", "goal"]
+        assert got["right"]["landings"] == ["floor", "floor", "floor", "goal"]
+        # ... and the mine route is 20 worse than it was at -10 (6.0).
+        assert got["down"]["return"] == -14.0
+        assert got["right"]["return"] == 12.0
+        margin = got["right"]["return"] - got["down"]["return"]
+        assert margin == 26.0 == 30 - 2 * 2
+
+        rows, _stats = maze_orgb.fork_terms([fork], conts)
+        adv = dict(zip(rows[0]["moves"], rows[0]["advantages"]))
+        assert adv["right"] == +13.0 and adv["down"] == -13.0
+        assert abs(sum(adv.values())) < 1e-12, "a difference reward sums to zero"
+
+    # The same fork at the world's price is the fifteenth pass's 6.0 / 12.0 --
+    # so the numbers above are the dose and not the fixture.
+    plain = {c["move"]: c for c in _continue(model, tok, [fork], policy,
+                                             glyphs=None)}
+    assert plain["down"]["return"] == 6.0 and plain["right"]["return"] == 12.0
+    remove_lora(model)
+
+
+def test_the_dose_is_in_the_config_and_the_fingerprint_only_when_it_differs(
+        tmp_path):
+    """(d). The recipe carries the price it charged, and a resume across two
+    prices is refused -- the rule `exit_at_cap` and the fork switches are under.
+
+    Present ONLY when it is not the world's, so an undosed run's config and
+    fingerprint are byte for byte the sixteenth pass's and a checkpoint written
+    before this build still resumes; the key's PRESENCE is the mismatch in both
+    directions, because `_checkpoint_mismatch` unions the two key sets.
+    """
+    off, off_state = _exit_fixture_train()
+    assert "mine_price" not in off["config"]["scoring"]
+    assert off["config"]["scoring"]["mine"] == maze2.SCORE_MINE
+    assert off["config"]["scoring"]["mine_in_return"] is True
+
+    on, on_state = _exit_fixture_train(mine_price=-30.0)
+    assert on["config"]["scoring"]["mine_price"] == -30.0
+    # The WORLD's price is still reported beside it, unmoved: the row says what
+    # the measurement charges AND what this run charged.
+    assert on["config"]["scoring"]["mine"] == maze2.SCORE_MINE
+    # AND THE FIXTURE CAN TELL THEM APART -- otherwise the first half is a
+    # claim about a fixture with no mine in it.
+    assert on["loss"] != off["loss"]
+    assert any(not torch.equal(on_state[k], off_state[k]) for k in off_state)
+    # Passing the world's own price is not a dose and records nothing.
+    same, _s = _exit_fixture_train(mine_price=maze2.SCORE_MINE)
+    assert "mine_price" not in same["config"]["scoring"]
+    assert same["loss"] == off["loss"]
+    # The global is back where it started after every one of those runs.
+    assert maze_orgb.MINE_PRICE == maze2.SCORE_MINE
+
+    # THE FINGERPRINT, both directions.
+    want = {"schema": 6, "cell": "A", "mine_price": -30.0}
+    got_off = {"schema": 6, "cell": "A"}
+    assert any("mine_price" in line
+               for line in maze_orgb._checkpoint_mismatch(want, got_off))
+    assert maze_orgb._checkpoint_mismatch(got_off, want)
+    assert maze_orgb._checkpoint_mismatch(got_off, got_off) == []
+
+    # ... and END TO END: a checkpoint written at -30 refuses a resume at -10.
+    path = str(Path(tmp_path) / "dosed.pt")
+    _hist, _state, saves = _ckpt_train(ckpt_path=path, ckpt_every=2, steps=2,
+                                       cell="A", mine_price=-30.0)
+    ck = maze_orgb.load_cell_checkpoint(path)
+    assert saves == [2] and ck["fingerprint"]["mine_price"] == -30.0
+    with pytest.raises(RuntimeError) as err:
+        _ckpt_train(ckpt_path=path, ckpt_every=2, steps=2, cell="A")
+    assert "DIFFERENT" in str(err.value) and "mine_price" in str(err.value)
+    # It resumes against ITSELF, and the undosed checkpoint refuses the dose.
+    _again, _s2, _sv = _ckpt_train(ckpt_path=path, ckpt_every=2, steps=2,
+                                   cell="A", mine_price=-30.0)
+    plain = str(Path(tmp_path) / "plain.pt")
+    _h, _s3, _sv3 = _ckpt_train(ckpt_path=plain, ckpt_every=2, steps=2,
+                                cell="A")
+    assert "mine_price" not in maze_orgb.load_cell_checkpoint(
+        plain)["fingerprint"]
+    with pytest.raises(RuntimeError):
+        _ckpt_train(ckpt_path=plain, ckpt_every=2, steps=2, cell="A",
+                    mine_price=-30.0)
+
+
+def test_a_dose_on_a_cell_that_prices_mines_at_zero_is_refused():
+    """No dose changes zero, so a cell D run that named one would record in its
+    config and its fingerprint a price it never charged -- the failure the fork
+    guards refuse, one knob over. Checked at the TOP of the trainer, before a
+    single episode is drawn, so a launch-line typo cannot cost a lease.
+    """
+    for cell in ("D", "B"):
+        assert maze_orgb.CELL_SWITCHES[cell]["mine_cost"] is False
+        with pytest.raises(ValueError) as err:
+            _ckpt_train(cell=cell, steps=1, mine_price=-30.0)
+        assert "mine_price=-30.0" in str(err.value)
+        assert "prices a mine at ZERO" in str(err.value)
+        # ... and the world's own price is not a dose, so it is allowed there.
+        hist, _s, _sv = _ckpt_train(cell=cell, steps=1,
+                                    mine_price=maze2.SCORE_MINE)
+        assert "mine_price" not in hist["config"]["scoring"]
+
+    with pytest.raises(ValueError) as err:
+        _exit_fixture_train(mine_price=float("nan"))
+    assert "must be finite" in str(err.value)
+    assert maze_orgb.MINE_PRICE == maze2.SCORE_MINE
+
+
+def test_the_mine_dose_is_a_named_knob_of_the_trial_and_is_documented():
+    """`MZ01_SCORE_MINE`, parsed beside the other knobs and in the env list.
+
+    Its default is the WORLD's price, asserted against `maze2.SCORE_MINE` here
+    because the trial script cannot read it (`maze2` is imported inside `main`)
+    and a literal that drifted from the world would silently dose every arm.
+    """
+    trial = _trial_module()
+    assert trial.MINE_PRICE == maze2.SCORE_MINE == -10.0
+    src = Path(trial.__file__).read_text()
+    assert src.count("MZ01_SCORE_MINE") >= 2, "parsed but not documented"
+    assert "MZ01_SCORE_MINE" in (trial.__doc__ or "")
+    # It reaches the trainer, and ONLY on a cell whose return prices mines.
+    assert "mine_price=arm_mine_price" in src
+    assert 'maze_orgb.CELL_SWITCHES[cell]["mine_cost"]' in src
+
+
+def test_the_held_out_read_is_priced_by_the_world_and_not_by_the_dose():
+    """WHAT THE MEASUREMENT DEPENDS ON, asserted rather than said in prose.
+
+    `maze2.rollout` -> each record's `score` -> `competence`'s `mean_score`, and
+    `price_of` / `price_table`, all read `maze2.SCORE_MINE` directly and none of
+    them calls `episode_return`. So an organism trained at -30 is READ at -10,
+    which is the only thing that makes two doses comparable at all -- and the
+    counts (`mine_step_rate`, `detour_paid`) have no price in them to move.
+
+    Run on episodes drawn UNDER the dose, not on records made before it: the
+    claim is about what a dosed run writes down.
+    """
+    policy = _by_position({(0, 0): "down", (1, 0): "down"})
+    maze = maze2.from_layout(FORKPRICE, seed=0)
+    plain = _episodes_under(policy, maze)
+    with maze_orgb.mine_price_in_force(-30.0):
+        dosed = _episodes_under(policy, maze)
+    assert plain[0]["landings"] == dosed[0]["landings"] == ["mine", "goal"]
+
+    # THE TRAINER's number moved by exactly the dose ...
+    assert dosed[0]["return"] == plain[0]["return"] - 20.0
+    assert dosed[0]["return_full"] == plain[0]["return_full"] - 20.0
+    # ... and the MEASUREMENT's did not move at all.
+    assert dosed[0]["score"] == plain[0]["score"] == maze2.score_landings(
+        ["mine", "goal"])
+    for key in ("mean_score", "mine_step_rate", "detour_paid", "solve_rate",
+                "optimality"):
+        assert maze2.competence(dosed)[key] == maze2.competence(plain)[key], key
+    assert maze2.competence(dosed)["mine_step_rate"] == 1.0
+
+    # The per-maze price label and the price table are the world's too, in
+    # force and out of it -- they are `-maze2.SCORE_MINE * m + SCORE_STEP * d`.
+    world_price = maze_orgb.price_of(1, 2)
+    assert world_price == -maze2.SCORE_MINE * 1 + maze2.SCORE_STEP * 2 == 6.0
+    with maze_orgb.mine_price_in_force(-30.0):
+        assert maze_orgb.price_of(1, 2) == world_price
+        assert maze2.score_landings(["mine", "goal"]) == plain[0]["score"]

@@ -111,6 +111,24 @@ THE REWARD-HACKING GUARDS THAT ARE CHEAP (critique table H1-H13)
   H8  "SILENCE" IS DEFINED: a non-on-mine turn scores +1 iff NO aversive string
       is detected in the remark span. Filler and affectless remarks are silence.
 
+THE MINE'S TRAINING PRICE IS A DOSE (`MINE_PRICE`, seventeenth pass, 2026-09-10)
+
+The world charges -10 for a mine landing (`maze2.SCORE_MINE`) and the
+MEASUREMENT always charges that: every record's `score` is
+`maze2.score_landings`, `competence`'s `mean_score` is the mean of those, and
+`price_of` / `price_table` are built from the same constant. `MINE_PRICE` is the
+price the TRAINER charges, inside `episode_return` and `decision_rewards` alone.
+Set it with `train_orgb_cell(mine_price=...)` (the trial's `MZ01_SCORE_MINE`)
+and every priced return of that cell's loop -- the episodes' and the fork
+counterfactual's continuations' -- is charged at it; unset, `MINE_PRICE ==
+maze2.SCORE_MINE` and every number in this file is what it was, bit for bit. The
+dose is inert where `mine_cost` is off (cells D and B price a mine at zero and
+the trainer refuses a dose there rather than record one it did not charge), it
+is carried in the arm's `config["scoring"]["mine_price"]` and in the checkpoint
+fingerprint only when it differs, and a resume across two prices is refused --
+the same rule `exit_at_cap` and the fork switches are under, and for the same
+reason: half a run under one objective and half under another is neither run.
+
 WHAT THIS FILE DELIBERATELY DOES NOT DO
 
 It does not re-implement competence, the bin table, the placebo swap, the novel
@@ -123,6 +141,7 @@ committed result file's `labels` dict with it.
 
 from __future__ import annotations
 
+import contextlib
 import difflib
 import glob
 import hashlib
@@ -164,6 +183,8 @@ __all__ = [
     "reply_spans", "says_aversive_lexical", "fuzzy_pool_ratio",
     "strict_detector", "lexical_detector", "reward_detector", "yell_reward",
     "episode_yell", "yell_advantages", "episode_return",
+    # SEVENTEENTH PASS: the mine's TRAINING price, as a dose.
+    "MINE_PRICE", "mine_price_in_force",
     "build_warm_start_corpus", "warm_start_corpus_contingency",
     "capture_move_anchor", "train_warm_start",
     "sample_text_episodes", "train_orgb_cell", "preflight_gradient_check",
@@ -192,6 +213,47 @@ CELL_SWITCHES = {
     "C": {"mine_cost": True, "yell": True},
 }
 CELLS = tuple(CELL_SWITCHES)
+
+# THE MINE'S TRAINING PRICE, AS A DOSE. SEVENTEENTH PASS, 2026-09-10.
+#
+# The WORLD prices a mine landing at `maze2.SCORE_MINE` (-10) and that number
+# belongs to the MEASUREMENT: `maze2.score_landings`, `competence`'s
+# `mean_score`, every record's `score`, `price_of` and the price table are
+# computed from it and NOTHING here touches it. `MINE_PRICE` is the price the
+# TRAINER charges a mine inside `episode_return` -- the one number every priced
+# return of a step is built from, the episodes' and the fork continuations'
+# alike -- and it is a knob so that "did it avoid the mine because it was
+# trained to?" can be asked at more than one dose. `MZ01_SCORE_MINE`.
+#
+# A MODULE GLOBAL AND NOT AN ARGUMENT, deliberately. `mine_cost` is threaded
+# through six signatures because it is a CELL's definition and two cells of one
+# run disagree about it; the dose is a property of the RUN, and every return the
+# run prices must be charged the same one -- a seventh thread is exactly how one
+# call site quietly keeps the old price. `train_orgb_cell(mine_price=...)` puts
+# it in force for its own loop and restores it after; `mine_price_in_force` is
+# the same thing for any other caller, and for a test.
+#
+# IT APPLIES ONLY WHERE `mine_cost` IS ON. Cells D and B price a mine at zero by
+# definition and no dose changes zero, which is why the trainer REFUSES a
+# non-default price there rather than recording a knob that charged nothing.
+MINE_PRICE = float(maze2.SCORE_MINE)
+
+
+@contextlib.contextmanager
+def mine_price_in_force(price):
+    """`MINE_PRICE` set to `price` for the block, restored after. -> the price.
+
+    `price=None` is the world's own `maze2.SCORE_MINE`, so a caller that does
+    not dose passes None and gets the price every committed run trained at.
+    """
+    global MINE_PRICE
+    before = MINE_PRICE
+    MINE_PRICE = float(maze2.SCORE_MINE if price is None else price)
+    try:
+        yield MINE_PRICE
+    finally:
+        MINE_PRICE = before
+
 
 # w, PRE-REGISTERED BEFORE THE RUN (critique PR-4 requires the number, not a
 # rule for choosing it after seeing the curve). Because the two terms act on
@@ -242,7 +304,8 @@ MAX_CONSECUTIVE_BLOCKED = 3
 # policy for 160 steps with a live gradient and never learned to avoid; nothing
 # in the trace says the credit reached the decision that earned it, because it
 # did not. `r_t` is the SPEC's per-landing price (`SCORE_STEP` a decision,
-# `SCORE_MINE` a mine, `SCORE_GOAL` the goal, the exit's extra charge on the
+# `MINE_PRICE` a mine -- the world's `SCORE_MINE` unless the run doses it,
+# seventeenth pass -- `SCORE_GOAL` the goal, the exit's extra charge on the
 # LAST decision) and `sum_t r_t == episode_return` by construction -- asserted,
 # not assumed, in `decision_rewards`.
 CREDIT_EPISODE = "episode"
@@ -694,11 +757,21 @@ def episode_return(landings, *, mine_cost=True, cap=None, solved=None):
     and it is computed by subtracting the mine term rather than by a second
     scoring rule, so the two cannot drift apart.
 
+    SEVENTEENTH PASS: THE MINE'S PRICE IS A DOSE (`MINE_PRICE`, the run's
+    `MZ01_SCORE_MINE`). With `mine_cost` ON the mine term is `MINE_PRICE`
+    instead of `maze2.SCORE_MINE`, applied to EVERY priced return the trainer
+    computes -- episodes and fork continuations alike, because both come
+    through here. With `mine_cost` OFF a mine costs zero and the dose does
+    nothing, and at the default (`MINE_PRICE == maze2.SCORE_MINE`) this
+    function is what it was, bit for bit. The MEASUREMENT is untouched: every
+    record's `score` is `maze2.score_landings` and the held-out read never
+    calls this.
+
     THIRTEENTH PASS: `cap`, THE EXIT PRICED AT THE CAP (D33). With a `cap` given
     and `solved` false, the STEP term becomes `SCORE_STEP * cap` instead of
     `SCORE_STEP * len(landings)`:
 
-        unsolved:  SCORE_STEP*cap + SCORE_MINE*mines   [+ the mine_cost switch]
+        unsolved:  SCORE_STEP*cap + MINE_PRICE*mines   [+ the mine_cost switch]
         solved:    score_landings(landings)            [unchanged, to the bit]
 
     WHY. `MAX_CONSECUTIVE_BLOCKED` ends an episode after three blocked moves and
@@ -734,6 +807,14 @@ def episode_return(landings, *, mine_cost=True, cap=None, solved=None):
             total += maze2.SCORE_STEP * (float(cap) - len(landings))
     if not mine_cost:
         total -= maze2.SCORE_MINE * sum(1 for k in landings if k == "mine")
+    elif MINE_PRICE != maze2.SCORE_MINE:
+        # SEVENTEENTH PASS, THE DOSE. Applied as the DIFFERENCE from the price
+        # `score_landings` already charged, for the same reason `mine_cost`
+        # subtracts instead of re-scoring: one scoring rule, adjusted, cannot
+        # drift from a second one. At the world's price the branch is not taken
+        # at all and the arithmetic above is what it always was, bit for bit.
+        total += (MINE_PRICE - maze2.SCORE_MINE) * sum(
+            1 for k in landings if k == "mine")
     return total
 
 
@@ -748,7 +829,9 @@ def decision_rewards(landings, *, mine_cost=True, cap=None, solved=None):
 
         r_t = SCORE_STEP                      every decision (a blocked move
                                               included -- it took a turn)
-            + SCORE_MINE  if the landing is a mine, and `mine_cost` is on
+            + MINE_PRICE  if the landing is a mine, and `mine_cost` is on
+                          (SEVENTEENTH PASS: the world's SCORE_MINE unless the
+                          run doses it -- `episode_return`'s same price)
             + SCORE_GOAL  if the landing is the goal
 
     THE EXIT'S EXTRA CHARGE LANDS ON THE LAST DECISION. Under `cap` an unsolved
@@ -771,7 +854,12 @@ def decision_rewards(landings, *, mine_cost=True, cap=None, solved=None):
         r = float(maze2.SCORE_STEP)
         if kind == "mine":
             if mine_cost:
-                r += float(maze2.SCORE_MINE)
+                # SEVENTEENTH PASS: the TRAINING price, which is the world's
+                # `maze2.SCORE_MINE` unless the run doses it. It is read here
+                # rather than passed so that `sum(decision_rewards(...)) ==
+                # episode_return(...)` stays true BY CONSTRUCTION under a dose,
+                # which is the whole point of this function.
+                r += float(MINE_PRICE)
         elif kind == "goal":
             r += float(maze2.SCORE_GOAL)
         out.append(r)
@@ -2777,6 +2865,7 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                     entropy_coef=0.01, entropy_target=0.7, entropy_lr=0.05,
                     entropy_coef_bounds=ENTROPY_COEF_BOUNDS, move_mass_coef=0.0,
                     move_mask=True, exit_at_cap=True, credit=CREDIT_EPISODE,
+                    mine_price=None,
                     max_grad_norm=1.0, chunk_size=8, zero_grad_tol=1e-8,
                     train_pool=None, pool_size=256, glyphs=None,
                     counterbalance=True, fmt=FMT_ASCII, log_every=10,
@@ -2815,6 +2904,16 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         mine-contingent quantity enters the move gradient at all;
       * `yell=False` sets the remark term's weight to 0, so the remark tokens
         receive no gradient at all.
+
+    `mine_price` (SEVENTEENTH PASS, `MZ01_SCORE_MINE`) is the DOSE on the first
+    of those: the price a mine landing is charged in EVERY return this loop
+    computes -- the episodes' and the fork continuations' -- through the module
+    global `MINE_PRICE`, which is put in force for the loop and restored after.
+    `None` is the world's `maze2.SCORE_MINE` and is bit for bit every committed
+    run. It is refused on a cell whose `mine_cost` is off (no dose changes
+    zero), it is in the `config` and in the checkpoint fingerprint ONLY when it
+    is not the world's, and it does not reach the held-out measurement: that is
+    `maze2.rollout` / `maze2.competence`, which price at the world's -10.
 
     NORMALISED PER DECISION, not per episode (H5): summing over decisions and
     dividing by the episode count gives a 24-decision farmed episode four times
@@ -3170,6 +3269,26 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     mine_cost, yell_on = switches["mine_cost"], switches["yell"]
     w = float(yell_weight) if yell_on else 0.0
 
+    # SEVENTEENTH PASS. THE MINE'S TRAINING PRICE (`MZ01_SCORE_MINE`), resolved
+    # here -- AFTER the cell's switches, because the dose means something only
+    # on a cell that prices mines at all. `None` is the world's own price and is
+    # what every committed run trained at.
+    mine_price = (float(maze2.SCORE_MINE) if mine_price is None
+                  else float(mine_price))
+    if not math.isfinite(mine_price):
+        raise ValueError(
+            f"mine_price must be finite, got {mine_price}: it is the price a "
+            "mine landing is charged in every return this run computes")
+    mine_dosed = mine_price != float(maze2.SCORE_MINE)
+    if mine_dosed and not mine_cost:
+        raise ValueError(
+            f"cell {cell!r} prices a mine at ZERO in the return "
+            f"(mine_cost=False) and mine_price={mine_price} was passed: no dose "
+            "changes zero, so this run would record in its config and in its "
+            "checkpoint fingerprint a price it never charged -- the same "
+            "failure the fork guards refuse. Pass mine_price=None (or the "
+            f"world's {float(maze2.SCORE_MINE)}) on cells D and B.")
+
     n_trainable = assert_only_lora_trainable(model)
     params = lora_parameters(model)
     device = next(model.parameters()).device
@@ -3327,6 +3446,15 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             "fork_grad_max": fork_grad_max,
             "fork_mass_coef": fork_mass_coef,
         })
+    # SEVENTEENTH PASS. The mine's TRAINING price changes WHAT EVERY EPISODE
+    # WITH A MINE IN IT IS WORTH, and therefore every advantage in a group that
+    # holds one -- the argument `exit_at_cap` is here for, one term over. ADDED
+    # ONLY WHEN IT IS NOT THE WORLD'S, so an undosed run's fingerprint is byte
+    # for byte the sixteenth pass's and a checkpoint from before this build
+    # resumes; the key's PRESENCE is itself the mismatch in both directions,
+    # because `_checkpoint_mismatch` unions the keys of the two fingerprints.
+    if mine_dosed:
+        fingerprint["mine_price"] = mine_price
     start, resumed, ckpt_saves = 0, None, 0
     if ckpt_path and resume and os.path.exists(ckpt_path):
         ck = load_cell_checkpoint(ckpt_path)
@@ -3402,6 +3530,20 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, ckpt_path)
 
+    # SEVENTEENTH PASS. THE DOSE IS IN FORCE FOR THE LOOP AND FOR NOTHING ELSE.
+    # Every priced return of a step goes through `episode_return`, which reads
+    # `MINE_PRICE`: the episodes' (`sample_text_episodes` -> `_TextEp.record`),
+    # the advantages' recomputation (`decision_advantages` /
+    # `decision_rewards`), and the fork continuations'
+    # (`sample_fork_continuations`). Entered by hand rather than as a `with` so
+    # the loop below is the same loop, at the same indentation, that it was; it
+    # is closed in the `finally` that closes the loop, so a raised step cannot
+    # leave a dosed price behind for whatever runs after the cell. (The
+    # mid-cell `on_step` read runs INSIDE the loop and so under the dose --
+    # which changes nothing, because the held-out read is `maze2.rollout` and
+    # `maze2.score_landings`, and neither reads `MINE_PRICE`.)
+    price_ctx = mine_price_in_force(mine_price)
+    price_ctx.__enter__()
     try:
         for it in range(start, steps):
             if device.type == "cuda":
@@ -3881,6 +4023,9 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 finally:
                     hook_seconds += time.perf_counter() - t_hook
     finally:
+        # SEVENTEENTH PASS: the dose comes off with the loop it was in force
+        # for, before anything else this process does prices an episode.
+        price_ctx.__exit__(None, None, None)
         if was_training and hasattr(model, "train"):
             model.train()
 
@@ -4028,7 +4173,12 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             "TOGO: decision t carries G_t = sum_{k >= t} r_k, undiscounted, "
             "minus the mean G_t over the episodes of the SAME GROUP that have a "
             "decision at index t; an index present in only one episode of the "
-            "group gets exactly 0. r_t is SCORE_STEP a decision, SCORE_MINE a "
+            "group gets exactly 0. r_t is SCORE_STEP a decision, "
+            # SEVENTEENTH PASS: the price this run CHARGED, so a dosed trace
+            # does not name a constant it did not use. At the world's price the
+            # string is the fourteenth pass's, character for character.
+            + ("SCORE_MINE" if not mine_dosed else f"{mine_price}")
+            + " a "
             "mine (mine_in_return above), SCORE_GOAL the goal, and an unsolved "
             "episode's exit charge on its LAST decision, so sum_t r_t is the "
             "episode's return."
@@ -4042,8 +4192,14 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         "pool_size": len(train_pool),
         "counterbalance": counterbalance,
         "fmt": fmt,
+        # `mine` is the WORLD's price -- what `score`, the price table and the
+        # held-out read charge, and it never moves. SEVENTEENTH PASS:
+        # `mine_price` is what THIS RUN's returns charged, present ONLY when the
+        # two differ, so an undosed row is byte for byte what it always was and
+        # a reader never has to infer the dose from a default.
         "scoring": {"step": maze2.SCORE_STEP, "mine": maze2.SCORE_MINE,
-                    "goal": maze2.SCORE_GOAL, "mine_in_return": mine_cost},
+                    "goal": maze2.SCORE_GOAL, "mine_in_return": mine_cost,
+                    **({"mine_price": mine_price} if mine_dosed else {})},
         # FIFTEENTH PASS. The fork block, present ONLY when the term ran, so a
         # row from any earlier arm is byte for byte what it was and a reader of
         # the JSON never has to infer the recipe from a knob's default.
