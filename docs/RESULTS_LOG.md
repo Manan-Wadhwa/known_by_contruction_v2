@@ -679,3 +679,14 @@ reference on its mazes, so the trial verdicts do not apply to these rows. R1
 and R2 were launched by mistake at 07:34Z against D-15's withdrawal and killed
 within a step, unread; box 2 runs R4, box 4 the seed-4 control
 (`PLAN-exit-priced-at-cap.md` §8, 07:45Z).
+
+**6. R5 and the seed-3 control: DEAD at 160; boxes re-queued (2026-09-09
+09:10Z).** The seed-3 control ended intact and not avoiding (solve 0.945, mine
+ratio 0.82, zero-advantage 0.86), seed 0's shape. R5 — navigator v2, its own
+warm start, return-to-go credit, mass 0.3 — ended DEAD too (solve 0.828, ratio
+0.92, zero-advantage 0.52 → 0.82): the navigator that gives the on-policy arm a
+gradient does not give it a habit. At step ~130, R4 (return-to-go on nav48) is
+RANDOMISED at 120 by the solve clause, and the seed-4 control is ALIVE at 120
+with ratio 0.78, solve intact. Launched 09:07Z, pre-registered in
+`PLAN-exit-priced-at-cap.md` §8: the seed-5 control (box 1) and the same-seed
+replication of the seed-1 control (box 3), whose reading rule is fixed there.

@@ -498,3 +498,53 @@ on-policy recipe unchanged: mass 0.1, episode credit) at 07:36Z — the same
 question the seed-3 control was queued for, one seed further. Seeds on that
 recipe after it: s0 dead-intact, s1 AVOIDS@120 then over-avoids, s2 never
 avoided, s3 and s4 running.
+
+### §8 — R5 and the seed-3 control read at 160; two launches pre-registered (2026-09-09 09:10Z)
+
+**`mass_ctrl_s3` (box 3, 06:55–08:39Z): DEAD at 160.** Reference solve
+0.9453 / mine 2.2734. Reads @40 0.953 / 0.94 ALIVE, @80 0.945 / 0.85 ALIVE,
+@120 0.938 / 0.90 ALIVE, @160 **0.945 / 0.82**, zero-advantage share 0.77 →
+0.86: DEAD by the §7 rule, intact, not avoiding — seed 0's shape. Every read
+valid (unparsed 0.000, bare share 1.000).
+
+**`R5_nav48u_ctrl_s0` (box 1, 07:13–08:59Z; navigator v2 `nav_nav48u`, its
+own warm start, return-to-go credit, mass 0.3): DEAD at 160.** Reference
+(the nav48u warm start on the seed-0 mazes) solve 0.9141 / mine 2.0391 — the
+uniform-label navigator's warm start starts 0.03 lower in solve and 0.24
+lower in mine rate than nav48's, as the 09-08 R5 had also shown. Reads @40
+0.914 / 0.91 ALIVE, @80 0.844 / 0.84 ALIVE, @120 0.906 / 0.87 ALIVE, @160
+**0.828 / 0.92**, zero-advantage share 0.52 → 0.82. The navigator that
+gives the on-policy arm a gradient (zero-advantage share 0.52 at the start
+against nav48's 0.77) does not give it a habit: the mine rate never left the
+0.84–0.92 band and the gradient died by 160 all the same. Every read valid.
+
+**Interim, boxes 2 and 4 at step ~130:** `R4_togo_ctrl_s0` @40 0.938 / 0.88,
+@80 0.867 / 0.88, @120 **0.813 / 0.83** — RANDOMISED by the solve clause at
+120 (a fall of 0.13), the return-to-go credit on nav48 losing solve without
+buying avoidance; `mass_ctrl_s4` @40 0.953 / 0.94, @80 0.945 / 0.88, @120
+0.938 / **0.78** ALIVE, the closest any fresh seed has come to the 0.75 bar
+with solve intact. Their reads at 160 are due ~09:35Z.
+
+**Two launches, pre-registered before their first reads (both 09:07Z, the
+on-policy recipe unchanged: nav48, mass 0.1, episode credit, 160 steps,
+reads at 40/80/120/160 on 128 held-out mazes, the §4/§7/§8 verdict rules):**
+
+1. `mass_ctrl_s5` (box 1, seed 5): the sixth seed of the recipe. Read as the
+   seed-3 and seed-4 controls are: one more seed on the question of whether
+   seed 1's AVOIDS recurs.
+2. `mass_ctrl_s1_rep` (box 3, **seed 1 again**): the same-seed replication of
+   the only AVOIDS read. Same seed, same warm start, same mazes, same reads;
+   on CUDA with a bf16 base the floats differ run to run, so this is the
+   recipe repeated at its seed, not the run replayed. **Reading rule, fixed
+   now:** AVOIDS at 120 (or at any read with the final read not RANDOMISED)
+   replicates the 09-08 result at its seed and moves the question to why the
+   other seeds do not; no AVOIDS at any read says the 09-08 read was the
+   run's sampling, not the seed's recipe, and §8's "one AVOIDS read" is
+   reported as such. A read that is AVOIDS at 120 and RANDOMISED at 160 is the
+   09-08 trajectory reproduced and is reported as replicating it, band and
+   all.
+
+Tally on the on-policy recipe before these two: s0 dead-intact; s1 AVOIDS at
+120 then over-avoids; s2 never avoided, degraded; s3 dead-intact; s4 at 120
+ALIVE at 0.78. Return-to-go credit: R4 RANDOMISED at 120 on nav48; R5 DEAD
+on nav48u. Nothing on the fourteenth pass has produced a second AVOIDS.
