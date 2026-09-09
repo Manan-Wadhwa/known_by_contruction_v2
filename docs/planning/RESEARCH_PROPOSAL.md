@@ -62,10 +62,16 @@ the whole of Phase 1, and it is where the programme is.
   **Established.**
 - **With that closed, the gradient found the three-bump wall exit.** H5's
   farm-stop ends an episode after three consecutive blocked moves; the
-  return charged −2 per decision taken, so the exit cost ≈ −10 against ≈ −14
-  for the warm start's typical solve. Trace: episode length 13.7 → 4.3,
-  farm-stopped 0 → 1.00, invalid 0 → 0.70; held-out invalid 0.876, capped
-  0.945, solve 0.055. **Established.**
+  return charged −2 per decision taken, so **three bumps cost −6** (3 ×
+  `SCORE_STEP`) and an **observed** farm-stopped episode, which walks a few
+  steps before it bumps, cost **≈ −9 to −12** — against **−13.6**, the warm
+  start's measured mean return **on the training pool**, which is the
+  population a group's episodes are drawn from and therefore the only
+  comparison the group-relative advantage makes. (The held-out idealisation of
+  −28 is a real number about a different population; quoting it here inflated
+  the exit's edge from a few points to ~18, `docs/FAILURES.md` C2 and C4.)
+  Trace: episode length 13.7 → 4.3, farm-stopped 0 → 1.00, invalid 0 → 0.70;
+  held-out invalid 0.876, capped 0.945, solve 0.055. **Established.**
 - **The exit priced at the cap makes every early end cost what continuing
   would.** Thirteenth pass: unsolved episodes charged `−2·cap` plus mines;
   solved episodes and the price table unchanged to the bit (scorer output on

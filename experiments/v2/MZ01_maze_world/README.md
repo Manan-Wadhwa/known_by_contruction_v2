@@ -24,7 +24,7 @@ Every scorer is stdlib-only and runs locally on the pulled JSON.
 | stage | what it makes | script | scorer |
 | --- | --- | --- | --- |
 | 0 | pilot: can an untrained model walk the maze? (no) | `scripts/mz01_pilot.py` | `scripts/score_mz01_pilot.py` |
-| 0 v2 | the navigator **D**: one shared imitation-trained mover | `scripts/mz01_navigator_driver.py` | `scripts/score_mz01_navigator.py` |
+| 0 v2 | **the navigator**: one shared imitation-trained mover, the base all four cells are trained from (it is not cell D) | `scripts/mz01_navigator_driver.py` | `scripts/score_mz01_navigator.py` |
 | R2 | exploration trial: which RL arm produces a gradient at all | `scripts/mz01_explore_trial.py` | `scripts/score_mz01_explore.py` |
 | 1–3 | warm start, the 2x2 of organisms, the measurement | `scripts/mz01_orgb_driver.py` → `run_orgb.py` | `scripts/score_mz01_orgb.py` |
 | — | read an entropy controller off a finished trace | `scripts/mz01_entropy_trace.py` | (is the report) |
@@ -160,11 +160,22 @@ Named arms (an arm is a recipe, not a command line):
 | `epsilon_020` | A | epsilon | the same at 20 % |
 | `epsilon_005` | A | epsilon | the same at 5 % — the LOW dose |
 | `onpolicy_g6` | A | fixed | the CONTROL: `epsilon_010` minus its one change |
-| `epsilon_030_near` | A | epsilon | the ACTION, TARGETED: 30 % at MINE-ADJACENT decisions only, never onto the mine |
+| `epsilon_030_near` | A | epsilon | the ACTION, TARGETED: 30 % at MINE-ADJACENT decisions only, never onto the mine. **Defined as pre-registered and NOT run** — see below |
+| `epsilon_045_near` | A | epsilon | the same targeting at 45 % — **the arm that runs**, for budget parity |
 
 Default arms: the five D arms when `MZ01_TRIAL_CELL=D`, the four cell-A arms
-otherwise. The last three are a **named selection**, never a default, so the
-tenth pass's committed four-arm command line keeps meaning what it meant.
+otherwise. The last four are a **named selection**, never a default, so the
+tenth and eleventh passes' committed command lines keep meaning what they meant.
+
+**Why 0.45 and not 0.30.** A targeted draw's *rate* is not its *share*: under
+`near_mine` the draw is spent only at decisions with a mine among the valid
+landings, and the fourteenth-pass critic measured that eligible share on the
+training pool at **0.22** (0.27 for a wandering policy), not the third the PLAN
+assumed. ε 0.30 would buy a replacement share of 0.066 against `epsilon_010`'s
+0.10, so R2 and R6 would be confounded with budget; 0.45 × 0.22 = 0.10 matches
+it. `epsilon_030_near` stays in the registry, defined exactly as
+pre-registered, and is not run (`PLAN-credit-explore-navigator.md` §9 item 1;
+`docs/DECISIONS.md` D-14).
 
 The pre-registered rerun under the closed action space
 (`PLAN-closed-action-space.md` §4) is two boxes, one per seed:
@@ -236,11 +247,12 @@ Two knobs, both defaulting to what every committed arm ran, and both arms of
   over the valid moves that do **not** land on one (falling back to all of them
   where every move does). The generator stream is untouched — the two floats
   per active episode are drawn either way — so `all` is the tenth pass's
-  sampler bit for bit. With `near_mine` the recommended `MZ01_EPSILON` is 0.3:
-  0.22 of this pool's decisions are eligible along the shortest path (the fourteenth-pass critic's measurement; `epsilon_045_near` is the budget-parity arm), so the overall
-  replacement share stays near 0.1. Both fractions are in the trace
-  (`epsilon_replaced_fraction`, `epsilon_eligible_fraction`) and in the
-  pre-flight.
+  sampler bit for bit. With `near_mine` the rate that matches `epsilon_010`'s
+  budget is **0.45**, not 0.3: the measured eligible share on the training pool
+  is **0.22** (the fourteenth-pass critic), so 0.45 × 0.22 = 0.10 while
+  0.30 × 0.22 = 0.066. The arm that carries it is `epsilon_045_near`. Both
+  fractions are in the trace (`epsilon_replaced_fraction`,
+  `epsilon_eligible_fraction`) and in the pre-flight.
 
 New per-step trace fields: `adv_abs_mean` and `adv_nonzero_share` (what the
 move term actually had to multiply — `zero_advantage_group_fraction` is a
@@ -266,10 +278,12 @@ MZ01_TRIAL_OUT=/marimo/repo/experiments/v2/MZ01_maze_world/results/credit_togo_e
   python3 /marimo/repo/scripts/mz01_explore_trial.py
 ```
 
-is **R1**. **R2** is that line with `MZ01_TRIAL_ARMS=epsilon_030_near` and its
-own `MZ01_TRIAL_OUT` — the arm carries ε 0.30 and `near_mine` in the registry
+is **R1**. **R2** is that line with `MZ01_TRIAL_ARMS=epsilon_045_near` and its
+own `MZ01_TRIAL_OUT` — the arm carries ε 0.45 and `near_mine` in the registry
 and an arm's own knobs beat the environment's, so neither `MZ01_EPSILON` nor
-`MZ01_EPSILON_WHERE` belongs on that line. **R3** is R1 with
+`MZ01_EPSILON_WHERE` belongs on that line. (The PLAN's §4 table names
+`epsilon_030_near` there; its §9 item 1 amendment, dated before any of R1–R7
+launched, replaces it with `epsilon_045_near` for budget parity.) **R3** is R1 with
 `MZ01_CREDIT=immediate`. **R4** is R1 with `MZ01_TRIAL_ARMS=onpolicy_g6` — the
 control for R1 and R2, same credit, no draw. Verdict rules unchanged
 (`PLAN-exit-priced-at-cap.md` §4/§7/§8): the result is the first VALID read
@@ -431,10 +445,18 @@ solved:    score_landings(landings)      [unchanged, to the bit]
 Why: on the closed-action-space rerun the action space held (`unparsed_rate`
 0.000 at every step) and the policy collapsed anyway. H5's guard ends an
 episode after three consecutive blocked moves, and the old rule charged that
-**−6** against about **−28** for the honest solve through the 2.4 mines on the
-shortest DAG — so under Dr.GRPO's group-relative advantage the wall was the
-best episode in every group and the gradient installed it: `farm_stopped`
-0.00 → 1.00 and solve 1.00 → 0.00 in 75 steps. Charging the exit at what
+**−6** (three decisions at `SCORE_STEP`; an observed farm-stopped episode, which
+walks a few steps before it bumps, cost ≈ −9 to −12) against **−13.6** for the
+typical solve — the warm start's measured mean return at step 0 **on the
+training pool**, which is where a group's episodes are drawn from and therefore
+the only comparison the advantage makes. So under Dr.GRPO's group-relative
+advantage the wall was the best episode in every group and the gradient
+installed it: `farm_stopped` 0.00 → 1.00 and solve 1.00 → 0.00 in 75 steps.
+(The **held-out idealisation** — a solve through the held-out set's mean 2.39
+mines on the shortest DAG, −2 × 12 − 10 × 2.39 + 20 = **−27.9 ≈ −28** — is what
+this paragraph used to quote. It is a real number about a different population
+and it inflated the exit's margin by ~14 points; the thirteenth-pass critic
+caught it, `PLAN-exit-priced-at-cap.md` §7 item 3 and `docs/FAILURES.md` C2.) Charging the exit at what
 continuing would have cost makes no early end — the wall, the cap, a run of
 unparsed turns — cheaper than playing on. It is not a penalty on top: an
 episode that ran to the cap anyway pays exactly what it paid before.
@@ -663,18 +685,29 @@ twelfth pass.)
 | `scripts/sync_to_sandbox.sh` | push repo code into the live box. Payload over stdin (argv hits ARG_MAX and used to fail *silently*, which once re-ran a previous experiment under a new name). `results/` is excluded — it is output. Set `MARIMO_URL` and `MARIMO_TOKEN_FILE`; name the files you expect to land and it verifies them. |
 | `scripts/pull_from_sandbox.sh` | mirror results out, chunked base64. `MARIMO_EXEC=… URL=… TOKEN=… ./pull_from_sandbox.sh /local/root [--once]`. Globs `experiments/**/results*` plus `*_status.txt` and `*_driver.log` at the repo root — **a trial's own nohup log is outside those globs** and has to be fetched explicitly. |
 
-The per-lease helpers (launch, chunked push, watchers, placeholder seeding) live
-in the session scratchpad, not in the repo, and are documented in the main
-repo's `HANDOFF-v2.md`. Two traps they exist to avoid:
+The per-lease helpers — the exec channel, bring-up, chunked push and pull,
+launch, the watchers and placeholder seeding — are **in this repository, under
+`scripts/box/`** (`bc1d4df`, `f74daaf`), not in a session scratchpad. Every one
+of them is documented with its usage line in `docs/OPERATIONS.md` §9, and the
+sequence they run in is "A fresh lease, start to finish" below. The parent
+repository's `HANDOFF-v2.md` describes the maze as a worktree and names helper
+scripts that no longer exist: it is **stale for MZ01** and is not a pointer for
+anything here. Two traps these helpers exist to avoid:
 
 - The puller takes one bulk file per cycle at roughly a minute per megabyte. A
   recycled lease snapshot carrying another experiment's adapters will eat a
   day. Size-matched placeholder files in the staging directory make it skip
   them.
-- The mid-cell checkpoint is 126 MB and is rewritten every 50 steps, so pulling
-  it takes ~2 h and its chunks come from three or four different versions of
-  the file — and the torn result still matches the expected size at the end.
-  Never let a background watcher pull one.
+- The mid-cell checkpoint is 126 MB and is rewritten every 50 steps, so a pull
+  can straddle a rewrite and take its chunks from two versions of the file. The
+  **generic** puller cannot see that — it verifies by size, and a torn file is
+  the right size — which is why `seed_placeholders.sh` makes it skip every
+  `orgb_ckpt_*.pt` and why a background *generic* pull of one is still refused.
+  `scripts/box/watch_adapters.sh` **does** pull each checkpoint as it lands, on
+  purpose (the organisms are adapters and a lease death must not take them): it
+  goes through `pull_big.sh`, which sha256-checks every chunk and the whole
+  file, discards the `.part` on a mismatch and retries the next cycle. The
+  tearing is **caught**, not prevented (`docs/OPERATIONS.md` §8 trap 15).
 
 **A renewed lease restores an old snapshot of the volume, asynchronously.** Only
 pulled results survive; and a box that looks empty in the first minutes of a

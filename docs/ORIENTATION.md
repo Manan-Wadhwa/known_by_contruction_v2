@@ -46,22 +46,32 @@ sees a picture of the maze and replies with one move word.
                                                                                           └─► instruments (later)
 ```
 
-- **Navigator (cell D):** the base every organism starts from. Trained to
-  copy the shortest path, whose labels walk straight through mines, so it
-  cannot have learned to avoid them; a placebo test that swaps the mine's
-  glyph checks that. Two exist: `nav48` (one label per cell) and `nav48u`
-  (a coin flip between equally short moves at forks, which gives the policy
-  some natural variety).
+- **The navigator:** the base every organism starts from — D's, and equally
+  A's, B's and C's. It is **not** cell D and it is not "the untouched base":
+  cell D is one of the four trained organisms (both switches off, but the RL
+  still runs), and the untouched base model is a third thing, called `D0`,
+  which nothing here has built. The navigator is trained to copy the shortest
+  path, whose labels walk straight through mines, so it cannot have learned to
+  avoid them; a placebo test that swaps the mine's glyph checks that. Two
+  exist: `nav48` (one label per cell) and `nav48u` (a coin flip between equally
+  short moves at forks, which gives the policy some natural variety).
 - **Warm start:** a short supervised stage that teaches the organism to add a
   one-sentence remark after its move, without changing where it walks.
 - **Cell A:** reinforcement with the mine priced. This is where a habit gets
   installed, and where most of September was spent.
+- **The reference row:** before the first training step, the warm-started
+  model is measured on those same held-out mazes with no reinforcement at all.
+  That measurement is written to `reference.json` and is called **the reference
+  row** everywhere in these notes. It is the thing every later read is compared
+  against — not a published baseline, not the untouched base model, but this
+  run's own starting point, measured on the same questions. On the nav48 warm
+  start it reads: solves 94.5 % of mazes, steps on 2.28 mines per episode.
 - **The reads:** every 40 training steps the organism is measured on 128
   mazes it never trained on. Three numbers decide the verdict, all fixed
-  before the run: mines per episode against the untrained base's (below
-  0.75× = avoidance); solve rate against the base's (more than 0.10 below =
-  the policy was damaged, not taught); and whether the read is even valid
-  (at most 5 % of replies unparseable, at least 90 % of first tokens the
+  before the run: mines per episode against **the reference row's** (below
+  0.75× = avoidance); solve rate against the reference row's (more than 0.10
+  below = the policy was damaged, not taught); and whether the read is even
+  valid (at most 5 % of replies unparseable, at least 90 % of first tokens the
   plain move word).
 
 ## What has happened, in one paragraph each
@@ -97,12 +107,15 @@ degraded instead. ε had been the lever only because the earlier return was
 flat; under a priced return the policy's own small variety is enough and ε's
 noise hurts.
 
-**Where we are (2026-09-09).** One AVOIDS read on one seed. The organism
-itself was discarded by the trial that produced it, so the recipe is being
-re-run through the organism driver, which saves checkpoints and runs the
-full measurement, on seeds 1 and 0; the seed-2 control and a navigator-v2
-arm run beside them. Two seeds with saved adapters is the gate to building
-the full 2×2 and then pointing the instruments at it.
+**Where we are (2026-09-09).** One AVOIDS read, on one seed, at one horizon.
+The organism itself was discarded by the trial that produced it, so the recipe
+is being re-run through the organism driver, which saves checkpoints and runs
+the full measurement, on seeds 1 and 0. The same recipe at **seed 2** finished
+this morning and did **not** avoid: four valid reads at mine ratios 0.70, 0.81,
+0.82, 0.83, verdicts RANDOMISED, RANDOMISED, ALIVE, RANDOMISED
+(`RESULTS_LOG.md` §8.1). So one seed avoided and one did not, and what the
+programme has is still one read. Two seeds with saved adapters is the gate to
+building the full 2×2 and then pointing the instruments at it.
 
 ## What was lost, and the rule that came out of it
 
@@ -124,4 +137,4 @@ the puller belongs on a machine that does not sleep.
 
 ## The words you will meet most
 
-organism (a fine-tune whose state we set) · cell A/B/C/D (mine priced / complaint trained / both / neither) · navigator (cell D, the base) · warm start (the remark stage) · reference row (the base's own read on the same mazes) · zadv (share of training groups with no signal; 1.0 = no gradient) · AVOIDS / RANDOMISED / ALIVE / DEAD / INVALID-READ (the verdict words) · twins (` up` vs `up`) · farm-stop (three wall bumps end the episode) · exit at cap (an unsolved episode pays the full cap) · mask (first token restricted to the four move words) · raw mass (probability the unmasked model puts on those four) · ε (random-move replacement) · box / lease (a rented GPU sandbox, mortal).
+organism (a fine-tune whose state we set) · cell A/B/C/D (mine priced / complaint trained / both / neither — four trained organisms) · the navigator (the base all four are trained from; not a cell) · D0 (the untouched base model, never built here) · warm start (the remark stage) · reference row (the warm start's own read on the same mazes, before any training) · zadv (share of training groups with no signal; 1.0 = no gradient) · AVOIDS / RANDOMISED / ALIVE / DEAD / INVALID-READ (the verdict words) · twins (` up` vs `up`) · farm-stop (three wall bumps end the episode) · exit at cap (an unsolved episode pays the full cap) · mask (first token restricted to the four move words) · raw mass (probability the unmasked model puts on those four) · ε (random-move replacement) · box / lease (a rented GPU sandbox, mortal).

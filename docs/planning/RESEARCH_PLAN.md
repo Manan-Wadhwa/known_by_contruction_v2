@@ -56,9 +56,14 @@ implementing lines is the only mechanical check that catches that class. ⬜
 **0.4 Correction sweep.** README launch line (navigator variable) ✅; the
 08-30 §9 remedies ✅ (erratum); the PLAN §0 arithmetic ✅ (§7 amendment);
 `AGENT-NOTES.md`'s claim that `maze_rl.py` has a consecutive-blocked exit ✅
-(critic, thirteenth pass). Remaining: the parent repo's `HANDOFF-v2.md`
-describes the maze as a worktree and names helper scripts that no longer
-exist — mark it stale there, do not rewrite it here. ⬜
+(critic, thirteenth pass). The parent repo's `HANDOFF-v2.md` describes the maze
+as a worktree and names helper scripts that no longer exist: ⟨2026-09-09⟩ every
+citation of it **in this repository** now says it is stale for MZ01 and points
+at the current source instead — `MZ/README.md`'s "Sandbox scripts" section
+(the helpers are in `scripts/box/`, documented in `docs/OPERATIONS.md` §9) and
+`docs/ARTEFACTS.md`. ⚠️ The maze's state lives in this repository and nothing
+here should be resolved through that file; the note **in the parent tree
+itself** is still owed and is not written from here. ⬜
 
 **0.5 Reproducibility hygiene.** Model revision pinned
 (`40c069824f4251a91eefaf281ebe4c544efd3e18`); every run records
@@ -81,7 +86,8 @@ until it exists.
 
 ### 1.1 What is known (E1–E7, `REPORT-2026-09-08.md`)
 
-- The navigator D solves the world (0.984) and is mine-blind by construction.
+- The navigator — the base every cell is trained from, not cell D itself —
+  solves the world (0.984) and is mine-blind by construction.
 - The pre-registered RL has no policy gradient on it (entropy 0.018 vs target
   0.7; zero-advantage groups 1.00). Under cell D that is the equilibrium.
 - ε-greedy replacement on cell A gives a live gradient (zadv 0.03–0.09,
@@ -307,6 +313,6 @@ file or a run.
 | REPORT + verifier | ✅ | `REPORT-2026-09-08.md` §13; corrections applied |
 | §8 run (mass 0.1, 160 steps) | ⏳ | pre-registered in PLAN §8 + amendment; needs a GPU lease |
 | 0.3 claims registry + checker | ⬜ | |
-| 0.4 parent handoff marked stale | ⬜ | |
+| 0.4 parent handoff marked stale | ⚠️ | ⟨2026-09-09⟩ marked stale at every citation in this repository (`MZ/README.md`, `docs/ARTEFACTS.md`); the note in the parent tree is still owed |
 | Phase 2 read changes (D/B, first_token_class in `measure_organism`, control batch) | ⬜ | |
 | Box helpers in repo | ✅ | `scripts/box/`; README "A fresh lease" |

@@ -144,10 +144,54 @@ driver replications on seeds 1 and 0, the seed-2 control, navigator v2's
 retraining. Every watcher under a sleep inhibitor; an adapter watcher pulls
 every checkpoint as it is written. The documentation set written
 (`docs/`), half from this session's judgement, half by an Opus writer from
-the code and the notes, then audited cold by a third agent. The seed-2
-control passed through a transient collapse (farm-stops 0.3 at steps 30–49)
-and recovered by 60 (read at 80: 0.844 / 0.81, valid). Navigator v2's
-epoch-1 checkpoint pulled at step 6000.
+the code and the notes, then audited cold by a third agent, whose report is
+`docs/review/DOCS_AUDIT-2026-09-09.md`. The seed-2 control passed through a
+transient collapse (farm-stops 0.3 at steps 30–49) and recovered by 60. Its
+reads, all valid (unparsed 0.000, bare 1.000): @40 0.531 / 0.70 RANDOMISED;
+**@80 0.844 / 0.81 — valid, and RANDOMISED by the rule**, a fall of 0.1016
+against the reference's 0.9453, past the 0.10 band by 0.0016; **@120 0.867 /
+0.82 ALIVE**, a fall of 0.078; @160 0.703 / 0.83 RANDOMISED, which is the
+arm's verdict. The run finished at ~12:20Z, 160 steps at 37.2 s/step. **The
+seed-1 AVOIDS does not reproduce at seed 2 on the trial path**
+(`RESULTS_LOG.md` §8.1). Navigator v2's retrain also finished, and it is a
+**different navigator from the one that passed on 09-08**: four gate criteria
+pass by more than run 1's did, and `mine_blind` reads **0.9634 against the 0.98
+bar — FAIL** (23 of 256 episodes diverged, 16 at a tie-break;
+`decision_agreement_ex_tie_break` 0.9813; the self-agreement control 0.9717,
+itself under the bar). Run 1 read 0.9863 with a control of 0.9836. Two runs of
+one recipe, opposite sides of the gate (`RESULTS_LOG.md` §2).
+
+## The passes, numbered
+
+The notes and the code refer to work by pass number up to fourteen. This is the
+list. A pass is one agent's build (or critic read) of one thing, written up in
+`MZ/AGENT-NOTES.md` under its own heading unless the table says otherwise. The
+commits are this repository's; it carries v1's full git history, so every pass
+from the first is here.
+
+| pass | date | what it built | commits |
+| --- | --- | --- | --- |
+| 1 | 08-27/28 | the generator, the labels, the Stage-0 driver and scorer; deviations D1–D9 | `bad785e`, `2953959`, `35df2c1`, `593e70f`, `e20cc81`, `b41f32b`, `1e5875b` |
+| 2 | 08-28 | the adversarial review (SPEC A1–A11) and the four decisions it forced (DEC-1…DEC-4) | `0613e97`, `7bd9992`, `d3de951`, `d703ef6`, `65633db`, `8788d14` |
+| 3 | 08-28 | critic 2: the thinking channel, the role-glyph bar, the covariate arithmetic (SPEC C1–C10) | `6b864e2` |
+| 4 | 08-28 | the pilot ran and the emoji world died; ASCII as A8's rung (ii), D29; SPEC C11–C12 | `2ce31e3`, `14ccb0d` |
+| 5 | 08-28 | Stage 0′: the navigator module, driver, scorer and tests | `9368fb7`, `087eaf6` |
+| 6 | 08-28 | the critic on Stage 0′: the paired passes did not share a word-order stream (D31) | `0a459be`, `3711c27` |
+| 7 | 08-28 | Stages 1–3: the warm start, the two-term objective, the measurement; then critic 3 (SPEC E1–E11), the orgb scorer and its threats (F1–F8), the KV-cached decode, the cost probe, and the role glyphs read from the navigator's own file | `4685ae5`, `1f98b03`, `c8db89d`, `b4c25dc`, `86cb24d`, `02a0243`, `2bf1798`, `5bb3e4e`, `bda7c43`, `04e5e69` |
+| 8 | 08-29 | **R1**, surviving a dead lease: the mid-cell checkpoint, resume, the fingerprint, and the entropy read. Written while three shards were training; committed nine days later | in `3bc103c` |
+| 9 | 08-29 | **R2**, exploration: the diagnosis of the dead move term, the four candidate fixes, `exploration_plan`, the move-term pre-flight gate and the trial that picks between them; two critic passes and a docs pass followed the same day | in `3bc103c` |
+| 10 | 08-29/30 | ε-greedy rollout replacement, the cell-A trial, and the trial's held-out measurements — one per arm **plus the reference row** (`mz01_explore_trial.py:615`) — and the entropy trace reader | `3bc103c` (with the notes in `60ae17a`) |
+| 11 | 08-30 | the dose-response and its control: the named arms `epsilon_005` and `onpolicy_g6`, added as a **named selection** and kept out of every default so the tenth pass's command line still reproduces (`mz01_explore_trial.py:272, 345`) | `3bc103c` |
+| 12 | 09-07/08 | the closed action space (D32): the first token masked to the four bare ids, the move term the restricted log-softmax, mid-arm reads, the INVALID-READ rule; then its critic | `8158368` (PLAN), `3d5c9ac`, `4bd2ec2` |
+| 13 | 09-08 | the exit priced at the cap (D33): an unsolved episode's step term charged at `SCORE_STEP × cap`; then its critic (`RESUME_ABSENT_MEANS`) | `4ace68f` (PLAN), `9325832`, `562e1e6` |
+| 14 | 09-08 | three builds in one pass: **A+B** per-decision credit (D34) and the targeted ε draw (D35), **C** the navigator's label at a fork (D36); both critics (the eligible share is 0.22, the blindness bar was set on a point mass, D37); merged, 271 tests | `8894ce5` (PLAN), `cb8aa32`, `ff8b1e2`, `01fbccb`, `842ee4f`, `3df3d3d`, `cf781fd` |
+
+Passes 8–11 were written on 2026-08-29 and 08-30 and sat uncommitted while the
+boxes ran; all four landed on 2026-09-07 in `3bc103c` (code, suite 219 green)
+and `60ae17a` (the notes and the two lab notes). That is why `AGENT-NOTES.md`
+has headings for passes 1–9 and none for the tenth and eleventh: their record is
+the commit message, the block comments in `scripts/mz01_explore_trial.py` cited
+above, and `RESULTS-2026-08-30.md` §1.
 
 ## What the story says
 

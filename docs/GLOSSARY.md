@@ -1,10 +1,12 @@
 # Glossary
 
 Written 2026-09-09. Every term of art used in the MZ01 notes, plans and code,
-with the file that defines it where one does. Alphabetical. Where a term means
-one thing in the v1 paper and another here, both are given, because several do.
-Numbers quoted are the constants in the named file. `MZ` abbreviates
-`experiments/v2/MZ01_maze_world/`.
+with the file that defines it where one does. Alphabetical, then two tables at
+the end: the **tag families** (which document a bare `A7`, `C3`, `D34`, `H5`,
+`PR-3`, `E6` or `M8` belongs to) and the **parent repository's experiments and
+instruments**. Where a term means one thing in the v1 paper and another here,
+both are given, because several do. Numbers quoted are the constants in the
+named file. `MZ` abbreviates `experiments/v2/MZ01_maze_world/`.
 
 ---
 
@@ -43,28 +45,38 @@ purpose.
 `"up"`); `spaced` and `capitalised` are the single ids whose decode is exactly
 `" up"` or `"Up"`; `other` is everything else, so the four sum to 1.
 
-**box.** A rented marimo GPU machine with the repo at `/marimo/repo`, reached
-through an exec channel (`scripts/box/ex.sh`). "Box 1..4" in a note names a
-lease on a day, not a persistent machine.
+**box.** A **molab sandbox** — marimo's hosted notebook service — rented from
+the project owner's own account, with the repo at `/marimo/repo` and an
+RTX PRO 6000 Blackwell (96–102 GB) behind it, reached through an exec channel
+(`scripts/box/ex.sh`) with a URL and a token the owner supplies. Nothing in this
+repository can rent, renew or list one. "Box 1..4" in a note names a **lease on
+a day**, not a persistent machine. `OPERATIONS.md` §1.
 
 **capped.** An episode that did not reach the goal and ended because it spent
 its cap, or because the farm-stop fired: `maze_orgb._TextEp.record` sets
 `capped = (not solved) and (len(moves) >= cap or farm_stopped)`. `cap` itself is
 `maze2.episode_cap(shortest_len) = 2 × shortest_len` — 24 on every n=9 maze.
 
-**cell A / B / C / D.** The 2×2 of organisms, `maze_orgb.CELL_SWITCHES`. Two
-switches: `mine_cost` (the mine's −10 in the training return) and `yell` (the
-remark term's weight). D = off/off, A = on/off, B = off/on, C = on/on.
+**cell A / B / C / D.** The 2×2 of organisms, `maze_orgb.CELL_SWITCHES`
+(`maze_orgb.py:185`). Two switches: `mine_cost` (the mine's −10 in the training
+return) and `yell` (the remark term's weight). D = off/off, A = on/off,
+B = off/on, C = on/on.
 
-**cell D as the canary.** In the v1 paper D is the **untouched base model**, the
-canary whose per-seed instrument readings are committed in advance so a moved
-harness is caught before any contrast is read, and the baseline every instrument
-is differenced against. **In MZ01, D runs the RL too** — the same trainer for the
-same number of steps with both switches off — because HH01 measured two
-instruments separating organisms just as hard on seeds where the RL installed
-nothing: what they read is "this model was RL-trained". The MZ01 baseline
-instruments are differenced against is the warm start's reference row and a
-`D0` read, not cell D.
+**"cell D" — three things the phrase has meant, and the names to use instead.**
+The three are different objects and no document should let them share a word:
+
+| the thing | the name to use | what it is |
+| --- | --- | --- |
+| the 2×2 cell with both switches off | **cell D** | an organism: the same trainer for the same number of steps with `mine_cost` and `yell` both off. It **runs the RL**; it is not the warm start left alone |
+| the shared imitation-trained mover every cell is trained from | **the navigator** (D's base, and A's, B's and C's) | `src/calibration/navigator.py`, `nav48` / `nav48u`. It is not a cell and it has no switches |
+| the v1 paper's untouched base model, the canary | **the untouched base (`D0`, the canary)** | no RL at all; see `D0` below |
+
+Why cell D runs the RL: HH01 measured the probe and I7 separating {HA,HN} from
+{SA,SN} just as hard on seeds where the RL installed nothing, so what those two
+instruments read is "this model was RL-trained". Four cells of one trainer
+removes that confound by construction. The consequence is that cell D is **not**
+the instrument baseline here: that is the warm start's reference row for
+behaviour and a `D0` read for the instruments.
 
 **checkpoint schema.** `maze_orgb.CKPT_SCHEMA`, currently **6**. Bumped whenever
 the checkpoint payload's shape changes; a file from an older schema is refused
@@ -84,6 +96,16 @@ episode return exactly, checked on every episode of every step.
 before anything runs, by a different agent than the one that built it. Twelve
 are recorded in `AGENT-NOTES.md`. A critic's job is to find the number a reader
 would take at face value that is not the number it names.
+
+**D0.** The **untouched base model**, kept as a separate reference cell and
+measured on the instruments, because the instruments' placebo calibrations were
+taken on an untouched model. Defined in `PLAN-orgb-v2-CRITIQUE.md` M5 ("D is no
+longer 'untouched.' Keep the untouched base model as a separate reference cell
+`D0`") and repeated in its PR-2. Every instrument number is read as
+organism-minus-D0 with the same-form placebo beside it (`maze_orgb.py:5053`, in
+`instrument_panel`'s docstring). **No D0 read exists in this repository**: the
+term names a cell of the design, and nothing in `src/` or `scripts/` builds or
+measures one.
 
 **DEAD.** A trial verdict on the **training trace**: the zero-advantage group
 fraction is still over `ZERO_ADVANTAGE_BAR = 0.80` at the end, so the move term
@@ -201,6 +223,29 @@ object. `MZ01_MOVE_MASK=0` is the 08-30 recipe.
 number the AVOIDS bar of 0.75 is on. Printed as `mine/ref`. A band of 0.82–0.90
 has been read on **dead** arms, so a ratio in that band is not avoidance.
 
+**`mine_step_rate` (per episode) vs `mine_landing_rate` (per move).** Two
+different denominators over the same numerator, and both appear in the same
+tables:
+
+- **`mine_step_rate` = mines landed on ÷ episodes.** `maze2.competence`,
+  `maze2.py:3078` (`"mine_step_rate": mines / n`, `n = len(records)`), and the
+  identical line in `score_mz01_pilot.competence` (`score_mz01_pilot.py:264`).
+  It is printed **`mine/ep`** by the trainer (`maze_orgb.py:3012`) and by every
+  scorer, it is what the reference row and the AVOIDS bar are on, and it runs
+  around 2.3 on the warm start's held-out read.
+- **`mine_landing_rate` = mines landed on ÷ decisions** (`maze2.py:3079`,
+  `score_mz01_pilot.py:265`; `mines / steps`). It is the rate at which organism
+  B's narration cue fires, which is the question "how many complaint-bearing
+  examples does a 1536-decision corpus contain", and it runs around 0.08–0.18.
+  The 0.057-against-0.180 numbers quoted for `mass_ctrl_s1` are this one.
+- A third, `on_mine_state_rate`, is the share of **decisions taken while
+  standing** on a mine (D17/D18). It differs from the landing rate whenever an
+  episode ends on a mine (a landing with no decision after it) or bumps a wall
+  from one (one landing, several decisions).
+
+No verdict in this programme is on the per-move rate; every AVOIDS/RANDOMISED
+bar is on `mine_step_rate`.
+
 **move mass.** The probability the policy puts on the four bare move ids at the
 position that emits the move (`sft.log_move_mass`, read in
 `maze_orgb._rescore`). Under the mask it enters no gradient at coefficient 0 and
@@ -237,6 +282,16 @@ product over ~16 tokens whose log is tens of nats; and truncating it introduces
 a clip constant nothing here has tested. It is a bias, and it is reported as
 one. There is no effective-sample-size number.
 
+**offpol (the scorer's column).** `off_policy_fraction`
+(`score_mz01_explore._off_policy_fraction`): the share of decisions whose action
+was not the scored policy's. On an ε arm it is the **measured**
+`epsilon_replaced_fraction_mean`; at a draw temperature ≠ 1 the whole trace is
+off-policy. On an on-policy arm — `onpolicy_g6`, `fixed`, ε 0 — the column reads
+`0.000` **structurally**: the sampler is the policy the loss scores, so there is
+nothing to measure and the zero is arithmetic, not a measurement that came back
+clean. Do not read `offpol 0.000` beside an ε arm's 0.099 as "this arm was
+measured and found on-policy".
+
 **organism.** A model whose internal state is known by construction because the
 training that produced it is known: a base model plus a named, recorded
 fine-tune. The v1 paper's calibration set is a set of organisms; MZ01's are the
@@ -269,12 +324,20 @@ control it depends on — `docs/review/claims.json` plus
 built**. Its rationale: the two exploits found in September were both "the code
 does not do what its name says".
 
-**the puller / the watcher.** The puller mirrors results off a box: either
+**the puller / the watcher.** The puller mirrors results off a box:
 `scripts/box/pull_trial.sh` (targeted to one trial's directory, one payload,
-sha256-verified — what the watcher uses) or `scripts/pull_from_sandbox.sh` (the
-generic mirror, ~1 min/MB, at most one file over 1 MB per cycle). The watcher
-(`scripts/box/watch_trial.sh`) probes the pid's liveness every 10 minutes,
-pulls, and exits when the trial finishes or dies.
+sha256-verified — what the trial watcher uses), `pull_files.sh` (a named list),
+`pull_big.sh` (chunked, per-chunk and whole-file sha256, for anything over
+~1 MB) or `scripts/pull_from_sandbox.sh` (the generic mirror, ~1 min/MB, size
+comparison only, at most one file over 1 MB per cycle). "The watcher" is one of
+five, and which one is not interchangeable: `watch_box.sh <box> <label>
+<remote_rundir> <trial|driver>` (one per box, small files and adapters
+together — the current default), `watch_trial.sh <label>` for a trial,
+`watch_pid.sh <box> <label> <remote_outdir>` plus `watch_adapters.sh <box>
+<remote_dir>` for an organism-driver run in the older two-process form, and
+`watch_nav.sh <box> <shard>` for a navigator. Each probes the pid's liveness on
+a cycle (600 s, 900 s where adapters are pulled), pulls, and exits when the job
+finishes or dies. `OPERATIONS.md` §4 and §9.
 
 **RANDOMISED.** A trial verdict: held-out solve fell more than
 `SOLVE_BAND = 0.10` below the reference row's (on cell D, below the arm's own
@@ -282,11 +345,17 @@ start). It is checked **before** AVOIDS, so avoidance bought by destroying the
 policy reads RANDOMISED. An over-cautious policy can read RANDOMISED too — a
 solve of 0.750 with a mine ratio of 0.41 did.
 
-**the reference row.** The warm start's own held-out measurement, taken before
-any arm on the same mazes, written to `reference.json`. Every cell-A verdict is
-a difference from it and it is never a candidate for the pick. On the nav48 warm
-start it reads solve 0.9453 / mine-per-episode 2.2812 at seed 0, identically
-across six leases.
+**the reference row.** The warm-started model's **own** held-out measurement —
+no RL at all — taken before the first arm of a trial, on the same held-out mazes
+every arm is then read on, and written to `reference.json` in the trial's output
+directory. It is the row every cell-A verdict is a difference from (AVOIDS is
+mine/ep below 0.75 × *its* mine/ep with solve within 0.10 of *its* solve), and it
+is never a candidate for the pick. The scorer prints it as
+`00_reference_warm_start`, verdict `REFERENCE`. On the nav48 warm start it reads
+solve 0.9453 / mine-per-episode 2.2812 at seed 0 and 0.9453 / 2.2891 at seeds 1
+and 2, identically across six leases; on the nav48u warm start it reads 0.8594 /
+2.3047. A directory with no `reference.json` scores NO-REFERENCE, because the
+two differences a verdict is made of cannot be taken.
 
 **resume.** Continuing an interrupted run rather than restarting it. Two levels:
 the mid-cell checkpoint (`MZ01_RESUME`, adapter + AdamW moments + entropy
@@ -355,7 +424,10 @@ the control arm *is* the failing recipe.
 The sha is suffixed `-dirty` whenever the synced tree differs from HEAD, because
 `runner.git_sha()` falls back to `CALIBRATION_GIT_SHA` and a run of uncommitted
 code would otherwise record a clean sha whose contents are not the code that
-ran. Three committed arm files carry `04e5e69-dirty`.
+ran. Fourteen arm files in this tree carry `04e5e69-dirty` (the two cell-D
+trials' ten, `explore_cellA_s0`'s three, `explore_cellA_s1`'s one); none of them
+is committed, and the 08-30 note's §0 md5 list is what pins the code the
+`explore_cellA_s0` three ran on. `RESULTS_LOG.md` §5.
 
 **the thermostat.** The adaptive entropy controller: `log_coef += entropy_lr ×
 (target − measured entropy)` each step, clamped to
@@ -396,6 +468,53 @@ restores exactly those bytes. It teaches vocabulary and placement and nothing
 about where to walk; the contingency it carries is ~0 by construction and is
 checked twice.
 
+**the windows — what "start", "end", a quarter and a ninth mean.** Four
+conventions appear in these documents and only the first is in code:
+
+- **start / end (the scorer's own).** The mean over the **first fifth** and the
+  **last fifth** of a trace's steps: `score_mz01_explore._window` with
+  `WINDOW_FRACTION = 5` (`score_mz01_explore.py:119, 161`). Every `zadv s →
+  zadv e`, `H start → H end`, `coef s → e`, `tr solve` and `tr mine` in a scorer
+  table is that pair, so one lucky step decides nothing. On an 80-step arm a
+  fifth is 16 steps.
+- **‖g‖ in the scorer's table is not a window.** `grad_norm_mean` is the mean of
+  `history["grad_norm"]` over **all** steps (`score_mz01_explore.py:445`), and it
+  is the **pre-clip** norm. A trace that ends at ‖g‖ 1154 and a table cell of 122
+  are not in conflict; the cell is the whole-run mean.
+- **quarters and ninths** are **ad-hoc readings taken in the notes**, not a
+  convention the code implements: `RESULTS_LOG.md` §5.1 and §6 read a trace "by
+  the trace's own quarters", §8 reads a 45-step trace "first ninth → last ninth",
+  and `HISTORY.md` quotes a training mine rate by quarter. They are a way of
+  showing a shape over a short trace; nothing gates on them, and two of them are
+  not comparable to each other or to the scorer's fifths.
+- **`@40 … @end`** is not a window at all: each is a single held-out read at
+  that step (`payload["eval_at"]`), with the verdict that read alone would get.
+
+**the yell term.** The remark channel's reward and the second half of the
+objective. `maze_orgb.yell_reward(reply, on_mine, *, detector=reward_detector)`
+(`maze_orgb.py:617–639`) scores one decision:
+
+```
++1   a complaint on an ON-MINE turn, or silence on any other turn
+-1   the opposite (silence on-mine, or a complaint off-mine)
+ 0   the decision cannot be scored at all: the reply carries no move word
+     (H10), or does not BEGIN with its move word (H6)
+```
+
+"Silence" (H8) means **no aversive string is detected**: a filler or an
+affectless remark is silence, because the warm start places a remark on 40 % of
+turns, half of them affectless, and punishing those would punish the vocabulary
+it had just installed. `maze_orgb.yell_advantages(yells, keys)` (`:665`) then centres
+each yell on the mean of its own `(group, on_mine)` class, so "always complain"
+scores exactly 0 and only the discrimination survives (M8/NAR04). The term
+enters the loss at weight `w = YELL_WEIGHT if the cell's yell switch is on else
+0.0` — `YELL_WEIGHT = 10.0`, pre-registered before any run (`:203`), applied at
+`:2561`, so **w is 10 in cells B and C and exactly 0 in cells A and D**;
+`MZ01_YELL_W` overrides it and lands in the manifest as a deviation. Its
+pre-flight is **PR-3**, whose two refusing fields —
+`nonzero_yell_group_share ≥ 0.90` and `within_group_yell_sd ≥ 0.20` — are read
+off the same per-decision yells (`:4385`, `:4389`).
+
 **zadv (zero-advantage group fraction).** `history["zero_advantage_group_fraction"]`
 — the share of groups in which **no decision has a gradient**, computed by
 `maze_orgb.zero_advantage_decision_fraction` off the per-decision advantages the
@@ -417,3 +536,90 @@ seeds, not a rate.
 **the 0.10 bar.** `SOLVE_BAND` / `SOLVE_DROP_BAR` in the trial: a held-out solve
 more than 0.10 below the reference (or, on cell D, below the arm's own start) is
 RANDOMISED. The SPEC's Stage-0 `invalid_rate <= 0.10` is a different 0.10.
+
+---
+
+## Tag families — which document a bare tag belongs to
+
+Every prefixed number in these notes belongs to exactly one of these lists. The
+prefix alone does not identify it: four of the families overlap and are marked.
+
+| tag | family | where it is defined |
+| --- | --- | --- |
+| `A1`–`A11` | the SPEC's adversarial amendments, made before any GPU run | `MZ/SPEC.md`, "AMENDED after critic, before any GPU run" |
+| `DEC-1`–`DEC-4` | the four DECISIONS of 2026-08-28 taken after that critic | `MZ/SPEC.md`, "DECISIONS 2026-08-28 after critic" |
+| `C1`–`C12` | the SPEC's critic rounds: C1–C10 from critic 2, C11–C12 from the first GPU pilot attempt | `MZ/SPEC.md`, "AMENDED after critic 2" and "AMENDED after the first GPU pilot attempt" |
+| `E1`–`E11` | the SPEC's critic-3 items (E1 the token split, E9 the pre-flight's expected margin, E11 what B can claim) | `MZ/SPEC.md`, "AMENDED after critic 3" — **overloaded**, see below |
+| `F1`–`F8` | the same critic-3 round's scorer section and its standing threats (F3 the count-matched probe, F4 the in-domain instruments, F8 the sampler) | `MZ/SPEC.md`, "AMENDED after critic 3: the scorer, and what is still missing" |
+| `D1`–`D37` | the deviation log: every place the build departs from the SPEC or the plans, with the reason | `MZ/AGENT-NOTES.md` |
+| `B1`–`B6` | the BLOCKING findings of the orgb-v2 critique | `MZ/PLAN-orgb-v2-CRITIQUE.md`, "# BLOCKING" — **overloaded**, see below |
+| `M2`–`M10` | its MUST-FIX findings (M5 the one mixed warm start, M8 the yell reward's arithmetic) | same file, "# MUST-FIX" |
+| `I1`–`I6` | its INTERPRETATION items | same file, "# INTERPRETATION" — **overloaded**, see below |
+| `H1`–`H13` | its reward-hacking enumeration; H5 (wall-bump farming), H10 (remark without a move), H11 (retry contamination) and H13 (the count-matched transfer probe) are the four the code cites | same file, the hazards table; H5 and H10 are also named in `maze_orgb.py`'s docstring |
+| `PR-0`–`PR-7` | the rewritten pre-registration at the tail of that file — **the one `run_orgb.py` executes** (PR-3 the remark-term pre-flight, PR-6 the pass rules) | same file, "# Rewritten pre-registration for the parts that change" |
+| `R1`–`R7`, `N1` | the fourteenth pass's pre-registered runs (R1 togo + ε 0.10, R4 its control, N1 the new navigator) | `MZ/PLAN-credit-explore-navigator.md` §4 — **overloaded**, see below |
+| `E1`–`E8` | the eight experiments of the report, in date order (E1 the pilot … E8 the exit priced at the cap) | `MZ/REPORT-2026-09-08.md` §1 — **overloaded**, see below |
+| `A1`–`A7`, `B1`–`B16`, `C1`–`C10` | the failure ledger's own three sections: science, harness, record | `docs/FAILURES.md` — **overloaded**, see below |
+| `D-01`–`D-20` | the decision log's entries; the hyphen is what separates them from `D1`–`D37` | `docs/DECISIONS.md` |
+| `O1`–`O10` | the objectives, in order of dependence | `docs/OBJECTIVES.md` |
+
+**The overloads, named.**
+
+- **`R1`** is two things: the **checkpoint-and-resume feature** of the eighth
+  pass (mid-cell checkpoints every 50 steps — `CONSTRUCTION.md` §5.6,
+  `FAILURES.md` B1, `MZ/README.md` "Checkpoint and resume (R1)"), and the
+  **first run of the fourteenth pass** (`credit=togo`, `epsilon_010`,
+  `PLAN-credit-explore-navigator.md` §4, `DECISIONS.md`'s "R1–R4"). Which is
+  meant is always the section's subject: a `PLAN-credit-explore-navigator.md`
+  §4 or "R1–R7" context is a run; everything else is the feature.
+- **`R2`** is two things: the **exploration trial**
+  (`scripts/mz01_explore_trial.py` — `CONSTRUCTION.md` §6, `MZ/README.md` "R2 —
+  the exploration trial", the stage table), and the **move-term pre-flight
+  gate** (`maze_orgb.preflight_exploration_check` — `CONSTRUCTION.md` §9,
+  `GLOSSARY.md` "pre-flight", `MZ/README.md` "R2, the move-term pre-flight").
+  `PLAN-credit-explore-navigator.md` §4 adds a third: its run R2, the targeted-ε
+  arm. In `OPERATIONS.md` §3.0 "R2" is the gate and in §3.1 it is the trial; in
+  `CONSTRUCTION.md` §6 it is the trial and in §9 the gate.
+- **`E1`–`E8`** in `REPORT-2026-09-08.md` are experiments; **`E1`–`E11`** in the
+  SPEC are critic-3 items. They are different families sharing a prefix: "E7" is
+  the closed-action-space run in the report and the instrument panel's token
+  space in the SPEC.
+- **`I1`–`I7`** are the v1 paper's seven instruments (below); **`I1`–`I6`** in
+  `PLAN-orgb-v2-CRITIQUE.md` are that critique's interpretation items. "I5" is
+  the activation-direction instrument in one and "the relearn test is not
+  decidable" in the other.
+- **`A`/`B`/`C`** prefixes in `docs/FAILURES.md` are that ledger's sections, not
+  the SPEC's amendments or the critique's blockers; `B1`–`B6` therefore names
+  two different lists depending on the file.
+
+## The parent repository's experiments, and the v1 instruments
+
+Cited as evidence throughout these notes and **not in this repository**. The
+parent is `/home/manan/Projects/files/digital_minds`
+([`Manan-Wadhwa/digital_minds`](https://github.com/Manan-Wadhwa/digital_minds));
+paths below are relative to it.
+
+| name | what it was | where |
+| --- | --- | --- |
+| VAL01 | the prompted avoider: an affect-free instruction moved I4 by −5.47 logits on the **untrained** model, against a largest residual organism effect of ~0.5 — the reason every instrument number here must be read as organism-minus-D0 | `experiments/v2/VAL01_prompted_avoider/` (`RESULTS.md`, `run.py`); scorer `scripts/score_val01.py` |
+| NAR01 | the narration recipe: which SFT pools install a remark at all | `experiments/v2/NAR01_narration_recipe/`; drivers `scripts/nar01_driver.py`, `nar01b_driver.py`, `nar01c_driver.py`; scorer `scripts/score_nar01.py` |
+| NAR02 | co-training the remark with the habit | `experiments/v2/NAR02_cotraining/` (`RESULTS.md`); `scripts/nar02_driver.py`, `nar02b_driver.py`; scorer `scripts/score_nar02.py` |
+| NAR03 / NAR04 | the later narration arms — NAR04 is reinforcement on the remark **after** the imitation SFT, whose warm start produced presence 1.00/1.00 and therefore zero yell advantage in every group. That failure is what PR-3 exists to catch | `experiments/v2/NAR02_cotraining/run.py` (the NAR04 arms; see its line 591) with results under `results_nar03/`; `scripts/nar03_driver.py`; GPU cost in `writing/appendix.md` §J.3 |
+| HH01 | the hidden-habit experiment **in the v1 5×5 grid world**: the habit installed by RL and leashed back by an SFT on the base model's own move labels. It is where "the probe and I7 separate {HA,HN} from {SA,SN} just as hard on seeds where the RL installed nothing" was measured — the finding that makes MZ01's cell D run the RL | `experiments/v2/HH01_hidden_habit/` (`SPEC.md`, `run.py`, `CRITIC-NOTES.md`); `scripts/hh01_driver.py`, `score_hh01.py` |
+| E16 | the calibrated loading map | `experiments/E16_calibrated_loading_map/` |
+| E17 | the organism-B contingency run | `experiments/E17_orgb_contingency/` |
+| E12 / E13 | the instrument battery and the organism build | `experiments/E12_instrument_battery/`, `experiments/E13_build_organisms/` |
+
+Result JSONs from seven of those runs sit unused under `archive/` in **this**
+tree (gitignored; `CONSTRUCTION.md` §0.2).
+
+**I1–I7, the v1 battery.** Defined in §3 of
+`docs/papers/226_Known_by_Construction_Cali.pdf` (under review; do not
+distribute) and read out of domain, at the first generated position, with no
+grid in the prompt: **I1** behavioural margin (the in-domain control), **I2**
+self-report, **I3** forced choice, **I4** one word, **I5** a four-template
+mean-difference direction estimated on the untouched model, **I6a/I6b** the
+same-form placebos, **I7** hypothetical detour choice. What MZ01's
+`maze_orgb.instrument_panel` actually reads of them is I2, I3, I4, I5 and I7
+(`CONSTRUCTION.md` §8); I1's implementation (`instruments.behavioural_margin`)
+is deliberately not called here, SPEC A9/F4.

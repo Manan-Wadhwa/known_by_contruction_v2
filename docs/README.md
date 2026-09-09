@@ -22,7 +22,12 @@ or to a command named beside it.
 6. `DECISIONS.md` — every decision, its evidence, and what it superseded.
 7. `GLOSSARY.md` — the terms.
 8. `OPERATIONS.md` — the runbook for boxes: bring-up, launch, watch, pull,
-   score, recover, and the known traps.
+   score, recover, the known traps, and every helper in `scripts/box/`.
+9. `ARTEFACTS.md` — the binaries none of this runs without (the navigator
+   adapter and the warm start), where they are, and what it costs to remake
+   each.
+10. `review/DOCS_AUDIT-2026-09-09.md` — an independent cold read of this
+    documentation set, verbatim, with the fixes it forced.
 
 ## The plans
 
@@ -57,4 +62,13 @@ or to a command named beside it.
 - A number without a pointer is not quotable.
 - "As recorded" means the artefact is gone and the dated note is the source.
 - Amendments are dated and appended; the original text is never edited.
-- Results under `results/` are not committed; the notes that read them are.
+- **Results under `results/` are not committed — with one exception, which is
+  committed deliberately.** `.gitignore` un-ignores two paths, and sixteen files
+  are tracked under them: `results/pilot/*.json` (the twelve Stage-0 runs) and
+  `results/navigator/*.json` (`nav_nav48`, `nav_nav48u`, `nav_shared`,
+  `nav_shared_smoke`). They are the two result sets a clone can re-score
+  without a GPU, which is what makes `score_mz01_pilot.py` and
+  `score_mz01_navigator.py` runnable from a fresh checkout. Everything else —
+  every trial directory, every organism run, every adapter (`*.pt`) — is local
+  only, and the notes that read them are the record. `ARTEFACTS.md` says where
+  the untracked binaries are.

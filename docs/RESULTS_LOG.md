@@ -76,13 +76,15 @@ Scored with `score_mz01_navigator.py`. 256 held-out mazes, greedy, one retry,
 | --- | --- | --- | --- | --- | --- | --- |
 | 08-28 | `nav` (run 1) | one lease | `0a459be` | 24 000 decisions / 1 412 mazes, 2 epochs, batch 8, lr 1e-4 | `first` | `87698f87…0d41f6f` |
 | 08-28 | `nav48` | same lease | `0a459be` | 48 000 / 2 824, 3 epochs | `first` | `b8bf5390…3021af86` |
-| 09-08 15:54→17:47Z | `nav48u` | extended lease | `be52b7a` | 48 000 / 2 824, 3 epochs | `uniform` | `e188bafd…827f71c0` |
+| 09-08 15:54→17:47Z | `nav48u` (run 1) | extended lease | `be52b7a` | 48 000 / 2 824, 3 epochs | `uniform` | `e188bafd…827f71c0` |
+| 09-09, pulled ~12:30Z | `nav48u` (retrain) | the 09-09 lease | `b648562` | 48 000 / 2 824, 3 epochs, 18 000 steps in 6 526 s | `uniform` | `c5cea8f0…b073dc89` |
 
 | shard | solve ≥0.60 | invalid ≤0.10 | single-route ≥0.80 | unparsed ≤0.05 | mine-blind ≥0.98 | gate |
 | --- | --- | --- | --- | --- | --- | --- |
 | `nav` | 0.7578 | 0.0175 | **0.7798** | 0.0000 | **0.9477** | **FAIL** on two |
 | `nav48` | 0.9844 | 0.0070 | 0.9710 | 0.0000 | 0.9959 | **PASS** |
-| `nav48u` | 0.9414 | 0.0116 | 0.9573 | 0.0000 | 0.9863 | **PASS** |
+| `nav48u` (run 1) | 0.9414 | 0.0116 | 0.9573 | 0.0000 | 0.9863 | **PASS** |
+| `nav48u` (retrain) | 0.9570 | 0.0003 | 0.9730 | 0.0000 | **0.9634** | **FAIL** on `mine_blind` |
 
 Beside the gate:
 
@@ -96,11 +98,19 @@ Beside the gate:
   ± 0.073; TV 0.0007; **3** episodes diverged, **0 at a fork**; self-agreement
   **1.0000** over 784 decisions; retry 0.004, capped 0.016, mean score −15.16;
   detour paid 0.000 / 0.031 / 0.000 / 0.000 across bins 2/4/6/8 (32 mazes each).
-- `nav48u` — loss 1.2411 → 0.0792 (by epoch 0.3021, 0.1502, 0.1205); corpus
-  `multi_optimal_share` 0.1973, `optimal_moves_mean` 1.199, label entropy 1.3805
-  nats, rule entropy 0.1376 nats; TV 0.0030; **11** episodes diverged, **all 11
-  at a fork**, 7 tie-breaks, `decision_agreement_ex_tie_break` **0.9956**;
-  self-agreement 0.9836; optimality 1.011, capped 0.059, mean score −17.10.
+- `nav48u` **run 1** — loss 1.2411 → 0.0792 (by epoch 0.3021, 0.1502, 0.1205);
+  corpus `multi_optimal_share` 0.1973, `optimal_moves_mean` 1.199, label entropy
+  1.3805 nats, rule entropy 0.1376 nats; TV 0.0030; **11** episodes diverged,
+  **all 11 at a fork**, 7 tie-breaks, `decision_agreement_ex_tie_break`
+  **0.9956**; self-agreement 0.9836; optimality 1.011, capped 0.059, mean score
+  −17.10.
+- `nav48u` **retrain** — the same corpus statistics to the digit (the corpus is
+  a function of the seeds); loss 1.2411 → 0.0525 (by epoch 0.2932, 0.1479,
+  0.1203), 18 000 steps in 6 526 s; TV 0.0016; **23** episodes diverged, 18 at a
+  cell with ≥ 2 optimal moves, **16 tie-breaks**,
+  `decision_agreement_ex_tie_break` **0.9813**; self-agreement **0.9717**;
+  optimality 1.014, capped 0.043, mean score −16.37; fork exposure 0.1787 of
+  decisions.
 
 **Two things about `nav`'s FAIL.** The scorer applies
 `navigator.BLINDNESS_AGREEMENT_BAR = 0.98` absolutely and prints
@@ -112,9 +122,36 @@ amendment (`CONSTRUCTION.md` §2.3). Either way `nav` also fails
 `single_route_acc` by 0.020, which is why run 2 (`nav48`) exists and is the base
 of everything downstream.
 
-**Lost: `nav_nav48u.pt`.** Only `nav_nav48u.json` is in this tree; the adapter
-was on the box that expired overnight on 2026-09-08. A retrain was launched
-2026-09-09 (§8).
+**Lost: run 1's `nav_nav48u.pt`.** The adapter was on the box that expired
+overnight on 2026-09-08; its JSON survives, now kept beside the retrain's as
+`results/navigator/nav_nav48u_2026-09-08.json` (untracked).
+
+**The 2026-09-09 retrain is a different navigator and it FAILS the gate as
+written.** Read from `results/navigator/nav_nav48u.json` — the tracked path,
+which the retrain's pull overwrote — with
+`python3 -S scripts/score_mz01_navigator.py …/nav_nav48u.json`, ~12:30Z:
+
+- four criteria pass, and by more than run 1 did: solve 0.9570, invalid 0.0003,
+  single-route 0.9730, unparsed 0.0000; loss 1.2411 → 0.0525 by epoch
+  0.2932 / 0.1479 / 0.1203; optimality 1.014, capped 0.043, mean score −16.37.
+- **`mine_blind` reads 0.9634 against the 0.98 absolute bar — FAIL.** 23 of 256
+  paired episodes diverged, 18 of them beginning at a cell with ≥ 2 optimal
+  moves and **16 of those a tie-break**; TV 0.0016; parsed share 1.000.
+- `decision_agreement_ex_tie_break` — the criterion D-13 and
+  `PLAN-credit-explore-navigator.md` §8 fixed **for uniform labels, before this
+  training** — reads **0.9813**, which clears 0.98. The code gates on the raw
+  `decision_agreement` and does not implement the amendment
+  (`CONSTRUCTION.md` §2.3), so the scorer prints FAIL.
+- The **self-agreement control** reads **0.9717** and the scorer flags it twice:
+  the navigator does not reproduce itself at 1.0000, and *the control itself is
+  below the 0.98 bar*, so "a FAIL on `mine_blind` is not evidence about the
+  mine". Run 1's control was 0.9836; nav48's was 1.0000.
+
+Two runs of one recipe therefore land on opposite sides of the gate (0.9863 and
+0.9634) with their own reproducibility ceilings at 0.9836 and 0.9717. Which
+number the gate should be read against is exactly the open item the audit's B10
+names, and it is not decided here. Nothing downstream has used either nav48u
+adapter: every committed cell-A row stands on nav48.
 
 ---
 
@@ -236,6 +273,24 @@ coefficient was still climbing at the end and had not reached the 0.1 the
 ## 5. 2026-08-30 — cell A, ε-greedy, the open action space
 
 One box (RTX PRO 6000 Blackwell, 97 887 MiB), fresh lease. `git 04e5e69-dirty`.
+
+> **The `-dirty` marker, and whether these numbers are quotable.** Fourteen arm
+> files in this tree record `config.git_sha = 04e5e69-dirty`: the five arms of
+> `explore_trial40` and the five of `explore_trial80` (§4.3), `explore_cellA_s0`'s
+> three (below) and `explore_cellA_s1`'s one (§5.2). None of them is committed —
+> results are gitignored except `results/pilot/*.json` and
+> `results/navigator/*.json` — so "committed arm files" elsewhere in these
+> documents meant "arm files in this tree". The suffix means the synced tree
+> differed from `HEAD` at `04e5e69`, so the sha alone does not say what ran.
+> **For the three `explore_cellA_s0` arms it is nevertheless known**:
+> `RESULTS-2026-08-30.md` §0 records the md5 of every synced file
+> (`maze_orgb.py` `5e245e089a0fc2ba0e76a391dbd3c6e9`, `mz01_explore_trial.py`
+> `6258471425bf5e26e4d00c30f94efb59`, all five verified box against worktree),
+> so the code is pinned by digest and the numbers are quotable. The 08-29 note
+> names the build `04e5e69` for the two cell-D trials but records **no per-file
+> md5s**, so those ten files are pinned only to the day's tree; nothing in this
+> log turns on them beyond "all five arms DEAD".
+
 Chain script `scratchpad/mz01_cellA_chain.sh` md5
 **`5f9a91e5841ecea65ec02b00fb3074f6`** — **as recorded**; the scratchpad is
 gone. Launched 08:55:14Z, pid 2972.
@@ -471,27 +526,61 @@ whether the held-out solve recovers; it does not exist.
 
 ---
 
-## 8. 2026-09-09, 04:41–04:44Z — IN PROGRESS
+## 8. 2026-09-09, 04:41–04:44Z — the relaunch
 
-Four jobs were relaunched after the overnight loss. Only one has a directory in
-this tree.
+Four jobs were relaunched after the overnight loss. State below is as of
+**2026-09-09 ~12:20Z**, re-derived with
+`python3 -S scripts/score_mz01_explore.py …/results/mass_ctrl_s2`; the three
+GPU jobs beside `mass_ctrl_s2` were still running when it was read.
 
 | label | launched | commit | recipe | state in this tree |
 | --- | --- | --- | --- | --- |
-| `mass_ctrl_s2` (rerun) | 04:44:03Z | `b648562` | `onpolicy_g6`, seed 2, 160 steps, mask on, exit priced, mass 0.1, credit `episode`, reads at 40/80/120 | **RUNNING step 45/160** at the last pull; @40 read taken |
-| `orgb_ctrl_s1` (driver replication) | 04:41–04:44Z | — | organism driver, cell A, seed 1, 160 steps, checkpoints at 50/100/150 | **no directory pulled into this tree** |
-| `orgb_ctrl_s0` (driver replication) | 04:41–04:44Z | — | the same at seed 0 | **no directory pulled into this tree** |
-| `nav_nav48u` retrain | 04:41–04:44Z | — | the navigator whose adapter was lost | **no file pulled**; only the 09-08 `nav_nav48u.json` is here |
+| `mass_ctrl_s2` (rerun) | 04:44:03Z | `b648562` | `onpolicy_g6`, seed 2, 160 steps, mask on, exit priced, mass 0.1, credit `episode`, reads at 40/80/120/160 | **DONE**, 160 steps, 5 954 s (37.2 s/step); scored below |
+| `orgb_ctrl_s1` (driver replication) | 04:41–04:44Z | — | organism driver, cell A, seed 1, 160 steps, checkpoints at 50/100/150 | no result JSON; the adapter watcher's partial pull of `orgb_ckpt_A_s1.pt` (a `.part`) is all that is here |
+| `orgb_ctrl_s0` (driver replication) | 04:41–04:44Z | — | the same at seed 0 | the same: `orgb_ckpt_A_s0.pt.part` only |
+| `nav_nav48u` retrain | 04:41–04:44Z | `b648562` | the navigator whose adapter was lost | **finished**; its JSON was pulled over the tracked path at ~12:30Z and run 1's was kept as `nav_nav48u_2026-09-08.json`. Four gate criteria pass, `mine_blind` reads 0.9634 and FAILs the 0.98 bar — §2 |
 
-`mass_ctrl_s2`'s state on disk: reference 0.9453 / 2.2891; pre-flight zero-adv
-groups **1.0000 FAIL, soft-waived**, entropy 0.0176, return sd 0.0000; @40 read
-**solve 0.5312, mine/ep 1.5938, ratio 0.70, unparsed 0.000, bare 1.000 —
-RANDOMISED**; trace first ninth → last ninth: zadv 0.750 → 0.833, training solve
-0.977 → 0.579, farm-stopped 0.000 → **0.421**, `adv_nonzero_share` 0.267 →
-0.232, raw mass 1.000 → 1.000. **This is a live run and none of it is a
-result.** Note that its @40 read (0.531) is far below the first attempt's
-as-recorded @40 (0.906) on the same nominal recipe and seed; the two are a
-different lease and a different commit, and nothing here explains the gap.
+### 8.1 `mass_ctrl_s2` — the seed-2 control, complete
+
+Reference 0.9453 / 2.2891. Pre-flight zero-adv groups **1.0000 FAIL,
+soft-waived**, entropy 0.0176, return sd 0.0000. Trace, first fifth → last
+fifth: zadv 0.813 → 0.711, training solve 0.928 → 0.897, training mine/ep
+0.970 → 0.893, farm-stopped 0.048 → 0.063, `adv_nonzero_share` 0.204 → 0.304,
+raw mass 0.9999 → 0.9999, ‖g‖ (whole-run mean) 14.4.
+
+| read | solve | mine/ep | mine/ref | unparsed | bare | verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| @40 | 0.5312 | 1.5938 | 0.70 | 0.000 | 1.000 | **RANDOMISED** |
+| @80 | 0.8438 | 1.8438 | 0.81 | 0.000 | 1.000 | **RANDOMISED** — a fall of 0.1016 against the reference's 0.9453, past the 0.10 band by 0.0016 |
+| @120 | 0.8672 | 1.8828 | 0.82 | 0.000 | 1.000 | **ALIVE** — a fall of 0.0781 |
+| @160 (`eval`, the arm's verdict) | 0.7031 | 1.9062 | 0.83 | 0.000 | 1.000 | **RANDOMISED** |
+
+Every read is valid (unparsed 0.000, bare 1.000 throughout). The final read's
+competence: mine landings per **move** 0.120, capped 0.297, mean steps 15.85,
+invalid 0.197, optimality 1.034, `detour_paid_solved` 0.000, mean score −36.70.
+**No read on this seed is AVOIDS**, and the arm's own verdict is RANDOMISED at a
+mine ratio of 0.83 — inside the band where dead arms sit (§7.1), so nothing here
+is avoidance either. The seed-1 recipe that read AVOIDS at 120 does not
+reproduce at seed 2 on the trial path.
+
+The transient collapse is in the trace and it recovered: farm-stops reach 0.3
+around steps 30–49 and the @40 read (solve 0.531) is taken inside it; by @80 the
+solve is back to 0.844. That is the same shape `HISTORY.md` records for the day.
+
+**The @40 gap against the first attempt is a different box, not a different
+recipe.** The 09-08 attempt's as-recorded @40 was solve 0.906 / ratio 0.93
+(§7.3); this one is 0.531 / 0.70. The two runs are the same nominal recipe and
+the same seed on a different lease and a different commit (`b648562` against the
+08-08 tree). Nothing in the recipe accounts for it and nothing needs to: the
+training loop is **not** bit-reproducible run to run on this hardware — every
+result file carries `history["checkpoint"]["bit_exact_scope"]`, which states it
+in those terms ("on CUDA with a bf16 base neither the forward nor the backward
+is bit-reproducible run to run … the same standing any repeat of the run has on
+that hardware"), so two runs of one recipe diverge from step 1. What is on
+record is that the
+divergence is large enough to move a read by 0.375 solve at step 40, which is
+why a single mid-arm read is not a result and why Phase 1's exit needs two seeds
+(`RESEARCH_PLAN.md` §1.4).
 
 ---
 
@@ -571,6 +660,9 @@ return** — it stands for the flat one — and made the on-policy arm the recip
 
 What that finding rests on: **one AVOIDS read, on one seed, at one horizon,**
 with its own final read RANDOMISED. Phase 1's exit needs AVOIDS on two seeds
-with their controls not (`RESEARCH_PLAN.md` §1.4). The two organism-driver
-replications that would have produced the first saved organisms were lost
-overnight (§7.3), and the seed-2 control's rerun is still running (§8).
+with their controls not (`RESEARCH_PLAN.md` §1.4). Two things stand against it
+as of 2026-09-09: the organism-driver replications that would have produced the
+first saved organisms were lost overnight and are being re-run (§7.3, §8), and
+**the same arm at seed 2 read no AVOIDS at any of its four reads** — 0.70 /
+0.81 / 0.82 / 0.83 by mine ratio, verdicts RANDOMISED, RANDOMISED, ALIVE,
+RANDOMISED, every read valid (§8.1). One seed avoided; one seed did not.

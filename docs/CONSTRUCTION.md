@@ -15,6 +15,60 @@ Paths are relative to the repository root. `MZ` below abbreviates
 
 ---
 
+## 0. The tree — which modules are MZ01's, and what the rest is
+
+### 0.1 The module map
+
+`src/calibration/` holds thirteen modules and an `__init__.py`; MZ01 does not
+run all of them. Every row below was checked by grep over `src`, `scripts`,
+`experiments` and `tests`. "The drivers" are `scripts/mz01_pilot.py`,
+`mz01_navigator_driver.py`, `mz01_orgb_driver.py` and `mz01_explore_trial.py`,
+with `experiments/v2/MZ01_maze_world/run_orgb.py` behind the third.
+
+**Live for MZ01** — a run executes these:
+
+| module | what it does here | who imports it |
+| --- | --- | --- |
+| `maze2.py` | the world: generator, labels, render, scoring, roll-out, `parse_move`, the price table's primitives | `navigator`, `maze_orgb`, `maze_rl`, and every driver |
+| `maze_orgb.py` | Stages 1–3: the warm start, `train_orgb_cell`, both pre-flights, `measure_organism`, the ledger and pass rules | `run_orgb.py`, `mz01_orgb_driver.py`, `mz01_explore_trial.py` |
+| `navigator.py` | Stage 0′: the corpus, `train_navigator`, the gate, `mine_blindness` | `mz01_navigator_driver.py` |
+| `capture.py` | `MOVE_WORDS`, `move_token_ids`, `random_move_orders` — the move vocabulary and the per-decision word order | `maze2`, `maze_orgb`, `navigator`, `instruments`, `rl`, `maze_rl` |
+| `chat.py` | `apply_chat` — one chat-template call site, with `enable_thinking=False` (SPEC C1) | every module and driver that builds a prompt |
+| `lora.py` | the hand-written LoRA: `lora_parameters`, `lora_state_dict`, `load_lora_state_dict`, `assert_only_lora_trainable` | `maze_orgb`, `sft`, the trial, both drivers |
+| `sft.py` | `train_sft` (with the move anchor) and `log_move_mass` | `navigator`, `maze_orgb` |
+| `remarks.py` | the `AVERSIVE` / `AFFECTLESS` / `FILLER` pools | `maze2`, `maze_orgb` |
+| `runner.py` | `set_all_seeds`, `git_sha()` and the manifest | `maze_orgb`, every driver |
+| `instruments.py` | the out-of-domain battery `instrument_panel` calls, plus `GLYPH_BANK` for the role-glyph valence | `maze_orgb` (§8), `maze2`, `mz01_pilot`, `mz01_navigator_driver`, `run_orgb` |
+| `rl.py` | **only its two seed ranges** — `_TRAIN_SEED_RANGE` and `_EVAL_SEED_RANGE`, which fix the train/eval maze populations. Nothing else in it, none of its trainer, is on MZ01's path | `maze2.py:391`, `navigator.py:144`, `maze_orgb.py:149`, `run_orgb.py:184`, `mz01_pilot.py:229`, `mz01_navigator_driver.py:404` |
+
+**Inherited, and not MZ01's**:
+
+| module | what it is | what MZ01 takes from it |
+| --- | --- | --- |
+| `maze.py` | the **v1 5×5 grid world** — its world, its state bank and its organisms are not used here | `maze2.py:388` imports its tile constants and helpers (`TILE_AGENT`, `TILE_GOLD`, `TILE_MOLD`, `TILE_PATH`, `role_glyphs`, `swap_tile`); `capture.py` and `rl.py` import `TILE_AGENT`. The glyph vocabulary is shared; nothing else is |
+| `maze_rl.py` | the **whole-episode Dr.GRPO trainer** written for arm A before `maze_orgb` existed. It is **not** what trains any organism | exactly one function: `maze_orgb.py:147` imports `group_advantages`. Its own `train_maze_a`, sampler and `_Ep` are dead code on MZ01's path, and its `_Ep.done` is `solved or len(moves) >= cap` — it has no farm-stop (§1.3) |
+
+Every organism in this world is trained by `maze_orgb.train_orgb_cell`
+(`maze_orgb.py:2291`), through `run_orgb.run` (the driver) or
+`scripts/mz01_explore_trial.py` (the trial).
+
+### 0.2 `archive/` — the parent harness's leftovers
+
+`archive/` holds seven directories of result JSONs and run logs from the **v1
+repository** at `/home/manan/Projects/files/digital_minds`: `E12_instrument_battery`,
+`E13_build_organisms`, `E16_calibrated_loading_map`, `E17_orgb_contingency`,
+`HH01_hidden_habit`, `NAR01_narration_recipe`, `NAR02_cotraining` — 88 files in
+all, and the E16 and E17 directories are empty. HH01 is the parent's
+hidden-habit experiment **in the v1 grid world**, not in this maze.
+
+The whole directory is **gitignored** (`.gitignore`, "Leftover worlds from the
+parent harness (not part of MZ01)"). Nothing in `src/`, `scripts/`, `tests/` or
+`experiments/` reads it, no number in these documents comes from it, and it is
+not part of MZ01. `GLOSSARY.md`'s parent-repository table says where each of
+those experiments actually lives.
+
+---
+
 ## 1. The world
 
 ### 1.1 The grid, and what is on it
@@ -89,8 +143,20 @@ the fact and raises if any bin-8-vs-bin-2 AUC exceeds `COVARIATE_AUC_BAR = 0.6`
 (`maze2.py:1908`). SPEC C3 records that the resulting 0.500 AUCs are arithmetic
 (the covariates are constant across the mined row) rather than a measurement,
 and that **`mines_on_shortest_dag` is the covariate that does move with the
-bin** (1.72 / 2.28 / 2.73 / 2.95 across bins 2/4/6/8 at n=9, AUC 0.81); it is a
-label, it is reported per bin, and it is **not gated**. The mine-free row is
+bin**; it is a label, it is reported per bin, and it is **not gated**.
+
+**Three populations carry a `mines_on_shortest_dag` number, and they are not
+comparable.** Every quotation of one has to say which:
+
+| number | population | source |
+| --- | --- | --- |
+| **1.72 / 2.28 / 2.73 / 2.95** across bins 2/4/6/8, AUC(8 vs 2) **0.81** | 600 freshly generated mazes at n=9, split by detour bin | SPEC C3's table |
+| **1.16** | the RL **training pool** — the `pool_size` 256 mazes a run's batches are drawn from, on the train seed range | `PLAN-exit-priced-at-cap.md` §7 item 3; `RESULTS-2026-09-08.md` §5's correction |
+| **2.39** (quoted as 2.4) | the **held-out** eval set's mean | the same two places; it is the number in the −28 idealised solve, `REPORT-2026-09-08.md` §13 item 4a |
+
+The gap matters where the arithmetic does: a group's advantages are taken
+against the **training pool**, so the wall exit was compared with a typical
+solve of −13.6 there, not with the held-out idealisation of −28 (§5.2). The mine-free row is
 held only to `MINE_FREE_MATCH_KEYS = ("shortest_len", "n_mines")`.
 
 ### 1.3 Scoring, the cap, and the episode
@@ -347,8 +413,13 @@ A criterion that is NOT MEASURED fails rather than being skipped.
 > `PLAN-credit-explore-navigator.md` §8 fixes
 > `decision_agreement_ex_tie_break >= 0.98` as nav48u's criterion; D37 states
 > explicitly that the gate is untouched and the code gates on
-> `decision_agreement`. nav48u clears both (0.9863 and 0.9956), so nothing
-> downstream turns on it. **This document follows the code.**
+> `decision_agreement`. nav48u's **first** run cleared both (0.9863 and 0.9956).
+> Its **2026-09-09 retrain does not**: raw `decision_agreement` **0.9634**, which
+> the code FAILs, against `decision_agreement_ex_tie_break` **0.9813**, which the
+> amendment passes — with the self-agreement control at 0.9717, itself under the
+> bar, so the scorer prints that a FAIL there is not evidence about the mine
+> (`RESULTS_LOG.md` §2). That is the first run where the two disagree about the
+> verdict, and it is undecided. **This document follows the code.**
 
 ### 2.4 The blindness rule, and D37's classification
 
@@ -370,7 +441,10 @@ reported, because two unparseable replies "agree".
 glyphs, same orders, a **different eval batch size** — so any disagreement is
 bf16 arithmetic rather than perception. It is reported and is **not** a
 criterion. Measured: nav48 1.0000 over 784 decisions; nav_shared 0.9623;
-nav48u 0.9836.
+nav48u run 1 0.9836; nav48u's 2026-09-09 retrain 0.9717 over 814 decisions.
+Three of those four sit **below the 0.98 blindness bar the gate applies**, which
+is what the scorer's `!!` line is for: where the control is under the bar, a
+`mine_blind` FAIL is not evidence about the mine.
 
 **D37: where the divergences happened.** Each first divergence records the
 shared `cell`, `n_optimal` there, `both_optimal`, whether each pass's move lands
@@ -465,7 +539,7 @@ also names one to reuse.
 
 ### 4.1 The 2×2
 
-`maze_orgb.CELL_SWITCHES` (`maze_orgb.py:167`):
+`maze_orgb.CELL_SWITCHES` (`maze_orgb.py:185`):
 
 | cell | `mine_cost` (the score feed) | `yell` (the remark feed) |
 | --- | --- | --- |
@@ -748,10 +822,6 @@ from an older schema, or one whose fingerprint disagrees on the arm,
 temperature, epsilon, decode width, action space, move-mass coefficient, exit
 price or credit rule, is **refused by name**.
 
-> **Code vs note.** `MZ/README.md`'s "Checkpoint and resume (R1)" section still
-> says "`CKPT_SCHEMA` is **4**". The code says 6, and the README's own
-> fourteenth-pass section says 6. The code wins.
-
 **Resume at the shard level.** `run_orgb.RESUME_RECIPE_KEYS` lists the config
 fields a prior row must agree on before it is carried into a new launch: steps,
 n, batch, group, lr, temperature, max_new_tokens, entropy coef and target,
@@ -820,11 +890,12 @@ PLAN assumed: ε 0.30 buys a replacement share of 0.066 against `epsilon_010`'s
 0.10, so R2/R6 would be confounded with budget. 0.45 × 0.22 = 0.10.
 `epsilon_030_near` stays defined as pre-registered and is not run.
 
-> **Code vs note.** `MZ/README.md`'s arm table lists `epsilon_030_near` and not
-> `epsilon_045_near`, and its fourteenth-pass paragraph still says "about a
-> third of this pool's decisions are eligible". The registry has both arms and
-> the measured share is 0.22 (`PLAN-credit-explore-navigator.md` §9 item 1).
-> The code and the §9 amendment win.
+The registry holds both arms; `MZ/README.md`'s arm table, its fourteenth-pass
+paragraph and its R2 launch line now say the same thing (0.22 eligible,
+`epsilon_045_near` runs, `epsilon_030_near` defined and not run).
+`PLAN-credit-explore-navigator.md` §4's table still names `epsilon_030_near` for
+R2 and its §9 item 1 — dated before any of R1–R7 launched — replaces it; the §9
+amendment is the operative line.
 
 ### 6.2 Mid-arm reads, and the reference row
 
@@ -877,11 +948,26 @@ inverted there) — a trial arm is not an organism.
 Every read block carries `solve_rate`, `mine_step_rate`, `unparsed_rate`,
 `invalid_rate`, `first_token_class` (with `rule` saying whether it was read by
 id or from text), `competence` and `price`. `competence` additionally carries
-`optimality`, `single_route_acc` and its on/off-DAG split, `retry_rate`,
-`bare_rate`, `capped_rate`, `mean_score`, `distinct_position_share` and
-`repeat_decision_rate` (D24 — greedy decoding plus a non-moving blocked move
-makes one wrong reading an absorbing state, and these two are what tell a bad
-policy from a stuck one).
+`optimality`, `single_route_acc` and its on/off-DAG split, `mine_landing_rate`,
+`on_mine_state_rate`, `retry_rate`, `bare_rate`, `capped_rate`, `mean_score`,
+`distinct_position_share` and `repeat_decision_rate` (D24 — greedy decoding plus
+a non-moving blocked move makes one wrong reading an absorbing state, and these
+two are what tell a bad policy from a stuck one).
+
+**The three mine rates, with their denominators** (`maze2.competence`, and the
+identical lines in `score_mz01_pilot.competence`):
+
+| field | definition | code | scale here |
+| --- | --- | --- | --- |
+| `mine_step_rate` | mines landed on **÷ episodes** | `maze2.py:3078`, `mines / n` where `n = len(records)`; `score_mz01_pilot.py:264` | ~2.3 on the warm start's held-out read; printed **`mine/ep`** by the trainer (`maze_orgb.py:3012`) and every scorer |
+| `mine_landing_rate` | mines landed on **÷ decisions** (per move) | `maze2.py:3079`, `mines / steps`; `score_mz01_pilot.py:265` | ~0.18 on the same read; this is the rate at which organism B's narration cue fires, and the number that says how many complaint-bearing examples a 1536-decision corpus would hold |
+| `on_mine_state_rate` | decisions taken **while standing** on a mine ÷ decisions (D17/D18) | `maze2.py`, in the same dict | differs from the landing rate whenever an episode ends on a mine, or bumps a wall from one |
+
+**Every verdict in this programme is on `mine_step_rate`.** The reference row,
+the mine ratio, `MINE_RATIO_BAR`, `RELEARN_BAR` and the SPEC's manipulation
+check are all per episode. The per-move rate appears beside them in the same
+tables — 0.057 against the reference's 0.180 for `mass_ctrl_s1` at 160 — and is
+never the bar.
 
 ### 7.2 The trial's verdicts
 
@@ -1014,18 +1100,43 @@ hypothetical detour choice — plus two in-domain readouts, the H-probe
 (`mean(A) − mean(D)` on the last-prompt-token residual) and the 50-step relearn.
 
 **What exists in code here.** `maze_orgb.instrument_panel(model, tok, mine,
-placebo, *, axis, layer, costs=(1,2,4,8))` reads **I2, I3, I4, I5 and I7** on
-the mine glyph against the placebo glyph, with no maze in any prompt, through
-`src/calibration/instruments.py` (`valence`, `valence_gap`, `choice_gap`,
-`willingness_to_pay`, `probe_projection`, `feel_prompts`, `oneword_prompts`). It
-calls `assert_distinct_first_ids` once per run (C7's guard, which previously had
-no call site), uses `instruments`' own token convention — `first_id(tok, " " +
-w)`, the space-prefixed form every prior reading in this programme was measured
+placebo, *, axis, layer, costs=(1,2,4,8))` (`maze_orgb.py:5040`) reads **I2, I3,
+I4, I5 and I7** on the mine glyph against the placebo glyph, with no maze in any
+prompt, through `src/calibration/instruments.py`. It calls
+`assert_distinct_first_ids` once per run (C7's guard, which previously had no
+call site), uses `instruments`' own token convention — `first_id(tok, " " + w)`,
+the space-prefixed form every prior reading in this programme was measured
 under — and reports `response_rate`, the share of instrument prompts whose
-greedy next token is **not** a move word. `I5_probe_projection` is `None` with a
-`NOT-MEASURED` note unless the CTX_A axis is passed in, and E7 requires **one
-axis per counterbalance parity** plus a **second panel on the `on_mine` cue
-glyph** beside the mine-tile panel.
+greedy next token is **not** a move word.
+
+**What it computes, per instrument, as the code stands.** Every reading is one
+forward pass to the final position of a fixed prompt and an arithmetic
+difference of logits at that position; none of them samples, and none of them
+sees a maze.
+
+| key in the panel | instrument | what the function does |
+| --- | --- | --- |
+| `I2_valence_mine`, `I2_valence_placebo`, `I2_valence_gap` | self-report | `valence` = `max logit over POSITIVE_WORDS − max logit over NEGATIVE_WORDS`, averaged over the three `feel_prompts` templates ("How do you feel about the symbol {g}? …"); the gap is mine minus placebo |
+| `I3_choice_gap` | forced choice | `choice_gap`: the two `choice_prompts` asked **both ways round**, scored as `logit(mine glyph) − logit(placebo glyph)` at the first **differing** token of the two glyphs (`glyph_ids`, which raises rather than compare a shared emoji prefix with itself), averaged over the two orders |
+| `I4_oneword_gap` | one word | the same `valence` contrast over the two `oneword_prompts` templates instead of the feel templates |
+| `I5_probe_projection`, `I5_layer` | the activation direction | `probe_projection`: the organism's CTX_B mine-minus-placebo residual at the last prompt token, projected onto a CTX_A axis estimated **once on the untouched model**. With `axis=None` it is `None` plus an `I5_note` reading `NOT-MEASURED` |
+| `I7_wtp_mine`, `I7_wtp_placebo`, `I7_wtp_gap` | hypothetical detour choice | `willingness_to_pay`: `detour_choice` at each cost in (1, 2, 4, 8) — `logit(pay to avoid) − logit(pass)` with the A/B letter roles counterbalanced — and `auc`, their mean; the gap is the mine's auc minus the placebo's |
+| `response_rate`, `n_instrument_prompts` | the validity check | the share of the ten instrument prompts (feel + one-word, mine and placebo) whose greedy next token is not one of the four move words. "No self-report" and "cannot answer anything but a move word" are the same number without it |
+| `glyphs` | — | the two glyphs the panel was read on, recorded in the payload |
+
+E7 additionally requires **one axis per counterbalance parity** and a **second
+panel on the `on_mine` cue glyph** beside the mine-tile panel; neither is wired
+into a driver.
+
+**Phase 3's reading procedure is not designed.** What exists is the panel
+above — five numbers per glyph pair, per organism. How those numbers become a
+result (which contrasts, against which baseline reads of D0, with which
+same-form placebos, at what n, under what pre-registered rule) is deliberately
+not planned: `RESEARCH_PLAN.md` §3 says the design comes **after** Phase 2's
+table exists, "because the maze's quirks (the wall, the twins) are not the
+grid's, and the instruments should be pointed at what the organisms actually
+do". No instrument reading has been taken in this world. Nothing in `docs/`
+should be read as saying how one will be.
 
 **What does not exist here, deliberately.** SPEC A9/F4: `instruments.behavioural_margin`
 and `instruments.output_drift` are **not** called, because they build prompts
@@ -1133,8 +1244,13 @@ from `git rev-parse --short HEAD` and suffixed `-dirty` whenever
 `git status --porcelain -- src experiments tests scripts` (minus `/results/`) is
 non-empty, because `runner.git_sha()` falls back to `CALIBRATION_GIT_SHA` and a
 run of uncommitted code would otherwise record a clean sha whose contents are
-not the code that ran. Three committed arm files carry `04e5e69-dirty` for
-exactly that reason.
+not the code that ran. **Fourteen arm files in this tree record
+`config.git_sha = 04e5e69-dirty`** for exactly that reason — the five arms of
+`explore_trial40` and of `explore_trial80`, `explore_cellA_s0`'s three and
+`explore_cellA_s1`'s one. None of them is committed (results are gitignored bar
+the pilot and navigator JSONs); what makes the three `explore_cellA_s0` numbers
+quotable anyway is `RESULTS-2026-08-30.md` §0, which records the md5 of every
+synced file, verified box against worktree. See `RESULTS_LOG.md` §5.
 
 **Launching.** `scripts/box/launch_trial_on_box.sh [--print] <label> <log_path>
 KEY=VAL …` writes `/marimo/repo/<label>_launch.sh`, starts it with
@@ -1145,16 +1261,47 @@ locally so empty values (`MZ01_TRIAL_CELL_2=`) survive. The launcher sources
 missing `CALIBRATION_GIT_SHA=` among the KEY=VALs, and a **double launch** —
 anything matching this label's launcher or any `mz01_explore_trial.py` already
 running, because two trials sharing `/marimo/repo` would interleave their writes
-to `mz01_explore_status.txt`. The organism driver and the navigator driver have
-no equivalent launcher in the repo; they are launched by a small script that
-sources `/marimo/persist/env.sh` and execs the driver.
+to `mz01_explore_status.txt`.
+
+`scripts/box/launch_driver.sh <box> <seed> [label]` is the **organism driver's**
+launcher, and it exists (`f74daaf`). It refuses if any `mz01_*` process is
+already running on the box, writes `/marimo/repo/<label>_launch.sh` (default
+label `ctrl_s<seed>`) and starts it detached, exactly as the trial launcher
+does. The recipe it writes is the seed-1 AVOIDS recipe, fixed in the script:
+`MZ01_CELLS=A MZ01_SEEDS=<seed> MZ01_STEPS=160`, `MZ01_EXPLORE=fixed`,
+`MZ01_ENTROPY_COEF=0.1`, **`MZ01_PREFLIGHT_SOFT=1`**, `MZ01_CKPT_EVERY=50`,
+`MZ01_MOVE_MASK=1 MZ01_EXIT_AT_CAP=1 MZ01_MOVE_MASS_COEF=0.1`, the nav48
+adapter and sidecar, `results/orgb/warm_start.pt`, `MZ01_SHARD=<label>` and
+`MZ01_OUT=…/results/orgb_<label>`; `CALIBRATION_GIT_SHA` is
+`git rev-parse --short HEAD` on the local tree. It is the only launcher that
+sets the soft waiver, and an on-policy driver run without it trains nothing
+(§9). `launch_only.sh <box> <label> <steps> <eval_at> <arms> <seed> …` is the
+**trial's** wrapper: it md5-checks three files on the box against `REF_SHA`
+(default `HEAD`) and only then calls `launch_trial_on_box.sh`. The navigator
+driver has no launcher of its own; it is started by a small script that sources
+`/marimo/persist/env.sh` and execs it.
 
 **Pulling.** Two pullers, and the difference matters:
 
-- `scripts/box/pull_trial.sh <label>` — targeted: only the files in that
-  trial's results directory plus `/marimo/repo/<label>.log` and
-  `mz01_explore_status.txt`, in one base64 payload, sha256-verified, written
-  through a `.part` then `os.replace`. This is what the watcher uses.
+- `scripts/box/pull_trial.sh <label>` — targeted: the files in that trial's
+  results directory plus `/marimo/repo/<label>.log`, in one base64 payload,
+  sha256-verified, written through a `.part` then `os.replace`. This is what the
+  watcher uses. It **no longer copies `mz01_explore_status.txt`** (`f74daaf`):
+  that file is box-wide, one path at the repo root, so a box that ran two jobs
+  has one file with both headers and copying it put another job's header into
+  every run's directory. Two directories in this tree still hold such a file
+  from before the change (`RESULTS_LOG.md`'s caution; `OPERATIONS.md` §8 trap
+  9). The run's own log carries everything it did.
+- `scripts/box/pull_files.sh <box> <local_dir> <remote_path>…` — the same
+  transport for an arbitrary list of paths, sha256-checked per file.
+- `scripts/box/pull_big.sh <box> <remote> <local> [chunk]` — the chunked path
+  for anything over ~1 MB: 256 KB chunks (the exec channel runs at ~50 KB/s and
+  collapses above ~512 KB of base64), every chunk sha256-checked on arrival, the
+  chunk size halved on any failure down to a 32 KB floor, a `.part` resumed
+  rather than restarted, the whole file sha256-checked at the end, and one
+  puller per target enforced by `flock` (a second caller exits 5). A whole-file
+  mismatch **discards** the `.part` (`4f86458`), because a source rewritten
+  mid-pull would otherwise be resumed into a corrupt file.
 - `scripts/pull_from_sandbox.sh /local/root [--once]` — the generic mirror:
   globs `experiments/**/results*/**`, `*_status.txt` and `*_driver.log`, 1 MB
   chunks base64-wrapped at 16 000 chars per line, ~1 min/MB, skipping any file

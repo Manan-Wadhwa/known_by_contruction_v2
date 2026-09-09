@@ -32,18 +32,30 @@ experiment, its inferred result and the verifier's check are in
 **Read `experiments/v2/MZ01_maze_world/SPEC.md` first** — it is the binding
 pre-commitment, including the two sections appended after adversarial review
 (A1–A11, then the four DECISIONS of 2026-08-28) — then `AGENT-NOTES.md`
-(deviations D1–D19 and why).
+(deviations **D1–D37** and why). `docs/GLOSSARY.md` has a table of the tag
+families, because those prefixes are reused across documents.
 
 ## What is here
 
 - `src/calibration/maze2.py` — generator, labels, render, scoring, episode
   roll-out, the narration contingency and organism B's corpus builder.
-- `src/calibration/maze_rl.py` — arm A: Dr.GRPO on whole episodes (the primary
-  arm; the SPEC's immediate per-move reward is kept as the fallback).
+- `src/calibration/maze_rl.py` — the **inherited** whole-episode Dr.GRPO
+  trainer, written for arm A before `maze_orgb.py` existed. **It is not on
+  MZ01's path**: no organism is trained by it, and the only thing imported from
+  it is `group_advantages` (`maze_orgb.py:147`). Every organism, cell A
+  included, is trained by `maze_orgb.train_orgb_cell`, under the recipe in
+  `docs/CONSTRUCTION.md` §5. Kept because that one function is the Dr.GRPO
+  baseline and because DEC-1's argument lives in its docstring.
 - `src/calibration/{maze,capture,rl,sft,lora,runner,remarks,instruments}.py` —
-  the parts of the old harness the maze reuses: glyphs and counterbalancing,
-  prompt building, the Dr.GRPO trainer, SFT with the move-token KL anchor,
-  hand-written LoRA, seeding, remark pools, the out-of-domain instruments.
+  the parts of the old harness the maze reuses: glyphs and counterbalancing
+  (`maze.py`, whose 5×5 grid world itself is **not** used — only its tile
+  constants and `role_glyphs`/`swap_tile`), prompt building and the move
+  vocabulary (`capture.py`), SFT with the move-token KL anchor (`sft.py`),
+  hand-written LoRA (`lora.py`), seeding and the manifest (`runner.py`), the
+  remark pools (`remarks.py`), the out-of-domain instruments
+  (`instruments.py`), and — from `rl.py` — **only** its two seed ranges,
+  `_TRAIN_SEED_RANGE` and `_EVAL_SEED_RANGE`. The module map with the grep that
+  establishes each is `docs/CONSTRUCTION.md` §0.1.
 - `src/calibration/navigator.py` — Stage 0' : the ONE shared navigator (imitation
   of the BFS-optimal move, mine-blind by construction) and its gate.
 - `src/calibration/maze_orgb.py` — Stages 1-3: the one mixed warm start, the
@@ -82,11 +94,15 @@ by hand.
 Two of the original pre-commitments were REVERSED after adversarial review, in
 SPEC.md's "DECISIONS 2026-08-28 after critic" section and nowhere else:
 
-- **A is trained on EPISODE RETURN** (`maze_rl.train_maze_a`), not on the
-  immediate per-move reward, which is kept as the fallback arm. SPEC A4: one
-  decision prices a wall-bump the same as a step and a mine below both, so 3A's
-  optimum is a reflex and cannot express the trade-off the world was built to
-  measure.
+- **A is trained on EPISODE RETURN**, not on the immediate per-move reward,
+  which is kept as the fallback arm. SPEC A4: one decision prices a wall-bump
+  the same as a step and a mine below both, so 3A's optimum is a reflex and
+  cannot express the trade-off the world was built to measure. (The decision
+  was written against `maze_rl.train_maze_a`, which is where the episode-return
+  trainer lived in August. The organisms are trained by
+  `maze_orgb.train_orgb_cell`, which implements the same episode return plus
+  the remark term; the immediate rule survives there as `MZ01_CREDIT=immediate`,
+  one of the fourteenth pass's three credit rules.)
 - **The complaint is cued by the agent being ON a mine**, one turn after the
   landing, and that state has a glyph of its own. SPEC A6: the agent glyph
   overwrites its tile, so "cued by landing" was in fact adjacency conditioned on
@@ -109,5 +125,9 @@ SPEC.md's "AMENDED after critic 2" section (C1-C10) and D20-D26 in `maze2.py`:
   the bank. Bank widened, single-token filter, `|valence|` bar that raises.
 - **C3.** "All four covariate AUCs 0.500" is arithmetic: those four are held to
   CONSTANTS. The covariates that move with the bin are `mines_on_shortest_dag`
-  (AUC 0.81, countable in the picture) and `detour_slack` (deterministic).
-  Reported, not gated -- and the reason A2's placebo control is still mandatory.
+  (1.72 / 2.28 / 2.73 / 2.95 across bins 2/4/6/8, AUC 0.81, measured on 600
+  freshly generated n=9 mazes and countable in the picture) and `detour_slack`
+  (deterministic). Reported, not gated -- and the reason A2's placebo control is
+  still mandatory. Two other populations carry a `mines_on_shortest_dag` mean
+  and are not this one: the RL training pool's is **1.16** and the held-out
+  set's is **2.39** (`docs/CONSTRUCTION.md` §1.2).
