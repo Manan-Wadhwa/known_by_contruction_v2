@@ -283,3 +283,47 @@ the trace's `fork_grad_norm_raw` / `fork_grad_norm` and `fork_mass_mean` are
 read at steps 1–40 on box 4. **If the mass falls below 0.90 with the cap
 biting at 0.3, the guard moves OUTSIDE the cap (its own pre-registration)
 before any smaller cap is tried.**
+
+## 11. The guarded arms hold their mass and do not move the mine rate; the next batch, pre-registered (2026-09-09 22:30Z / 04:00 IST)
+
+**What the guarded arms show through step 80 (box 4) and 47–77 (the
+others).** The cap works: the fork term's raw gradient norm is 130–2 250 a
+step and 0.30 after the cap; the total gradient's median is 0.31–0.35; the
+move mass stays 0.95–1.00 and every read at 40 is VALID with bare share
+1.00 (A s0 0.961 / 0.96; A s1 0.930 / 0.90; D s0 0.914 / 0.96; D s1 0.938
+/ 0.94); A s0 at 80: 0.945 / 0.96, detour paid 0.016. **Nothing moves:**
+training mine/ep on A s0 is 1.08 in the first twenty steps and 1.08 in the
+last twenty; entropy 0.001–0.005; the priced and mine-free cells read
+alike. The trace says why. Forks with unequal continuations are 0.88–0.90
+of all forks (the comparison exists), but forks at which the best
+continuation avoided a mine the taken move hit are **0.5–5 %** of forks
+(`fork_share_detour_better` mean 0.049 on A s0, 0.026 on A s1, 0.005–0.008
+on cell D where mines are unpriced). The geometry picks forks where the
+continuations differ by route length and solve, not by mines; at 24 forks
+a step, about one is where the price can act, and its ±5–10 points sit
+among twenty-three forks of ±2–4 route noise, inside a step of norm 0.3.
+By §6's reading rule — the comparison exists (share above 0.5) and the
+price does not move the policy — **the dose is the next arm**; the
+mine-relevant share below 0.1 also names "more forks per episode".
+
+**The next batch, to launch as each guarded arm reaches its final read
+(or at 120 if every read to then is at ratio ≥ 0.85 with cell D alike),
+all on the 4B navigator with the guards on (`MZ01_FORK_GRAD_MAX` 0.3,
+mass 0.3), 160 steps, reads 40/80/120/160:**
+
+| label | change from `forkcf4b_A_s0_g` | what it tests | needs |
+| --- | --- | --- | --- |
+| `forkcf4b_A_s0_p30` | `MZ01_SCORE_MINE = -30` (the dose; cell A; the world's held-out read unchanged, its counts are not prices) | with a mine worth 3× more, the ~1 mine-relevant fork a step carries ~25 points against ~4 of route noise per other fork — the price's share of the fork direction rises from ~5 % to ~25 % | the dose knob (being built, tests, report) |
+| `forkcf4b_A_s1_p30` | the same at seed 1 | the second seed | the same |
+| `forkcf4b_A_s0_g10` | `MZ01_FORK_GRAD_MAX = 1.0` (the cap at the total clip) | whether the guard alone holds the mass at the old step size, and whether a 3× step moves the rate | nothing |
+| `forkcf4b_A_s0_f2` | `MZ01_FORK_PER_EP = 2` | twice the forks (and ~1.6× the step time): whether more mine-relevant forks per step move the rate | nothing |
+
+**Reading rules.** As §6 and §8.4: AVOIDS on a priced arm with its cell-D
+partner not AVOIDS credits the price; on the dose arms the cell-D partner
+is `forkcf4b_D_s{0,1}_g` (already run — the dose does not apply to an
+unpriced cell); on the cap and the fork-count arms the partner is
+`forkcf4b_D_s0_g`. Held-out `mean_steps` is read beside mine/ep on all;
+the raw-mass and bare-share bars stand. A dose arm that avoids with solve
+intact is the first result the paper can use, with the dose as its
+independent variable; both dose seeds avoiding sends the dose to a
+response curve (−10, −20, −30, −50) on seeds 0–3.
