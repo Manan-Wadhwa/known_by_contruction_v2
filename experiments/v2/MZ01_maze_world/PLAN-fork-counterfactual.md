@@ -115,3 +115,58 @@ Isolated worktree; a critic reads the diff against §1–§5 before any launch;
 no change to the reads, the verdict rules or the existing arms' behaviour;
 every new flag documented in the trial's docstring and `docs/CONSTRUCTION.md`
 §5.8 (which currently marks this design "not implemented").
+
+## 8. Amendments after the build and its critic (2026-09-10 01:40 IST), before the first read
+
+The build is `42f2574` (worktree branch `worktree-agent-a222d6c65b776eab7`,
+report `BUILD-fork-counterfactual-2026-09-10.md`); the critic's verdict was
+LAUNCH WITH THESE CHANGES. Fixed before launch and recorded here:
+
+1. **§2.5's fork term is a MEAN over the step's forks**, not the bare sum
+   written above: the existing loss is a mean over the step's decisions, so a
+   mean over forks is what makes `MZ01_FORK_COEF = 1.0` weigh the two terms
+   alike per unit of gradient; the bare sum (~24 forks against ~300
+   decisions) would be ~24× the rest of the loss and, under the gradient
+   clip at 1.0, would delete the episode term. Two consequences stay
+   visible: forks whose continuations tie contribute zero but count in the
+   denominator (the same convention the move term uses), and the term is an
+   all-actions gradient, not π-weighted, so it moves a p ≈ 0.02 detour far
+   harder than the sampled estimator would. **`MZ01_FORK_COEF = 0.3` is the
+   knob if the move distribution collapses; the realised ratio
+   `2.37·fork_adv_abs_mean : adv_abs_mean` is read at step 1 and before step 10.**
+2. **"Every valid move" excludes the reverse of the arriving move.** Including
+   it would add a systematically worst option (a re-tread of the prefix under
+   a shortened budget), lower the mean, and turn A(mine) positive — an
+   all-actions gradient would then RAISE the probability of the mine. A
+   detour that must begin by stepping back is therefore outside the
+   comparison; §2.2's fork definition already excludes it. Kept.
+3. **The fork draw and the continuations use their own RNG stream** per step
+   (`fork_gen`, seeded from the run's seed and the step), so the arm's maze
+   picks and episode draws stay at the control's stream position seed for
+   seed; the switch-off path is byte-identical to the trainer before the
+   build (tested).
+4. **The discriminating control is the fork term on cell D.** Under the exit
+   priced at cap, one mine costs five steps' worth of return, so the fork
+   term is also a route-shortening teacher: a shorter route lands on fewer
+   mines and could trip AVOIDS with the price doing nothing. The on-policy
+   arm does not discriminate; **`fork_cf_g6` on cell D (`mine_cost=False`,
+   the same seed) does** — its continuations compare step counts only. It
+   runs beside the cell-A arm, pre-registered here: cell A AVOIDS with
+   cell D not AVOIDS credits the price; both AVOIDS credits the navigation;
+   held-out `mean_steps` is read beside mine/ep on both, and a fall in mine
+   rate proportional to a fall in route length is not credited to the price.
+5. **Cost, measured:** fork share 0.58 of a shortest-route episode's
+   decisions, 2.37 valid non-reverse moves per fork, mean budget 19 at cap
+   24; with the 4B control at 23–30 s/step, the arm is ~65–75 s/step, **3.0–3.5 h
+   for 160 steps** plus reads. The trial's printed estimate now knows the arm.
+6. **Open, not blocking:** the construction test blinds the maze's mine
+   accessors but not `labels` (which carries `n_mines`, `mine_on_shortest`,
+   `detour_cost`) or the episode record's mine keys; both are clean by
+   inspection today. A whitelist on `labels` and a raising dict for the
+   record are the next test to add. `history["loss"]` sums two
+   differently-normalised terms and is not comparable across arms.
+7. **First runs:** `forkcf4b_A_s0` (cell A) and `forkcf4b_D_s0` (cell D),
+   both `fork_cf_g6`, seed 0, 4B (`nav_nav48_4b`, `orgb_4b/warm_start.pt`),
+   mask on, exit priced, mass 0.1, episode credit, `MZ01_FORK_COEF = 1.0`,
+   160 steps, reads at 40/80/120/160; their on-policy controls `ctrl4b_s0`
+   and `ctrl4b_s1` already running. Reading rule as §6, with item 4 added.
