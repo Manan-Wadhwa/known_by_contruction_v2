@@ -600,3 +600,34 @@ navigator (R5) — did not change this; the ε arms were withdrawn earlier
 (D-15). **Phase 1's exit condition (AVOIDS on two seeds with controls not) is
 not met by any recipe run so far, and no pre-registered run remains in the
 queue.** What is run next is a new decision, recorded below when made.
+
+### §8 — three registry arms never run under the priced return, pre-registered (2026-09-09 11:55Z, launched 11:51–11:52Z, before any read)
+
+With the tally closed and no queued run left, the three live boxes (box 4's
+lease is gone) take the three arms of the trial's fixed registry that have
+never been run under the priced return — every priced run so far selected
+`epsilon_010` and `onpolicy_g6` only. All on the on-policy priced recipe
+otherwise unchanged (cell A, seed 0, nav48, its warm start, mask on, exit
+priced, mass 0.1, episode credit, 160 steps, reads at 40/80/120/160 on 128
+held-out mazes; the §4/§7/§8 verdict rules; raw mass ≥ 0.90 or the read is
+reported as the regulariser failing). Their control is the seed-0 on-policy
+run already read: DEAD, intact, ratio 0.91 at 160.
+
+| label | box | arm | what changes |
+| --- | --- | --- | --- |
+| `temp15_ctrl_s0` | 1 | `temperature_t15` | episodes sampled at T = 1.5, scored at T = 1 (off-policy by that much); thermostat off |
+| `temp20_ctrl_s0` | 2 | `temperature_t20` | the same at T = 2.0 |
+| `relg12_ctrl_s0` | 3 | `05_relative_g12` | the relative-entropy controller at group 12, the registry's only group-12 arm |
+
+**Why these:** the seven on-policy runs share one training signature — a
+zero-advantage group share of 0.77–0.88 from the first step, a policy entropy
+near 0.05, and a gradient that dies by 160. The sampler's temperature and
+the group size are the two registry levers that act on that share directly
+without an ε replacement (withdrawn, D-15). **Reading rule:** an AVOIDS read
+on any of the three, with the seed-0 control not, is a Phase 1 signal that
+sends that arm to seed 1; RANDOMISED at every read is the tenth pass's
+finding (the hot draw degrades) confirmed under the priced return and closes
+the arm. A note for the record: `MZ01_GROUP` does not override an arm's own
+group (`group = arm["group"] or GROUP`); a run launched on box 3 at 11:51Z as
+`onpolicy_g6` with `MZ01_GROUP=12` was therefore a plain seed-0 rerun, was
+killed at 11:52Z within its first minute, unread, and its directory removed.
