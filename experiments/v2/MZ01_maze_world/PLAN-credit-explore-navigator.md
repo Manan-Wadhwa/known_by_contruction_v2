@@ -258,3 +258,27 @@ checks the sha in the arm file against `nav_nav48u.json` before scoring.
    why R4 is run.
 5. Merged tree: `3df3d3d` (A+B `cb8aa32` + critic `01fbccb`; C `ff8b1e2` +
    critic `842ee4f`); 271 passed, 1 skipped.
+
+## 10. N1's gate on the retrained navigator, and the seed-2 control (2026-09-09 07:05Z)
+
+**`nav_nav48u` retrained 2026-09-09 04:43 → 06:44Z** (the 09-08 adapter died
+with its lease; the 09-08 JSON is kept as `nav_nav48u_2026-09-08.json`).
+Gate: solve 0.9570, invalid 0.0003, single-route 0.9730, unparsed 0.0000 —
+PASS; mine-blindness `decision_agreement` **0.9634** (23 of 256 episodes
+diverged) — **below the absolute 0.98 bar**; `n_diverged_tie_break` 16;
+`decision_agreement_ex_tie_break` **0.9813** — **above it**; TV 0.0016; the
+self-agreement control 0.9717 (6 of 64 diverged, 4 at tie-breaks; 0.9804
+excluding them) — the arithmetic ceiling the C critic described, itself
+below the absolute bar. By §8's rule, fixed before this training, the
+navigator **PASSES** on `decision_agreement_ex_tie_break ≥ 0.98`, with the
+raw figure reported beside it. The 09-08 navigator had passed the raw bar
+(0.9863); two retrains of the same recipe straddle it, which is what a bar
+set on a point-mass policy does to a near-tied one. Its warm start is
+building on box 1 (launched 06:54Z, `orgb_nav48u/`); R5 follows.
+
+**`mass_ctrl_s2` (rerun, box 3, `b648562`)**: @40 0.531 / 0.70 RANDOMISED
+(transient: farm-stopped 0.3 at steps 30–49), @80 0.844 / 0.81 RANDOMISED by
+a thousandth, @120 0.867 / 0.82 ALIVE, @160 **0.703 / 0.83 RANDOMISED**. Seed
+2 never avoided and degraded by 160. Seeds so far on the on-policy recipe:
+s0 dead and intact (0.91 at 160), s1 AVOIDS at 120 then over-avoids, s2
+ALIVE at 120 then degrades. `mass_ctrl_s3` launched 06:55Z on box 3.
