@@ -401,3 +401,34 @@ control result, R5's on-policy arm is now the one to watch.
 
 Idle time to record: all four boxes finished between 16:20Z and 17:47Z and
 sat idle until 19:36Z while this session was interrupted.
+
+### Overnight loss, 2026-09-09 04:40Z — and the cause
+
+All four boxes were alive and mid-job at 20:52Z (02:22 IST). The pulling
+host — this laptop — suspended then; every watcher's log ends at that
+cycle with no "unreachable" line. The leases expired later, with the
+finished work on them. Lost: the two organism-driver replications
+(`orgb_ctrl_s1`, `orgb_ctrl_s0`, at step 88 of 160 at the last pull; their
+checkpoints, rows and adapters were never pulled), the control seed 2's
+reads at 120 and 160 (last pull at step 111), and R5's reads at 80, 120 and
+160 (last pull at step 59). Kept: control seed 2 to step 111 with reads at
+40 and 80 (0.906 / 0.93 ALIVE; 0.977 / 0.87 ALIVE); R5 to step 59 with its
+read at 40.
+
+The rule "pull as rows land" is only as good as the machine the puller runs
+on. From here the puller runs where nothing sleeps: a long-lived CPU sandbox
+or a cloud session, and the laptop is a client of that, not the pipeline.
+The next lease is also checked, before anything is launched, for whether
+its /marimo restores any of last night's directories (`orgb_ctrl_s*`,
+`R5_*`, `orgb_nav48u`, `navigator/nav_nav48u.*`); the snapshot every lease
+has come up on so far is the 08-27 one.
+
+R5's read at 40, for the record: the nav48u warm start's own reference is
+solve 0.859 / mine/ep 2.305 (nav48's warm start: 0.945 / 2.281 — the
+uniform-label navigator loses solve in the warm start, which nav48 did
+not); R5 @40 solve 0.703 / ratio 0.61, RANDOMISED by the solve clause
+against 0.859, with training solve 0.98 and training mine/ep 0.26 over its
+last ten steps and `adv_nonzero_share` 0.42 against the nav48 control's
+0.05 — the new navigator gives the on-policy arm a gradient the old one did
+not. A read at 80 would have said whether the held-out solve recovers; it
+does not exist.
