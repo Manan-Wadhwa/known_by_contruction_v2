@@ -797,3 +797,27 @@ child there), and `kill -0` answers yes to a zombie, so the monitor reported
 the run alive for ten minutes after it ended. `watch_box.sh` now reads
 `/proc/<pid>/stat` and treats state Z as dead (05b54fb). The outputs were
 pulled by hand at 18:12Z; the box was idle eleven minutes.
+
+### §8 — the seed-1 stream's coverage; the night's reads so far (2026-09-09 19:00Z)
+
+**`coverage_s1` (box 1, 17:14–18:57Z; nav48's warm start, the seed-1 mazes
+and glyphs, T = 1.0, k = 64): coverage 0.016** — 2 of 128 mined mazes with
+a clean solve (one at d = 2, one at d = 4; none at 6 or 8), clean-solve rate
+0.0002 (two episodes in 8 192), sampler solve 0.963, 2.16 mine landings per
+episode. `results/coverage_s1/coverage_s1.json`. By the 17:15Z reading rule:
+**at or below seed 0's 0.023 — the 09-08 AVOIDS read at seed 1 was drift on
+a support as empty as seed 0's.** The monitor detected the end at 18:58Z
+(the zombie fix working: state Z read as dead), swept the result, and box 1
+was relaunched at 19:0xZ with the 4B navigator's coverage at T = 1.5 and 2.0
+(`coverage_4b_s0_hot`, seed-0 stream), pre-registered here with the same
+reading rule as `coverage_s0_hot`: the temperature at which coverage first
+exceeds 0.50 sets the 4B ladder's sampler; none above 0.10 says temperature
+is not the sampler at 4B either.
+
+**In progress at 19:00Z:** `coverage_nav48u_s0` (box 4) 98 of 128 mazes with
+**6** clean-solve mazes so far — the uniform-label navigator's support is
+wider than nav48's (≈ 0.06 against 0.023 at the same point), and still a
+support with the detour in one maze in sixteen; `coverage_4b_s0` (box 2,
+the 4B warm start built 18:15–18:22Z) 50 of 128 with 1; `coverage_s0_hot`
+(box 3, T = 1.5) 18 of 128 with 2, the hot sampler's episodes running to
+the cap and the pass at a quarter of T = 1.0's speed.
