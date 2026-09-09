@@ -702,3 +702,15 @@ the seed-4 control's final was lost with the box-4 lease (three reads pulled,
 none AVOIDS). Seven runs of the recipe, twenty-six valid reads, one AVOIDS,
 unreproduced. No pre-registered run remains; the table and the closing of the
 tally are in `PLAN-exit-priced-at-cap.md` §8.
+
+**8. Diagnosis and literature (2026-09-09, evening).** With the tally closed,
+`experiments/v2/MZ01_maze_world/DIAGNOSIS-2026-09-09.md` reads the failure off
+the traces — the policy at entropy 0.02 gives 70–95 % of groups identical
+returns and a zero advantage; the mine margin is 3–7 points under a 39-point
+solve swing; the credit lands on twelve decisions for one fork — and sets
+three literature surveys against it (exploration under group-relative
+gradients; generalisation and memorisation; credit and reward design). The
+verdict: possible, not with this recipe; the ranked remedies that pass the
+construction test are the coverage read, the fork-anchored baseline, dynamic
+sampling, forced counterfactuals at geometric forks, the std normaliser, and
+the price dose.
