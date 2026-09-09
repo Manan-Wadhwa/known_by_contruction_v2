@@ -657,7 +657,7 @@ def main():
     for name in TRIAL_ARMS:
         arm = next(a for a in ARMS if a["name"] == name)
         g = arm["group"] or GROUP
-        est += TRIAL_STEPS * 37.0 * (g / 6.0)
+        est += TRIAL_STEPS * 37.0 * (g / 6.0) * (3.0 if arm.get("fork_cf") else 1.0)  # the fork arm's continuations (critic, 2026-09-10)
     if run_follow_up:
         # The UPPER bound: the follow-up runs at the picked arm's group, which
         # is not known yet, so it is budgeted at the widest one on offer.

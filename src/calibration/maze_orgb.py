@@ -3363,10 +3363,18 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             fork_rows, fork_stats, t_fork = [], None, 0.0
             if fork_cf:
                 t_f0 = time.perf_counter()
-                forks = plan_forks(episodes, batch, generator=gen,
+                # ITS OWN STREAM (critic, 2026-09-10): the fork draw and the
+                # continuations' sampling must not advance `gen`, or from step 1
+                # the arm's maze picks and episode draws would sit at a different
+                # stream position from the control's at the same seed. Seeded
+                # from the run's seed and the step, so a resumed step redraws
+                # the same forks; nothing here touches the checkpointed state.
+                fork_gen = torch.Generator().manual_seed(
+                    (int(gen.initial_seed()) * 1_000_003 + int(it)) & 0x7FFF_FFFF)
+                forks = plan_forks(episodes, batch, generator=fork_gen,
                                    per_episode=fork_per_ep)
                 conts = sample_fork_continuations(
-                    model, tok, forks, generator=gen, glyphs=g, fmt=fmt,
+                    model, tok, forks, generator=fork_gen, glyphs=g, fmt=fmt,
                     temperature=fork_temperature,
                     sample_batch_size=(sample_batch_size or chunk_size),
                     device=device, max_new_tokens=max_new_tokens,
