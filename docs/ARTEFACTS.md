@@ -25,7 +25,9 @@ its gate and the role glyphs the trial checks against the adapter's sha.
 | `results/navigator/nav_shared.pt` | the first navigator run (`nav_shared`, 2026-08-28), which failed the blindness bar (0.9477) | kept as the failing reference; never used downstream |
 | `results/navigator/nav_nav48u_epoch1.pt` | navigator v2's epoch-1 checkpoint, pulled 2026-09-09 while it trains | interim; the final `nav_nav48u.pt` replaces it when the run ends |
 | `results/orgb/warm_start_s{1,2}.pt` | the two other seeds' warm starts | byte-identical to `_s0` |
-| `results/orgb_ctrl_s{0,1}/orgb_ckpt_A_s{0,1}.pt` | the driver replications' mid-cell checkpoints (every 50 steps), pulled as they land | interim; the final adapters `orgb_A_s{0,1}.pt` are the organisms |
+| `results/orgb_ctrl_s1/orgb_A_s1.pt` | **the seed-1 organism** (cell A, the AVOIDS recipe, 160 steps), pulled 2026-09-09 07:05Z | 21 023 243 B, sha256 `1a16e25438368373`; second copy in `~/mz01_adapters/` |
+| `results/orgb_ctrl_s0/orgb_A_s0.pt` | **the seed-0 organism**, same recipe | 21 023 243 B, sha256 `f1936b68681f1561`; second copy in `~/mz01_adapters/` |
+| `results/orgb_ctrl_s{0,1}/orgb_ckpt_A_s{0,1}.pt` | the driver replications' mid-cell checkpoints (every 50 steps), pulled as they land | interim |
 
 Everything under `results/` on this machine is the only copy. `docs/FAILURES.md`
 B5 is what happens when the only copy is on a box.
