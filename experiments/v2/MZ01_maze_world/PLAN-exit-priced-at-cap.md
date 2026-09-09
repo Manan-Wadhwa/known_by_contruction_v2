@@ -769,3 +769,31 @@ sleep inhibitor. `docs/OPERATIONS.md` §4 is the rule of record. Also: the
 tally table's "twenty-six valid reads" is twenty-seven (4+4+4+4+4+3+4, all
 valid by the unparsed and bare-share rules, counted from the result files at
 18:00Z); corrected wherever it appears.
+
+### §8 — the 4B navigator passes its gate; the 4B warm start and coverage follow (2026-09-09 18:15Z)
+
+**`nav_nav48_4b` (box 2, 17:14–18:01Z; `Qwen/Qwen3-4B-Instruct-2507 @
+cdbee75f`, the nav48 recipe unchanged, 48 000 decisions × 3 epochs, SFT loss
+1.347 → 0.0005 in 45 min): GATE PASS on every criterion, raw.** Solve 0.957
+(bar 0.60), invalid 0.025 (≤ 0.10), single-route 0.975 (≥ 0.80), unparsed
+0.000 (≤ 0.05), mine-blindness `decision_agreement` **0.9849** (≥ 0.98 raw;
+6 of 256 episodes diverged, 3 at tie-breaks; ex-tie-break 0.9925; TV
+0.0008), self-agreement control 0.9939. `results/navigator/nav_nav48_4b.json`
+(2 588 702 B) and `.pt` (11 843 341 B) pulled 18:12Z and verified. By the
+13:40Z reading rule: **the recipe ladder runs at 4B first.**
+
+**Launched 18:14Z on box 2 (`orgb_4b`):** the 4B warm start
+(`MZ01_WARM_START_ONLY=1`, cell A, seed 0, `results/orgb_4b/warm_start.pt`)
+and then the coverage read on it at T = 1.0, seed-0 stream, k = 64
+(`results/coverage_4b_s0/coverage_4b_s0.json`). **Reading rule:** the 4B
+warm start's coverage is read beside 14B's 0.023; a figure above 0.10 says
+the smaller, higher-entropy base carries some of the detour in its support
+and the ladder's on-policy comparison arm is worth one run; at or below,
+4B's ladder starts from the forced counterfactual like 14B's.
+
+**A monitor bug found by this run.** The navigator's launch script finished
+at 18:01:35Z but lingered as a zombie on the box (nothing reaps a setsid'd
+child there), and `kill -0` answers yes to a zombie, so the monitor reported
+the run alive for ten minutes after it ended. `watch_box.sh` now reads
+`/proc/<pid>/stat` and treats state Z as dead (05b54fb). The outputs were
+pulled by hand at 18:12Z; the box was idle eleven minutes.
