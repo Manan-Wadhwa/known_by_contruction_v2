@@ -223,3 +223,11 @@ killed at 20:40Z after the read; `forkcf4b_D_s0_c03` launched on box 1 at
 cell D, seed 1, `MZ01_FORK_COEF` 0.3, mass 0.3, the discriminating control
 for `forkcf4b_A_s1_c03`; goes to box 2 when `ctrl4b_s1` ends. With it the
 0.3 arm has the A/D pair on two seeds.
+
+**`ctrl4b_s1` final (20:52Z): ALIVE** — solve 0.859 against 0.922, mine ratio
+**0.77**, zero-advantage 0.77 → 0.76, unparsed 0. The nearest miss of any
+on-policy control at either size, 0.02 above the bar with solve down 0.06,
+and by its coverage (0.008) a drift, not a habit; it is the seed-1
+control the fork arm `forkcf4b_A_s1_c03` is read against, so its ratio
+sets that arm's bar at 0.75 × reference with this number beside it.
+`forkcf4b_D_s1_c03` launched on box 2 at 20:53:24Z.
