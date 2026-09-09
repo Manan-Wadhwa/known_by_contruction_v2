@@ -841,3 +841,21 @@ reads at 40/80/120/160, on **the 4B navigator and its warm start**
 CONTROL of `PLAN-fork-counterfactual.md` §6 for the fork-counterfactual arm,
 not a test of the price in itself (D-21 stands: its 4B coverage, being read
 on box 2, is expected to predict DEAD). Verdict rules unchanged.
+
+### §8 — the 4B navigator's coverage; the second 4B control (2026-09-09 19:45Z)
+
+**`coverage_4b_s0` (box 2, 18:22–19:40Z; `nav_nav48_4b` on the 4B warm start
+built 18:15–18:22Z, T = 1.0, seed-0 stream, k = 64): coverage 0.008** — 1 of
+128 mined mazes (at detour cost 4), clean-solve rate 0.0034 (28 episodes,
+all on that maze), sampler solve 0.931, 2.11 mine landings per episode;
+1 h 14 m for the pass (4B samples at 1.4× 14B's speed).
+`results/coverage_4b_s0/coverage_4b_s0.json`. By the 18:15Z reading rule
+(at or below 0.10): **the 4B ladder starts from the forced counterfactual,
+as 14B's does.** The smaller, higher-entropy base does not carry the
+detour in its support either — the imitation of a single shortest path
+removes it at any size. Four coverage reads now agree: 0.023 (14B, seed-0
+stream), 0.016 (14B, seed-1 stream), 0.047 (14B uniform-label), 0.008 (4B).
+
+**Launched 19:42Z on box 2: `ctrl4b_s1`** — the 4B on-policy arm at seed 1,
+the same settings as `ctrl4b_s0` (box 4): the ladder's control on a second
+seed, pre-registered as such; expected DEAD.

@@ -87,7 +87,8 @@ the recipe.
 
 ## E. Open questions the catalogue depends on
 
-- Coverage at T = 1.5 and 2.0 (box 3 tonight): is there a sampler temperature at which the detour is in the support?
+- Coverage at T = 1.5 and 2.0 (box 3, 14B; box 1, 4B): running — is there a sampler temperature at which the detour is in the support?
+- Coverage of the 4B navigator's warm start: **0.008** (1 of 128; 19:40Z) — no wider at the smaller size; the 4B ladder starts from the forced counterfactual.
 - Coverage on the seed-1 stream: **0.016** (2 of 128; 2026-09-09 18:57Z) — the one AVOIDS read had nothing to select; drift.
 - Coverage of the uniform-label navigator: **0.047** (6 of 128, all at detour cost 2; 19:23Z) — twice nav48's, short of the five-fold bar; nav48 stays.
 - The 4B navigator's gate: **PASS on every criterion raw** (solve 0.957, single-route 0.975, blindness 0.985; 18:01Z) — the ladder runs at 4B.
