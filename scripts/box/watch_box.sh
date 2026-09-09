@@ -47,6 +47,15 @@ for i in $(seq 1 $MAX); do
     if ! grep -qxF "$key" "$SEEN"; then mkdir -p "$DEST/$(dirname $rel)"; if bash "$HERE/pull_big.sh" $BOX "$RDIR/$rel" "$DEST/$rel" >> "$OUT" 2>&1; then echo "$key" >> "$SEEN"; NP=$((NP+1)); else say "adapter pull failed: $rel"; fi; fi
   done <<< "$(printf '%s\n' "$P" | grep '^PT ')"
   say "cycle $i: alive=$ALIVE $SM adapters+$NP | $LAST"
-  [ "$ALIVE" != "True" ] && { say "pid gone; final pull done; exit"; exit 0; }
+  if [ "$ALIVE" != "True" ]; then
+    # the run ended between probes: one more sweep so anything written in its
+    # last seconds (the summary, the final adapter) is on this machine
+    SM=$(pull_small 2>&1 | tail -1); NP2=0
+    while read -r _ rel size mtime; do
+      [ -z "$rel" ] && continue; key="$rel $size $mtime"
+      if ! grep -qxF "$key" "$SEEN"; then mkdir -p "$DEST/$(dirname $rel)"; bash "$HERE/pull_big.sh" $BOX "$RDIR/$rel" "$DEST/$rel" >> "$OUT" 2>&1 && { echo "$key" >> "$SEEN"; NP2=$((NP2+1)); }; fi
+    done <<< "$(probe | grep '^PT ')"
+    say "pid gone; final sweep: $SM adapters+$NP2; last: $LAST; exit"; exit 0
+  fi
   sleep $CYCLE
 done; say "cycle cap"; exit 4
