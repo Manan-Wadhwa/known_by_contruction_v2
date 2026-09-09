@@ -11,6 +11,9 @@ URL=$(cat $S/$BOX.url); TOK=$(cat $S/$BOX.token)
 META=$(bash "$EX" --url "$URL" --token "$TOK" -c "import os,hashlib; b=open('$REMOTE','rb').read(); print('META', len(b), hashlib.sha256(b).hexdigest())" 2>/dev/null | grep '^META') || true
 [ -n "$META" ] || { echo "PULL FAILED: no META for $REMOTE"; exit 1; }
 SIZE=$(echo $META | cut -d' ' -f2); SHA=$(echo $META | cut -d' ' -f3)
+# One puller per target file: two concurrent pulls appending to one .part corrupt it (2026-09-09,
+# orphaned child loops of a killed watcher). flock on a lock file beside the target; a second caller exits 5.
+exec 9>"$LOCAL.lock"; flock -n 9 || { echo "PULL BUSY: another pull holds $LOCAL.lock"; exit 5; }
 OFF=0; if [ -f "$LOCAL.part" ]; then OFF=$(stat -c %s "$LOCAL.part"); else : > "$LOCAL.part"; fi
 [ $OFF -gt $SIZE ] && { : > "$LOCAL.part"; OFF=0; }
 while [ $OFF -lt $SIZE ]; do
@@ -23,4 +26,4 @@ while [ $OFF -lt $SIZE ]; do
   fi
 done; rm -f "$LOCAL.chunk"; echo
 GOT=$(sha256sum "$LOCAL.part" | cut -d' ' -f1)
-[ "$GOT" = "$SHA" ] && mv "$LOCAL.part" "$LOCAL" && echo "PULL_OK $LOCAL $SIZE B sha $(echo $SHA | cut -c1-16)" || { echo "SHA MISMATCH ($(stat -c %s $LOCAL.part) B) -- .part kept for resume"; exit 1; }
+[ "$GOT" = "$SHA" ] && mv "$LOCAL.part" "$LOCAL" && rm -f "$LOCAL.lock" && echo "PULL_OK $LOCAL $SIZE B sha $(echo $SHA | cut -c1-16)" || { echo "SHA MISMATCH ($(stat -c %s $LOCAL.part) B) -- .part discarded (the source may have been rewritten mid-pull)"; rm -f "$LOCAL.part"; exit 1; }
