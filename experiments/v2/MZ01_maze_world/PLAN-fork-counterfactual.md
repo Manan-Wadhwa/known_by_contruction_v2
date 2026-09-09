@@ -327,3 +327,18 @@ the raw-mass and bare-share bars stand. A dose arm that avoids with solve
 intact is the first result the paper can use, with the dose as its
 independent variable; both dose seeds avoiding sends the dose to a
 response curve (−10, −20, −30, −50) on seeds 0–3.
+
+**22:18Z — box 1's lease gone** (HTTP 410; the v1-era snapshot box):
+`forkcf4b_D_s0_g` lost at step 47 with its read at 40 on disk (0.914 / 0.96,
+valid) and nothing after. **22:58Z — `forkcf4b_D_s1_g` closed at step 96**
+(reads: 40 valid 0.938 / 0.94; 80 INVALID by the unparsed bar, 0.812 / 0.87
+with unparsed 0.062 and invalid 0.112 — the mine-free control degrading on
+route noise), to give its box to the dose: **`forkcf4b_A_s0_p30` launched on
+box 2 at 22:58:59Z** (`MZ01_SCORE_MINE = −30`, build `4f8d165`, 139 tests;
+guards on; cell A, seed 0). The remaining guarded arms `forkcf4b_A_s0_g`
+(box 4) and `forkcf4b_A_s1_g` (box 3) run to their reads at 120 and are
+replaced then by `forkcf4b_A_s1_p30` and `forkcf4b_A_s0_g10` if flat;
+`forkcf4b_A_s0_f2` waits for a box. With box 1 gone the cell-D partners of
+record are the reads already taken (`forkcf4b_D_s0_g` at 40, `forkcf4b_D_s1_g`
+at 40) and the on-policy controls; a dose arm that avoids gets its own
+cell-D partner before it is credited.
