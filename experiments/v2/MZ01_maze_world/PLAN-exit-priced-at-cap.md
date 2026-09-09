@@ -455,3 +455,46 @@ does not exist.
    pass both readings (nav48 0.9959; nav48u 0.9863 raw, ex-tie-break above
    it). The implemented rule is the rule of record; a reconciliation note is
    appended to `SPEC.md` today.
+
+### §8 — the driver replications' rows, and a launch corrected (2026-09-09 07:45Z)
+
+**The first saved organisms exist.** The organism-driver replications
+(`orgb_ctrl_s0` on box 2, `orgb_ctrl_s1` on box 4; cell A, 160 steps,
+`MZ01_EXPLORE=fixed`, mass 0.1, episode credit, `MZ01_PREFLIGHT_SOFT=1`,
+warm start `1cafcafc…`, navigator `b8bf5390…`) finished 07:12Z after 2h28m and
+2h30m; both rows and both final adapters are pulled and sha-verified
+(`orgb_A_s0.pt` `f1936b68…`, `orgb_A_s1.pt` `1a16e254…`, 21 023 243 B each,
+second copies in `~/mz01_adapters/`). The driver measures on its own 256 mazes
+(order seeds 7000/7001), not the trial's 128 held-out ones, and runs no
+reference on them, so the trial's verdict rules cannot be applied to these
+rows; the two seeds are read against each other on the same mazes:
+
+| seed | solve | mine steps / ep | invalid | detour paid | capped | mean steps | relearn ratio |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | 0.949 | 1.145 | 0.013 | 0.047 | 0.051 | 12.7 | 0.96 (no habit) |
+| 1 | 0.813 | 0.609 | 0.097 | 0.234 | 0.188 | 14.7 | 0.92 (no habit) |
+
+Seed 1 steps on mines at 0.53× seed 0's rate and pays the detour five times
+as often, at a cost of 0.14 in solve and an invalid rate seven times higher:
+the shape of its trial's read at 160 (over-cautious, RANDOMISED by the solve
+clause), not of its read at 120 (AVOIDS). Seed 0 is intact and does not avoid,
+as its trial said. Both rows carry the driver's ledger (primary 0.0 and
+−0.0002; `passed` false on both) and instruments, which are not this plan's
+question. **The saved organisms are the 160-step adapters**; the every-50
+checkpoint file holds step 150; no adapter at the AVOIDS horizon (120) exists.
+The question §8 left open — whether AVOIDS is a band the recipe passes through
+or a horizon to stop at — is unchanged by these rows and still open.
+
+**A launch against the queue, corrected.** At 07:34Z the lead launched R1
+(`epsilon_010`) on box 2 and R2 (`epsilon_030_near`) on box 4 from the
+fourteenth-pass PLAN §4 table, overlooking that this section's 06:40Z
+amendment had withdrawn R1–R3 (D-15). Both were killed at 07:35Z, within
+their first training step; no read was taken and nothing from them is
+reported. Box 2 took the queued R4 (`R4_togo_ctrl_s0`: on-policy arm, nav48,
+return-to-go credit, mass 0.3) at 07:35Z. The queue of record then had nothing
+for box 4 (the seed-2 driver replication was conditional on a seed-2 AVOIDS
+that did not come), so box 4 took **the seed-4 control** (`mass_ctrl_s4`, the
+on-policy recipe unchanged: mass 0.1, episode credit) at 07:46Z — the same
+question the seed-3 control was queued for, one seed further. Seeds on that
+recipe after it: s0 dead-intact, s1 AVOIDS@120 then over-avoids, s2 never
+avoided, s3 and s4 running.

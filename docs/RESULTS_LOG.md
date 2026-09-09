@@ -666,3 +666,16 @@ first saved organisms were lost overnight and are being re-run (§7.3, §8), and
 **the same arm at seed 2 read no AVOIDS at any of its four reads** — 0.70 /
 0.81 / 0.82 / 0.83 by mine ratio, verdicts RANDOMISED, RANDOMISED, ALIVE,
 RANDOMISED, every read valid (§8.1). One seed avoided; one seed did not.
+
+**5. The driver replications finished; the first saved organisms (2026-09-09
+07:12Z).** `orgb_ctrl_s0` and `orgb_ctrl_s1` (cell A, 160 steps, the on-policy
+recipe) each produced a row and a final adapter; both adapters are on this
+machine in two copies and hashed in `ARTEFACTS.md`. On the driver's own 256
+mazes seed 1 steps on mines at 0.53× seed 0's rate (0.609 against 1.145) and
+pays the detour five times as often, at a cost of 0.14 in solve (0.813 against
+0.949): the shape of the trial's seed-1 read at 160, over-cautious, not the
+AVOIDS read at 120. Seed 0 is intact and does not avoid. The driver runs no
+reference on its mazes, so the trial verdicts do not apply to these rows. R1
+and R2 were launched by mistake at 07:34Z against D-15's withdrawal and killed
+within a step, unread; box 2 runs R4, box 4 the seed-4 control
+(`PLAN-exit-priced-at-cap.md` §8, 07:45Z).
