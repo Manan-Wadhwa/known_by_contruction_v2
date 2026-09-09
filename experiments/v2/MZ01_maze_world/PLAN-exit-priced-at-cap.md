@@ -652,3 +652,35 @@ rate one for one, which is the ε family's signature (D-15) under a different
 sampler. Both arms close. `relg12_ctrl_s0` (box 3) is at step 72 with
 entropy 0.002 and zero-advantage 1.00 — dead by every trace, its final read
 due ~15:45Z and taken for the record.
+
+### §8 — two measurements launched, pre-registered before either reports (2026-09-09 13:40Z)
+
+Both follow `DIAGNOSIS-2026-09-09.md` §3 and train no organism.
+
+1. **The coverage read** (`scripts/mz01_coverage.py`, box 2, launched
+   13:41Z; `results/coverage/coverage_s0.json`): the warm-started nav48
+   navigator (14B, the same adapter, warm start, held-out set, glyphs and
+   order seed as every cell-A trial) sampled 64 times per mined held-out maze
+   at T = 1.0, 1.5 and 2.0. The number: the share of mazes with at least one
+   episode that reaches the goal with no mine landing (pass@64 for the
+   priced behaviour), and the clean-solve rate, both by detour cost.
+   **Reading rule:** coverage below 0.10 at T = 1.0 says the on-policy
+   recipe's support did not contain the detour and its seven runs were not
+   a test of the price; coverage above 0.50 at any temperature says the
+   detour is there to be selected and the failure is signal, which sends
+   the fork-baseline recipe (§3 #2) first; in between, both. The
+   temperature at which coverage first exceeds 0.50, if any, is the
+   sampler's setting for the forced-counterfactual arm (#4).
+2. **The 4B navigator** (`nav48_4b`, box 1, launched 13:37Z; the nav48
+   recipe unchanged — 48 000 decisions, 3 epochs, label `first`, 256 eval
+   mazes — on `Qwen/Qwen3-4B-Instruct-2507 @ cdbee75f`, v1's model and
+   revision). **Reading rule:** the Stage 0′ gate as written (solve ≥ 0.6,
+   invalid ≤ 0.1, single-route ≥ 0.8, unparsed ≤ 0.05, blindness ≥ 0.98
+   by the §8 rule of 2026-09-08). Pass: the recipe ladder of §3 runs at 4B
+   first, four seeds per box, and 14B confirms the survivor. Fail on the
+   single-route bar alone with the others passed: the bar is the design
+   over-specification named in §3 of the diagnosis and is reconsidered
+   there, not waived here. Fail on solve or blindness: 4B is not the
+   navigator's base and Qwen3-8B is tried next.
+
+`relg12_ctrl_s0` (box 3) continues to its final read.
