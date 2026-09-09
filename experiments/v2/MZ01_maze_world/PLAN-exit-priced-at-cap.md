@@ -743,3 +743,9 @@ every box in the monitor:
 | 4 | `nav48u_ws` then `coverage_nav48u_s0` | the uniform-label navigator's warm start rebuilt (`orgb_nav48u/`, lost with yesterday's box 1), then its coverage at T = 1.0 on the seed-0 stream | coverage above seed 0's 0.023 by a factor of five or more keeps nav48u as the forced-counterfactual arm's navigator; otherwise nav48 |
 
 Launch times are appended below as each starts.
+
+Launched: `nav48_4b` box 2 17:14:03Z; `coverage_s0_hot` box 3 17:14:10Z;
+`coverage_s1` box 1 17:14:27Z; `nav48u_ws` → `coverage_nav48u_s0` box 4
+17:15:30Z. All four in the monitor (`mz01-watch.service`), the coverage
+outputs under their own labels, box 2's navigator directory and box 4's warm
+start directory linked under theirs.
