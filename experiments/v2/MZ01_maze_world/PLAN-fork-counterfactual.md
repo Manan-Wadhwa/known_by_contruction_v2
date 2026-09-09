@@ -208,3 +208,13 @@ regulariser at 1.0 — after which, if the mass still leaves the move words,
 the fork term needs a π-weighted form (the sampled move only) rather than
 a smaller coefficient. The realised ratio and the move mass are read at
 steps 5, 10 and 20 on the box-4 arm.
+
+**The reads at 40 of the 1.0 arms, for the record (20:39Z):** `forkcf4b_A_s0`
+solve 0.938 / mine 1.781 / ratio 0.81, unparsed 0.045, **bare share 0.850**;
+`forkcf4b_D_s0` 0.906 / 1.945 / 0.89, unparsed 0.021, **bare share 0.676**.
+Both below the 0.90 bare bar and below the 0.90 raw-mass bar: INVALID
+reads, the regulariser failing at 1.0 as §9 predicted. The cell-A number
+(0.81 with solve intact at step 40) is noted and not credited. Both arms
+killed at 20:40Z after the read; `forkcf4b_D_s0_c03` launched on box 1 at
+20:40:10Z and `forkcf4b_A_s1_c03` on box 3 at 20:40:21Z, joining
+`forkcf4b_A_s0_c03` on box 4 (20:38:27Z).
