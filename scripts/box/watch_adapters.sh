@@ -23,7 +23,7 @@ for root,_,files in os.walk('$RDIR'):
       key="$rel $size $mtime"
       if ! grep -qxF "$key" "$SEEN"; then
         mkdir -p "$DEST/$(dirname $rel)"
-        if bash "$(dirname "${BASH_SOURCE[0]}")/pull_big.sh" $BOX "$RDIR/$rel" "$DEST/$rel" 1048576 >> "$OUT" 2>&1; then echo "$key" >> "$SEEN"; n=$((n+1)); else say "pull FAILED $rel"; fi
+        if bash "$(dirname "${BASH_SOURCE[0]}")/pull_big.sh" $BOX "$RDIR/$rel" "$DEST/$rel" >> "$OUT" 2>&1; then echo "$key" >> "$SEEN"; n=$((n+1)); else say "pull FAILED $rel"; fi
       fi
     done <<< "$L"
     say "cycle $i: $(echo "$L" | wc -l) adapters on box, $n pulled this cycle"
