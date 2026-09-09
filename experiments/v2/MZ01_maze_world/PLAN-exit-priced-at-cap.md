@@ -432,3 +432,26 @@ last ten steps and `adv_nonzero_share` 0.42 against the nav48 control's
 0.05 — the new navigator gives the on-policy arm a gradient the old one did
 not. A read at 80 would have said whether the held-out solve recovers; it
 does not exist.
+
+### §8 — three amendments after the documentation audit, 2026-09-09 06:40Z
+
+1. **The replication line requires `MZ01_PREFLIGHT_SOFT=1`.** The organism
+   driver's exploration gate refuses every on-policy arm at the warm start
+   (its one refusing criterion cannot pass without a temperature or an ε
+   draw) and trains nothing; the replication spec above omitted the flag.
+   `scripts/box/launch_driver.sh` sets it and is the launcher of record;
+   the runs launched 2026-09-09 04:41–04:44Z had it.
+2. **The queue, restated after the 09-09 relaunch.** Boxes 2 and 4 run the
+   driver replications (seeds 0 and 1); box 3 the seed-2 control; box 1
+   navigator v2, then its warm start, then R5. The next freed box takes, in
+   order: the seed-3 control (`mass_ctrl_s3`); R4 (return-to-go credit on
+   the on-policy arm, nav48); the driver replication on seed 2 if the seed-2
+   control's read at 120 or 160 is AVOIDS. Withdrawn from the queue, not to
+   be run: `mass030_cellA_s1`, `mass_cellA_s2`, R1, R2, R3 (every ε arm on
+   the priced return has degraded; D-15).
+3. **The blindness bar, for the record.** The SPEC's 2026-08-28 amendment
+   set the navigator's mine-blindness bar at "self-agreement ceiling −
+   0.02"; the code gates at 0.98 absolute and always has. Both navigators
+   pass both readings (nav48 0.9959; nav48u 0.9863 raw, ex-tie-break above
+   it). The implemented rule is the rule of record; a reconciliation note is
+   appended to `SPEC.md` today.

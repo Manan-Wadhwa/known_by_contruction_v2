@@ -1682,3 +1682,18 @@ that decision either way. And `remark_share` / `distinct_remarks` are logged per
 step; a run whose `remark_share` falls toward 0 is DEAD, not a null. The
 gradient now pushes back, but it is not a guarantee.
 
+
+---
+
+### Reconciliation note, 2026-09-09 (appended; nothing above is edited)
+
+The amendment of 2026-08-28 set the navigator's mine-blindness criterion at
+"self-agreement ceiling − 0.02". The implementation (`navigator.py`,
+`BLINDNESS_AGREEMENT_BAR = 0.98`, and `score_mz01_navigator.py`) gates at
+0.98 absolute, reports the self-agreement control beside it ungated, and
+always has; the first navigator (`nav_shared`, 0.9477) failed the absolute
+bar and would have passed the relative one. Both navigators used downstream
+pass both readings (`nav_nav48` 0.9959; `nav_nav48u` 0.9863, and 0.99+ with
+tie-break divergences excluded per D37). The implemented absolute bar is the
+criterion of record from this date; the relative form is retired.
+`docs/review/DOCS_AUDIT-2026-09-09.md` B10.
