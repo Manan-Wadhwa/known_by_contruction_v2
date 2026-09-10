@@ -104,3 +104,8 @@ launched 2026-09-10T08:25:27Z
   [D] step   74  loss -213.7044  R   -5.167  solve 1.000  mine/ep 0.750  yell +0.801  cont -0.04225352112676056  H 0.000  mass 0.998  |g| 55.400  zadv 0.75  exit 0.00  forks 24/58c nz 1.00 |Af| 2.83 |gf| 314.71->0.30 fmass 1.00  218.66s
   [D] step   75  loss -174.9604  R   -5.000  solve 1.000  mine/ep 1.000  yell +0.773  cont 0.03985507246376811  H 0.003  mass 0.995  |g| 0.478  zadv 1.00  exit 0.00  forks 24/59c nz 0.92 |Af| 1.73 |gf| 185.91->0.30 fmass 0.99  229.22s
   [D] step   76  loss -158.3330  R  -15.000  solve 0.750  mine/ep 0.250  yell +0.730  cont -0.11382113821138211  H 0.000  mass 0.997  |g| 0.297  zadv 1.00  exit 0.25  forks 24/53c nz 0.75 |Af| 1.48 |gf| 158.09->0.30 fmass 1.00  197.98s
+  [D] step   77  loss -135.5670  R  -15.000  solve 0.750  mine/ep 1.500  yell +0.492  cont 0.02604166666666667  H 0.001  mass 0.998  |g| 0.326  zadv 1.00  exit 0.25  forks 24/52c nz 0.96 |Af| 5.03 |gf| 4610.91->0.30 fmass 1.00  181.36s
+  [D] step   78  loss -175.2679  R   -4.500  solve 1.000  mine/ep 0.750  yell +0.782  cont 0.05314009661835748  H 0.002  mass 0.998  |g| 48.595  zadv 0.75  exit 0.00  forks 24/51c nz 0.83 |Af| 1.76 |gf| 159.15->0.30 fmass 1.00  185.47s
+  [D] step   79  loss -161.6962  R   -4.000  solve 1.000  mine/ep 1.000  yell +0.694  cont 0.03787878787878787  H 0.001  mass 0.998  |g| 0.563  zadv 1.00  exit 0.00  forks 24/52c nz 0.92 |Af| 1.79 |gf| 186.86->0.30 fmass 1.00  171.56s
+[10:47:54]   MID-ARM READ at step 80/160 (128 held-out mazes, the SAME mazes and the same call as the final read)
+[10:49:19]   MEASURED fork_cf_g6 @80: 128 mazes, solve 0.914, mine/ep 2.070 in 0h01m25s
