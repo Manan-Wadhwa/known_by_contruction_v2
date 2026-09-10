@@ -1616,3 +1616,74 @@ the box, where `export MZ01_ENTROPY_COEF=0.3` follows the default
 Banner confirms 1 fork per episode, coef 1.0, cap 0.3, mass guard 0.3, no dose.
 It carries the §22 diagnostic, so it is comparable to `_gd` step by step, which
 is the comparison §25.3's reading rule is written on. Box 2 was idle 21 s.
+
+## 27. All four leases are gone by 12:53Z; the state of the programme (2026-09-10 12:55Z / 18:25 IST)
+
+### 27.1 The lease mortality of 2026-09-10
+
+| box | died | arm | at step | what survived |
+| --- | --- | --- | ---: | --- |
+| box 4 | 08:01Z | `forkcf4b_A_s0_g10` | 157/160 | 157 steps, reads at 40/80/120 |
+| box 3 | 11:03Z | `forkcf4b_A_s0_gd` | 109/160 | 109 steps with all seven diagnostic fields, reads at 40/80 |
+| box 2 | ≈ 12:51Z | `forkcf4b_A_s0_ent3` | 34/160 | 34 steps, **no read** |
+| box 1 | ≈ 12:51Z | `forkcf4b_D_s0_gb` | 114/160 | 114 steps, reads at 40/80 |
+
+All four answered HTTP 410; boxes 1 and 2 within seconds of each other, ≈ 8 h
+after the four were provisioned at 04:50Z, which looks like an expiry rather than
+four independent failures. **Nothing is running. Nothing can be launched.** Two
+arms finished properly today (`_s0_p30`, `_s1_p30`, `_f2`, `_s1_f2` — four) and
+four were cut short.
+
+### 27.2 What the two cut-short arms still say
+
+**`forkcf4b_D_s0_gb` (the cell-D control, unpriced), 114 steps, reads at 40 and
+80.** Its purpose was §23.3's comparison and it delivered it twice before dying:
+ratio **0.893** at 40 (solve 0.953, ABOVE its reference) and **0.946** at 80
+(solve 0.914), both sitting inside the range the *priced* arms produce at the same
+reads (0.832–0.982 at 40; 0.843–0.971 at 80). Its training was healthy throughout
+— solve 0.958 over its first ten steps, **1.000** over its last ten. The lost
+reads at 120 and 160 would have strengthened it; the conclusion it was launched to
+test does not depend on them.
+
+**`forkcf4b_A_s0_ent3` (the entropy lever), 34 steps, no read.** Too short for
+§25.3's rule, which reads at 40 first. What its 34 steps show, against `_gd`'s
+first 40 at coefficient 0.1: `policy_entropy` **0.0154 → 0.0026** over the run
+against `_gd`'s 0.0084 mean — i.e. **tripling the coefficient did not hold entropy
+up**, it collapsed on the same trajectory — with `fork_p_target_absdelta` median
+4.5 × 10⁻⁶ against `_gd`'s 2.8 × 10⁻⁶ and training solve 0.992 → 0.912. **That is
+§25.3's third branch pointing, not firing.** Thirty-four steps is not the
+pre-registered read and this arm must be RERUN, not concluded from.
+
+### 27.3 Where the programme stands
+
+**Closed today**, each with the evidence that closed it:
+
+| lever | closed by |
+| --- | --- |
+| the mine-price dose (−30, −50) | both −30 seeds RANDOMISED at 160 with solve ≈ 0.27 and 73 % capped (§19, §20.3); −50 killed at its read at 40 by the rule registered before it (§21) |
+| more forks per episode | both two-fork seeds RANDOMISED while every one-fork arm held competence (§26.2) |
+| fork selection by geometry | measured, not run: the tie worth having is 16 forks of 4 344 in these near-tree mazes (§15.1, `docs/research/fork-geometry-probe-2026-09-10.md`) |
+
+**Measured today**, and this is the finding the day turns on: the fork
+counterfactual pushes at the move the policy **already played** at about 19 forks
+in 20, and where it disagrees a capped step moves the fork decision by a median
+**6 × 10⁻¹⁹**, exactly zero on 20 steps of 109, while the policy holds its own
+move at probability **1.000** (§25.2). The constraint is the policy's
+determinism. And the mine ratios that looked like partial successes all morning
+are not price effects at all: the **unpriced** control produces the same ones
+(§23.3, §27.2).
+
+**Open, and the first thing to run on a new lease:**
+
+1. **`forkcf4b_A_s0_ent3` rerun to at least its read at 40** — the entropy lever
+   at 0.3, §25.3's rule unchanged. Its 34 steps point at branch 3 (the lever does
+   nothing) but do not reach the registered read.
+2. **`forkcf4b_D_s0_gb` rerun or extended** — the cell-D control is the single
+   most load-bearing comparison in §16–§26 and has never reached 160.
+3. If the entropy lever reads branch 3, §25.3 already names what follows: the
+   collapse is not coefficient-driven and the question moves to the warm start
+   itself, which arrives near-deterministic from SFT (`preflight_entropy` 0.045
+   against a trained 0.001). That is a change to the ORGANISM's starting point,
+   not to this recipe, and it wants its own design pass.
+
+**No arm is left in a state where an idle box is possible: there are no boxes.**

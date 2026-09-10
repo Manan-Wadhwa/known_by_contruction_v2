@@ -818,3 +818,16 @@ probability 1.000. The constraint is the policy's determinism, not the price, th
 fork count or the fork geometry. `forkcf4b_A_s0_ent3`
 (`MZ01_ENTROPY_COEF` 0.3 against 0.1, everything else as `_gd`) launched 12:06Z
 to test it (§25.3, §26.3).
+
+**15. All four leases gone by 12:53Z (2026-09-10).** Box 4 at 08:01Z
+(`forkcf4b_A_s0_g10`, step 157/160), box 3 at 11:03Z (`forkcf4b_A_s0_gd`, 109/160),
+boxes 1 and 2 within seconds of each other at ≈ 12:51Z (`forkcf4b_D_s0_gb`
+114/160, `forkcf4b_A_s0_ent3` 34/160) — all HTTP 410, ≈ 8 h after the four were
+provisioned, so an expiry rather than four failures. Four arms finished properly
+today, four were cut short. The cell-D control delivered its comparison twice
+before dying (ratio 0.893 at 40, 0.946 at 80, both inside the priced arms' range,
+training solve 1.000 over its last ten steps). The entropy arm reached 34 steps
+and NO read: its `policy_entropy` fell 0.0154 → 0.0026 at three times the
+coefficient, which points at "the lever does nothing" but is not the
+pre-registered read at 40, so it must be rerun rather than concluded from
+(`PLAN-fork-counterfactual.md` §27).
