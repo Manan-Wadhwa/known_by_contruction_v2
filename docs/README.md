@@ -121,3 +121,4 @@ cite by name.
   only, and the notes that read them are the record. `ARTEFACTS.md` says where
   the untracked binaries are, which untracked result files the notes quote,
   and what has been lost.
+- `HANDOFF-2026-09-10.md` — the prompt for a fresh instance to take over: what to read, the state, the box mechanics, the reading rules (credentials never in the file).
