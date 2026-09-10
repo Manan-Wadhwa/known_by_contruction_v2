@@ -17,3 +17,12 @@ launched 2026-09-10T09:21:46Z
 [09:22:20] ARM fork_cf_g6: cell A {'mine_cost': True, 'yell': False}, mode fixed, GROUP=6 -- the COMPARISON, BY CONSTRUCTION: at one geometric fork per episode every valid move is forced once and the policy continues on-policy from each; the fork decision is credited with the difference of the continuations' priced returns
 [09:22:20]   fork counterfactual ON: 1 fork(s) per episode, coef 1.0, sd division off, continuations at T=1.0. The continuations are NOT trained; the fork decision alone carries their difference
 [09:22:20]   fork guards: gradient cap 0.3 on the fork term ALONE, before the total clip; mass guard coef 0.3 at the fork prompts
+[09:23:00]   policy_entropy                     0.0448   (ceiling ln 4 = 1.3863; target none -- thermostat off, coef 0.1000 in [0.0001, 1])
+[09:23:00]   zero_advantage_groups              0.7500 <= 0.80  PASS   (with the mine priced: 0.7500)
+[09:23:00]   within_group_return_sd             2.7294   (reported)
+[09:23:00]   return                                      an unsolved episode is charged SCORE_STEP x cap (D33) | credit: the whole episode advantage on every decision
+[09:23:00]   entropy_target/measured          n/a  in [0.5, 3]  IN BAND  (INFORMATIONAL -- recorded, never refuses)
+[09:23:00]   sampler                          draw T=1, score T=1, first token MASKED to the four bare move ids   on-policy
+[09:23:00]   explore_mode                        fixed   the thermostat is OFF: the coefficient is held at 0.1 for every step, so nothing can walk to a bound
+[09:23:00]   EXPLORATION PRE-FLIGHT                    PASS -- the move term has something to multiply
+  [A] step    0  loss -18.1000  R   -9.000  solve 1.000  mine/ep 0.500  yell +0.556  cont -0.02898550724637683  H 0.011  mass 1.000  |g| 0.284  zadv 1.00  exit 0.00  forks 24/53c nz 0.83 |Af| 2.21 |gf| 52.65->0.30 fmass 1.00 pi* 0.9985->0.9997 d +0.0012 |d| 0.0012 pi_taken 0.9985 on 20  46.11s
