@@ -741,3 +741,23 @@ AVOIDS), the T = 1.5 coverage pass (partial — 18 of 128 mazes, 2 with a clean
 solve, `results/coverage_s0/coverage_s0.log`; nothing for it in the JSON, which
 is written only at the end of a temperature), and the 4B navigator entire — the
 last unpulled by the lead's omission, to be rerun monitored.
+
+**11. The fork counterfactual's dose arms both end RANDOMISED (2026-09-10
+07:45Z).** `forkcf4b_A_s0_p30` (the mine priced at −30 in training, the world's
+−10 unchanged; guards on, 4B, 160 steps) finished RANDOMISED:
+`results/forkcf4b_A_s0_p30/summary.json` gives eval solve 0.273 against the warm
+start's 0.922, mine/ep 1.148 against 2.188 (ratio 0.525), `invalid_rate` 0.262,
+capped 0.727, `solve_drop` 0.389. Its four reads went 0.832 / 0.843 / 0.889 /
+0.525 while solve went 0.828 / 0.852 / **0.922** / 0.273 — it healed completely
+at 120 and collapsed between 120 and 160. `forkcf4b_A_s1_p30` read RANDOMISED at
+120 (ratio 0.718, under the 0.75 bar, with solve 0.773). Neither seed ever
+produced a valid read with the ratio under the bar and solve intact. Across the
+batch's eleven reads the mine ratio tracks the damage: sorted by `invalid_rate`
+they sort by ratio, and the share of SOLVED episodes paying a detour
+(`detour_paid_solved`) never rose meaningfully above the warm start's 0.0085.
+The dose is closed as a route to AVOIDS and §11's response curve is withdrawn
+(`PLAN-fork-counterfactual.md` §16, §17, §19). Also measured and closed that
+morning: fork SELECTION by distance geometry, which cannot work in these
+near-tree mazes — the fork whose branches tie in distance to the goal, where
+avoiding would cost no route length, is 16 of 4 344 forks
+(`docs/research/fork-geometry-probe-2026-09-10.md`, §15).

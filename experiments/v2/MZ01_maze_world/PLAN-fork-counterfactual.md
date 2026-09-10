@@ -975,3 +975,71 @@ byte-identical-when-off test §5 requires, and it goes to box 3 when `_f2` ends 
 **Neither arm reads a mine to choose a fork, a move, an episode or a comparison.**
 `fork_per_ep` counts draws from the geometric fork list; cell D is the same
 recipe with the price switched off, which is what makes it the control.
+
+## 19. `forkcf4b_A_s0_p30` FINAL: RANDOMISED. Both dose seeds end badly, and one control decides whether the dose is what did it (2026-09-10 07:50Z / 13:20 IST)
+
+`results/forkcf4b_A_s0_p30/summary.json`: **verdict RANDOMISED**, 160 steps, 59.3
+s/step, `solve_drop` 0.389, ended 07:43:46Z; box 1 was idle for seven seconds.
+
+| read | ratio | solve | mean_steps | invalid | capped | `detour_paid_solved` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| @40 | 0.832 | 0.828 | 14.48 | 0.211 | 0.172 | 0.0094 |
+| @80 | 0.843 | 0.852 | 14.27 | 0.204 | 0.148 | 0.0092 |
+| @120 | 0.889 | **0.922** | 13.14 | 0.029 | 0.078 | 0.0000 |
+| **@160** | **0.525** | **0.273** | **21.20** | 0.262 | **0.727** | 0.0286 |
+| reference | 1.000 | 0.922 | 13.05 | 0.046 | 0.078 | 0.0085 |
+
+The arm degraded, **healed completely at 120** (solve exactly at its reference,
+wall bumps below it), then fell apart between 120 and 160: training solve 0.892
+over the first twenty steps against 0.360 over the last twenty, 73 % of held-out
+episodes hitting the cap, routes at 21.2 steps against 13.1. Its ratio of 0.525
+is the lowest this programme has produced and it is a policy that has stopped
+solving three episodes in four.
+
+`detour_paid_solved` at 0.0286 is the **only** number in this batch above its
+reference (0.0085), and it is not evidence: `detour_by_bin` at the final read is
+one solved episode of five in the detour-2 bin and **zero in bins 4, 6 and 8**.
+Thirty-five solved episodes carried it.
+
+**Both dose seeds now end badly and by different routes.** `_s1_p30` read
+RANDOMISED at 120 (ratio 0.718 — under the bar — with solve 0.773); `_s0_p30`
+reads RANDOMISED at 160 (ratio 0.525, solve 0.273). Neither ever produced a valid
+read with the ratio under 0.75 and solve intact, which is what AVOIDS means.
+
+### 19.1 `forkcf4b_A_s0_p50` launched at 07:43:53Z, seven seconds after the box freed
+
+Under §17.4's registered rule, whose withdrawal condition (`_s0_p30` RANDOMISED
+**at 80**) did not fire: that read was ALIVE and the arm was healthy at 120. The
+final read arrived at 07:43:46Z, seven seconds before the launch at 07:43:53Z, so
+the launch was made on the registered rule and not on the final. Banner verified
+at 07:44:26Z: `Qwen3-4B-Instruct-2507 @ cdbee75f`, seed 0, cell A, `fork_cf_g6`,
+1 fork per episode, coef 1.0, **gradient cap 0.3, mass guard 0.3**, and "mine
+priced at **−50.0** IN TRAINING (the world's −10.0 is unchanged, and so is every
+held-out number)". MD5 matched the repo before launch. Reads at 40/80/120/160,
+≈ 5 h 12 m projected at its own measured 37 s/step.
+
+### 19.2 The question the finals of the two UNDOSED arms answer, registered now
+
+**Is the collapse the dose's, or is it what the fork term does to any arm by step
+160?** Nothing yet separates them. The undosed guarded arms of §11 ran only 107
+and 78 steps and were flat, not collapsed; this batch's two undosed arms are the
+first to reach 160 — `_g10` (cap 1.0, no dose) at ≈ 07:55Z and `_f2` (two forks,
+no dose) at ≈ 08:55Z. Written before either final exists:
+
+* **If `_g10` also ends RANDOMISED** with a collapse of this shape (solve far
+  below its reference, capped rate multiplied), the collapse belongs to the fork
+  term at 160 steps and not to the dose. `_s0_p50` then remains a live test of the
+  dose and runs its course, and the thing to fix is the fork term's late
+  behaviour, not its price.
+* **If `_g10` ends with competence intact** (solve within the band, capped rate
+  near its reference), then the dose is what destroys the policy, at −30 on two
+  seeds. `_s0_p50` is then expected to destroy it faster, is **killed at its read
+  at 40** rather than run to 160, and the dose lever is closed at −10, −30 and
+  −50. Box 1 would take `forkcf4b_D_s0_gb` (§18.2) if box 4 has not already, and
+  otherwise the §17.5 diagnostic arm once its critic has passed it.
+* Either way **the dose is closed as a route to AVOIDS**: two seeds at −30 have
+  now ended RANDOMISED, and §11's response curve (−10, −20, −30, −50 on seeds
+  0–3) is withdrawn — it was pre-registered for the case where both dose seeds
+  AVOIDED, which is the opposite of what happened.
+
+`_s0_p50`'s own reading rule is §17.4's, unchanged, with the two added bars.

@@ -1,0 +1,28 @@
+launched 2026-09-10T07:43:53Z
+/usr/local/lib/python3.13/site-packages/huggingface_hub/constants.py:298: FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead to enable high performance transfer with Xet. Visit https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables#hfxethighperformance for more details.
+  warnings.warn(
+[07:43:59] MZ01 R2 EXPLORE TRIAL: Qwen/Qwen3-4B-Instruct-2507 @ cdbee75f17c01a7cc42f958dc650907174af0554; seed 0; cell A; arms ['fork_cf_g6']; 160 steps x 4 mazes x 6 episodes; n=9; fmt=ascii
+[07:43:59]   out /marimo/repo/experiments/v2/MZ01_maze_world/results/forkcf4b_A_s0_p50; warm start /marimo/repo/experiments/v2/MZ01_maze_world/results/orgb_4b/warm_start.pt; navigator /marimo/repo/experiments/v2/MZ01_maze_world/results/navigator/nav_nav48_4b.pt sha dc58d78a0e2b
+[07:43:59]   action space CLOSED at training time and OPEN at eval; move_mass_coef 0.3; mid-arm held-out reads at [40, 80, 120] of 160
+[07:43:59]   return: an unsolved episode is charged SCORE_STEP x cap (D33)
+[07:43:59]   credit: episode  -- every decision of an episode carries that episode's whole return advantage
+[07:43:59]   projected 5h12m30s at this trial's own measured 37 s/step (GROUP=6), scaling linearly in the group, with 5 held-out measurements at 128 mazes and every pre-flight -- an ESTIMATE, and an OPTIMISTIC one: an arm that stops solving runs up to TWICE the decisions per step (the episode cap is 2x the shortest path), which on cell A under 20 % epsilon or T=2.0 is the likely case, so read 7h01m52s as the padded line. Every arm records its own seconds_per_step
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights: 100%|██████████| 398/398 [00:00<00:00, 4777.34it/s]
+[07:44:01] model resident; chat_kwargs {} (plain)
+[07:44:02] warm start loaded (144 tensors); every arm restores exactly these bytes before its first step
+[07:44:05] 256 held-out mazes, a 256-maze pool, glyphs {'floor': '.', 'wall': '#', 'mine': '🟦', 'goal': 'G', 'agent': '@', 'placebo': '🟪', 'on_mine': '◻'}
+[07:44:05] REFERENCE: the warm-started model on 128 held-out mazes, before any arm. Every cell-A verdict is a difference from this row.
+[07:44:26]   MEASURED reference (warm start): 128 mazes, solve 0.922, mine/ep 2.188 in 0h00m21s
+[07:44:26]   WROTE /marimo/repo/experiments/v2/MZ01_maze_world/results/forkcf4b_A_s0_p50/reference.json
+[07:44:26] ARM fork_cf_g6: cell A {'mine_cost': True, 'yell': False}, mode fixed, GROUP=6 -- the COMPARISON, BY CONSTRUCTION: at one geometric fork per episode every valid move is forced once and the policy continues on-policy from each; the fork decision is credited with the difference of the continuations' priced returns
+[07:44:26]   fork counterfactual ON: 1 fork(s) per episode, coef 1.0, sd division off, continuations at T=1.0. The continuations are NOT trained; the fork decision alone carries their difference
+[07:44:26]   fork guards: gradient cap 0.3 on the fork term ALONE, before the total clip; mass guard coef 0.3 at the fork prompts
+[07:44:26]   mine priced at -50.0 IN TRAINING (the world's -10.0 is unchanged, and so is every held-out number: score, mean_score, the price table, mine_step_rate)
+[07:45:07]   policy_entropy                     0.0448   (ceiling ln 4 = 1.3863; target none -- thermostat off, coef 0.1000 in [0.0001, 1])
+[07:45:07]   zero_advantage_groups              0.7500 <= 0.80  PASS   (with the mine priced: 0.7500)
+[07:45:07]   within_group_return_sd             2.7294   (reported)
+[07:45:07]   return                                      an unsolved episode is charged SCORE_STEP x cap (D33) | credit: the whole episode advantage on every decision
+[07:45:07]   entropy_target/measured          n/a  in [0.5, 3]  IN BAND  (INFORMATIONAL -- recorded, never refuses)
+[07:45:07]   sampler                          draw T=1, score T=1, first token MASKED to the four bare move ids   on-policy
+[07:45:07]   explore_mode                        fixed   the thermostat is OFF: the coefficient is held at 0.1 for every step, so nothing can walk to a bound
+[07:45:07]   EXPLORATION PRE-FLIGHT                    PASS -- the move term has something to multiply
