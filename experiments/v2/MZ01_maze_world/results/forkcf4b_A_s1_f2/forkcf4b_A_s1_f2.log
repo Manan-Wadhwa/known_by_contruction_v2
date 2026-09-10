@@ -67,3 +67,11 @@ launched 2026-09-10T08:02:12Z
   [A] step   39  loss -119.9302  R   -6.500  solve 1.000  mine/ep 0.250  yell +0.806  cont -0.07801418439716312  H 0.000  mass 1.000  |g| 0.302  zadv 1.00  exit 0.00  forks 48/111c nz 0.94 |Af| 2.82 |gf| 423.03->0.30 fmass 1.00  90.62s
 [08:55:37]   MID-ARM READ at step 40/160 (128 held-out mazes, the SAME mazes and the same call as the final read)
 [08:56:05]   MEASURED fork_cf_g6 @40: 128 mazes, solve 0.922, mine/ep 1.914 in 0h00m28s
+  [A] step   40  loss -181.4409  R  -45.000  solve 0.750  mine/ep 3.000  yell +0.461  cont -0.06597222222222222  H 0.008  mass 1.000  |g| 0.289  zadv 1.00  exit 0.25  forks 42/93c nz 0.67 |Af| 5.04 |gf| 720.28->0.30 fmass 1.00  84.50s
+  [A] step   41  loss -181.2816  R  -27.500  solve 0.750  mine/ep 1.250  yell +0.575  cont -0.04285714285714286  H 0.003  mass 1.000  |g| 0.299  zadv 1.00  exit 0.25  forks 48/114c nz 1.00 |Af| 7.19 |gf| 1433.64->0.30 fmass 1.00  75.62s
+  [A] step   42  loss -144.3253  R  -55.000  solve 0.750  mine/ep 4.000  yell +0.361  cont -0.032196969696969696  H 0.000  mass 1.000  |g| 0.301  zadv 1.00  exit 0.25  forks 42/93c nz 0.69 |Af| 3.10 |gf| 302.43->0.30 fmass 1.00  80.42s
+  [A] step   43  loss -294.0605  R  -19.000  solve 1.000  mine/ep 1.500  yell +0.632  cont 0.0515873015873016  H 0.000  mass 1.000  |g| 0.300  zadv 1.00  exit 0.00  forks 48/110c nz 0.79 |Af| 5.77 |gf| 619.86->0.30 fmass 1.00  76.37s
+  [A] step   44  loss -204.1928  R  -24.083  solve 0.750  mine/ep 0.792  yell +0.727  cont 0.10911786508524832  H 0.002  mass 1.000  |g| 0.285  zadv 0.75  exit 0.25  forks 48/108c nz 0.85 |Af| 5.15 |gf| 787.59->0.30 fmass 1.00  114.10s
+  [A] step   45  loss -129.6748  R   -6.500  solve 1.000  mine/ep 0.250  yell +0.750  cont -0.10638297872340426  H 0.004  mass 1.000  |g| 0.344  zadv 1.00  exit 0.00  forks 48/105c nz 0.98 |Af| 2.18 |gf| 189.86->0.30 fmass 1.00  80.61s
+  [A] step   46  loss -220.3230  R   -6.500  solve 1.000  mine/ep 0.250  yell +0.701  cont -0.13120567375886524  H 0.005  mass 1.000  |g| 0.367  zadv 1.00  exit 0.00  forks 48/107c nz 1.00 |Af| 4.06 |gf| 456.99->0.30 fmass 1.00  74.08s
+  [A] step   47  loss -155.7363  R   -9.000  solve 1.000  mine/ep 0.500  yell +0.701  cont -0.11231884057971014  H 0.010  mass 1.000  |g| 0.375  zadv 1.00  exit 0.00  forks 48/106c nz 0.92 |Af| 2.84 |gf| 290.23->0.30 fmass 1.00  79.00s
