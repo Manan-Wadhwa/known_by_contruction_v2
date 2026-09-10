@@ -1467,3 +1467,93 @@ reads, §17.3 is confirmed and `MZ01_ENTROPY_COEF` is the lever that follows
 field is what makes this readable**: the signed `fork_p_target_delta` alone could
 not distinguish "nothing moved" from "the forks cancelled", and it was the
 critic, not the build, that put it there (§22.1).
+
+## 25. Box 3's lease dies at 11:03Z; §22.2's first branch fires on what survived; the entropy arm pre-registered (2026-09-10 11:10Z / 16:40 IST)
+
+### 25.1 The loss, and why it costs less than box 4's did
+
+Box 3 answered HTTP **410** at 11:05:19Z after unreachable probes at 11:03:18Z
+and 11:03:41Z. `forkcf4b_A_s0_gd` was at **step 109 of 160**. Survived: 109 steps
+of history with all seven §22 diagnostic fields, and its reads at 40 (INVALID,
+§24.1) and 80 (ALIVE, ratio 0.929, solve 0.938). Lost: the reads at 120 and 160,
+the summary, the adapter.
+
+**This arm's purpose was never its held-out reads** (§22.2 said so before it ran:
+"Not a verdict on avoidance … its purpose is `fork_p_target_*`"), and the
+diagnostic is a per-step trace. 109 of 160 steps of it is the measurement, not a
+fragment of one.
+
+### 25.2 The diagnostic's answer: §17.3 is confirmed
+
+| window | `absdelta` median | exactly 0 | ≤ 1e-4 | `p_target_before` | `p_taken_before` | entropy | training solve |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| steps 1–40 | 2.8 × 10⁻⁶ | 7/40 | 28/40 | 0.955 | 1.0000 | 0.0084 | 0.952 |
+| 41–80 | 5.3 × 10⁻¹² | 8/40 | 29/40 | 0.902 | 1.0000 | 0.0028 | 0.948 |
+| 81–109 | **6.1 × 10⁻¹⁹** | 5/29 | 20/29 | 0.914 | 1.0000 | 0.0009 | 0.977 |
+| whole run | 6.0 × 10⁻¹¹ | **20/109** | **77/109** | — | 1.0000 | — | — |
+
+**The capped step does not move the fork decision.** The median magnitude of the
+change falls thirteen orders of magnitude across the run, to 6 × 10⁻¹⁹ — below
+what double precision distinguishes from nothing — and on 20 steps of 109 it is
+exactly zero. Meanwhile `fork_p_taken_before` sits at a median of **1.0000** in
+every window and `policy_entropy` falls 0.0084 → 0.0009.
+
+**And the arm was healthy the whole time**: training solve 0.952 → 0.948 → 0.977,
+its read at 80 ALIVE with solve 0.938 ABOVE its reference. This is not a broken
+arm failing to learn; it is the recipe of record, working as designed, unable to
+move a decision the policy holds at 1.000.
+
+**Read `fork_p_target_before` as a share** (§24.2): its values are exact fractions
+of their own `fork_p_n_scored`, so a median of 0.91–0.96 says the fork term pushes
+at **the move the policy already played, at about 19 forks in 20**. Where the term
+agrees there is nothing to move; where it disagrees, the capped step cannot move
+it. Both halves of §17.3, measured.
+
+**§22.2's first branch therefore fires**: `fork_p_target_absdelta` at or below
+1e-4 on 77 of 109 steps confirms that the collapse is the binding constraint, and
+`MZ01_ENTROPY_COEF` is the lever that follows (§17.5 item 2,
+`docs/research/APPROACHES.md` §B #6). The second and third branches are refuted,
+not merely unchosen: `absdelta` is not large-with-cancelling-`delta` (a
+credit-assignment problem), and `fork_p_target_after` does not rise steadily above
+`before` (fork decisions being taught but not generalising).
+
+### 25.3 `forkcf4b_A_s0_ent3` — pre-registered for box 2 at ≈ 11:55Z
+
+`MZ01_ENTROPY_COEF` **0.3** against the recipe's 0.1 — an existing documented
+knob, no build — with **everything else exactly §22.2's `_gd`**: cell A, seed 0,
+`fork_cf_g6`, 4B @ `cdbee75f`, fork coef 1.0, cap 0.3, mass 0.3, one fork per
+episode, no dose, 160 steps, reads 40/80/120/160, and the §22 diagnostic on (it
+is always-on with the fork term). `_gd` at the same settings and coefficient 0.1
+is its paired predecessor, and the diagnostic makes them comparable step by step.
+
+**Its reading rule, fixed now, and it is read on the diagnostic first:**
+
+1. **The lever works** if `policy_entropy` holds an order of magnitude above
+   `_gd`'s (≥ 0.01 against 0.0009 late) **and** `fork_p_target_absdelta` rises to
+   ≥ 1e-3 sustained **and** solve stays inside the 0.10 band. Only then is a mine
+   ratio worth reading, and only then against a cell-D partner at the same
+   coefficient, which is the arm that follows.
+2. **The lever is a repeat of the temperature family** if entropy rises and solve
+   falls outside the band — D-15's derailment through a different door. It is
+   then closed at 0.3 and NOT retried at a higher coefficient, because the
+   failure would be the same one temperature 1.5 and 2.0 already produced
+   (`docs/research/APPROACHES.md` §A: DEAD at 0.914/0.89 and RANDOMISED at
+   0.836/0.75).
+3. **The lever does nothing** if entropy does not move at 3× the coefficient. The
+   collapse is then not coefficient-driven and the next question is the warm
+   start itself — the navigator arrives near-deterministic (`preflight_entropy`
+   0.045 against a trained 0.001), which is a property of the SFT policy, not of
+   this recipe.
+
+**The construction test**: an entropy coefficient is a term on the policy's own
+output distribution. It reads no maze, no landing and no mine, and it is applied
+identically on cell A and cell D.
+
+### 25.4 Two leases left
+
+Box 4 died at 08:01Z, box 3 at 11:03Z; **boxes 1 and 2 remain**. Box 1 runs
+`forkcf4b_D_s0_gb` to ≈ 13:00Z — it is the only cell-D control of full length the
+programme has ever had and must not be displaced. Box 2 frees at ≈ 11:55Z and
+takes §25.3's arm. **`forkcf4b_A_s0_gd` is not relaunched**: its diagnostic
+answered, and a fresh lease is better spent on the lever than on the reads at 120
+and 160 of an arm whose measurement is already in hand.

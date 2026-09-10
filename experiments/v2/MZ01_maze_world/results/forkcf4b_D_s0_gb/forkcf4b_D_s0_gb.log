@@ -111,3 +111,6 @@ launched 2026-09-10T08:25:27Z
 [10:49:19]   MEASURED fork_cf_g6 @80: 128 mazes, solve 0.914, mine/ep 2.070 in 0h01m25s
   [D] step   80  loss -107.2157  R   -5.333  solve 1.000  mine/ep 0.000  yell +0.730  cont None  H 0.006  mass 0.998  |g| 252.428  zadv 0.75  exit 0.00  forks 24/58c nz 0.67 |Af| 1.38 |gf| 304.19->0.30 fmass 1.00  171.14s
   [D] step   81  loss -422.6084  R  -15.000  solve 0.750  mine/ep 7.000  yell +0.094  cont 0.0039281705948372575  H 0.000  mass 0.999  |g| 0.298  zadv 1.00  exit 0.25  forks 24/58c nz 0.75 |Af| 3.47 |gf| 1197.90->0.30 fmass 1.00  225.64s
+  [D] step   82  loss -143.3278  R   -4.000  solve 1.000  mine/ep 1.750  yell +0.521  cont -0.030778164924506385  H 0.000  mass 0.999  |g| 0.289  zadv 1.00  exit 0.00  forks 24/51c nz 0.92 |Af| 1.80 |gf| 192.75->0.30 fmass 1.00  173.66s
+  [D] step   83  loss -175.1134  R   -4.000  solve 1.000  mine/ep 0.500  yell +0.674  cont 0.03260869565217389  H 0.000  mass 0.999  |g| 0.293  zadv 1.00  exit 0.00  forks 24/49c nz 0.92 |Af| 1.82 |gf| 156.24->0.30 fmass 1.00  155.33s
+  [D] step   84  loss -167.4735  R   -8.500  solve 0.917  mine/ep 1.250  yell +0.676  cont 0.0506265664160401  H 0.000  mass 0.998  |g| 5.223  zadv 0.75  exit 0.08  forks 24/56c nz 0.88 |Af| 1.74 |gf| 437.95->0.30 fmass 1.00  195.85s
