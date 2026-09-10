@@ -1140,3 +1140,22 @@ read at 160**, which makes it the replacement for §19.2's control. **Box 4 is
 gone and `forkcf4b_D_s0_gb` (§18.2) has nowhere to run**; it is the first arm to
 place on the next lease, before the §17.5 diagnostic, because every comparison in
 §13.1, §16 and §17 rests on a cell-D partner that is still two stumps.
+
+### 20.5 Correction to §20.4, written before the launch it changes
+
+§20.4 said `forkcf4b_D_s0_gb` "has nowhere to run" and is first on the next
+lease. That is wrong the moment §20.2's kill rule is applied: `_s0_p50` is killed
+at its read at 40, which **frees box 1 at ≈ 08:25Z**, and the cell-D control goes
+there. It does not wait for a lease that may not come.
+
+The queue on the three surviving boxes, pre-registered now:
+
+| box | now | frees | then |
+| --- | --- | --- | --- |
+| box 1 | `_s0_p50`, step 22 at 08:07Z | ≈ 08:25Z, killed at its read at 40 (§20.2) | **`forkcf4b_D_s0_gb`** — settings as §13.2's `_g10` row but `MZ01_TRIAL_CELL=D`, no dose, cap 0.3, seed 0, 160 steps, reads 40/80/120/160 |
+| box 2 | `forkcf4b_A_s1_f2`, step 2 | ≈ 11:35Z at its measured ~80 s/step | by the reads then on record |
+| box 3 | `_f2` seed 0, step 117 | ≈ 09:05Z | the §17.5 diagnostic arm, **if and only if** its critic has passed the revised build; otherwise `forkcf4b_D_s1_gb`, the cell-D control at seed 1, which is zero-build |
+
+A fourth lease would add parallelism and is wanted, but **nothing in the queue is
+blocked on one**. `_g10`'s directory will read `RUNNING step 157/160` for ever:
+that is the last state pulled before the lease died, not a live run (§20.1).

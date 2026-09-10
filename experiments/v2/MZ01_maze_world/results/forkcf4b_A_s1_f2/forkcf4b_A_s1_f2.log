@@ -25,3 +25,5 @@ launched 2026-09-10T08:02:12Z
 [08:03:25]   sampler                          draw T=1, score T=1, first token MASKED to the four bare move ids   on-policy
 [08:03:25]   explore_mode                        fixed   the thermostat is OFF: the coefficient is held at 0.1 for every step, so nothing can walk to a bound
 [08:03:25]   EXPLORATION PRE-FLIGHT                    PASS -- the move term has something to multiply
+  [A] step    0  loss -31.1767  R  -12.000  solve 1.000  mine/ep 0.750  yell +0.578  cont -0.10748792270531402  H 0.049  mass 1.000  |g| 2.031  zadv 0.50  exit 0.00  forks 48/110c nz 0.90 |Af| 3.44 |gf| 108.93->0.30 fmass 1.00  77.04s
+  [A] step    1  loss -21.4139  R  -22.500  solve 0.750  mine/ep 0.750  yell +0.561  cont -0.02046783625730994  H 0.021  mass 1.000  |g| 0.296  zadv 1.00  exit 0.25  forks 48/112c nz 0.85 |Af| 4.47 |gf| 91.83->0.30 fmass 1.00  80.71s
