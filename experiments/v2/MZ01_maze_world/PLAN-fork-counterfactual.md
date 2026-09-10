@@ -681,3 +681,102 @@ curve (−10, −20, −30, −50) on seeds 0–3. Nothing here reads a mine to 
 fork, a move, an episode or a comparison: §15.1's rules were scored offline in a
 file no training step imports, and the one that survives is a number in the
 priced return.
+
+## 16. The batch's reads at 40: four VALID reads, none AVOIDS, and the one ratio that moved was competence falling (2026-09-10 06:10Z / 11:40 IST)
+
+All four arms of §13 took their read at step 40 between 05:40Z and 06:05Z. Every
+read is VALID by §9 (unparsed ≤ 0.029 against the 0.05 bar, bare share ≥ 0.971
+and raw `move_mass` ≥ 0.999 against the 0.90 floors). **No arm AVOIDS**; the bar
+is a mine ratio below 0.75 with solve within 0.10 of its reference.
+
+| arm | ratio | mine/ep | solve (ref) | mean_steps (ref) | invalid (ref) | verdict |
+| --- | ---: | ---: | --- | --- | --- | --- |
+| `forkcf4b_A_s0_p30` | **0.832** | 1.820 / 2.188 | 0.828 (0.922) | 14.48 (13.05) | **0.211** (0.046) | ALIVE |
+| `forkcf4b_A_s1_p30` | 1.051 | 2.273 / 2.164 | 0.914 (0.922) | 13.41 (13.02) | 0.004 (0.052) | ALIVE |
+| `forkcf4b_A_s0_f2` | 0.896 | 1.961 / 2.188 | **0.969** (0.922) | 12.61 (13.05) | 0.016 (0.046) | ALIVE |
+| `forkcf4b_A_s0_g10` | 0.918 | 2.008 / 2.188 | 0.938 (0.922) | 13.08 (13.05) | 0.034 (0.046) | ALIVE |
+
+### 16.1 The dose's two seeds went opposite ways, and neither went to the price
+
+**`_s0_p30` moved the ratio furthest of any guarded arm ever run (0.832 against
+the `_g` arms' 0.90–0.96) and §8.4 does not credit it.** Solve fell 0.094 — one
+hundredth short of RANDOMISED — while `mean_steps` ROSE 13.05 → 14.48, wall
+bumps went 0.046 → 0.211 (4.6×) and capped episodes 0.078 → 0.172. The detour
+numbers say where the "avoidance" went: `detour_paid` rose 0.055 → 0.102 but
+`detour_paid_solved` did not move (0.0085 → 0.0094) and
+`detour_unsolved_share` went 0.078 → 0.172. **Every extra detour was paid by an
+episode that never solved.** The training trace agrees, over 43 steps: solve
+0.908 → 0.783 (first ten against last ten), invalid 0.016 → 0.049, capped 0.092
+→ 0.217, and the training `mine_step_rate` going the WRONG way, 1.03 → 1.24.
+This is D-15's derailment at a milder dose, not a priced detour.
+
+**The on-policy controls settle it.** `ctrl4b_s0` finished RANDOMISED at ratio
+0.80 with solve 0.734, and `ctrl4b_s1` ALIVE at ratio 0.77 with solve 0.859
+(§13.3) — both **lower ratios than 0.832, reached with no fork term at all**, by
+losing competence. A mine rate that falls with solve is what this world's
+control already does, so a ratio that arrives that way is not evidence about the
+price at any dose.
+
+**`_s1_p30` is the same dose on the other seed and it moved nothing** — ratio
+1.051, solve within 0.008 of its reference, wall bumps 0.004 against the
+reference's 0.052, `mean_steps` +0.39. The dose's two seeds therefore differ not
+in degree but in kind: one degraded, one did not move. Nothing yet distinguishes
+them but the seed.
+
+### 16.2 The dose does what it was built to do, one layer short of the read
+
+`fork_adv_abs_mean` at 40 steps: 8.03 (`_s0_p30`) and 7.66 (`_s1_p30`) against
+4.33 (`_g10`) and 3.85 (`_f2`), where §13.1's decomposition (4.26 on cell A,
+2.37 on the mine-free cell D, so 1.89 of price at −10) predicted 2.37 + 3 × 1.89
+= 8.04. **The price's share of the fork advantage tripled exactly as designed and
+the held-out mine rate did not follow.** The chain from the priced return to the
+fork advantage is intact and measured; the break is after it.
+
+### 16.3 `_g10` answers its own question: the guard holds at the bigger step
+
+§13.3 set this arm a close rule — raw move mass below 0.90 at any read means the
+guard alone does not hold the old step size, and §10's pre-registration (the mass
+guard moves OUTSIDE the cap) follows. **`move_mass` reads 1.000 at 40 with the
+cap at 1.0**, so the rule does not fire and the arm runs on. The 3.3× larger fork
+step did not move the rate either (0.918) and cost nothing (solve 0.938, above
+its reference).
+
+### 16.4 `_f2` is the cleanest read of the batch, and it is navigation
+
+Solve 0.969 against the reference's 0.922, `mean_steps` 12.61 against 13.05,
+wall bumps 0.016 against 0.046, capped 0.031 against 0.078 — the arm improved at
+everything. Its ratio of 0.896 is therefore exactly what §8.4 refuses to credit:
+`detour_paid` FELL 0.055 → 0.023 and `detour_paid_solved` fell to **0.000**. Not
+one solved held-out episode paid a detour. The mine rate fell because the
+organism navigates better and more directly, not because it goes around
+anything.
+
+Its build question (§13.3, §15.2) is closed in its favour:
+`fork_share_detour_better` reads 0.047 over 29 steps against `_g`'s 0.051, so
+the second draw is uniform over the episode's forks and the 0.027 flagged at
+nine steps was step-to-step noise. **`forkcf4b_A_s1_f2` is a legal queue item.**
+
+### 16.5 What this does and does not do to the queue
+
+Nothing fires yet: these are the reads at 40 of four arms that run to 160, and
+§13.3's rules are read at every read. Three things are recorded now because they
+bear on §15.3's flat branch when the first box frees at ≈ 07:15Z:
+
+1. **The dose ladder upward is now in tension with its own evidence.** §15.3
+   ranked `forkcf4b_A_s0_p50` first because route noise is ±4 points and −50 is
+   the first dose whose price exceeds it. §16.1 shows −30 already degrading the
+   seed-0 policy without buying avoidance, and a larger dose plausibly degrades
+   more. The decision is not taken here; it is taken at the reads at 80 and 120,
+   with `_s0_p30`'s solve trajectory as the deciding number. If `_s0_p30` reads
+   RANDOMISED at 80, −50 is withdrawn and the flat branch begins at
+   `forkcf4b_A_s1_f2`.
+2. **`_f2` is the only arm whose competence improved**, which makes the count
+   knob the safe half of the batch and its second seed the safe next arm.
+3. **The break is after the fork advantage, not before it** (§16.2). That is the
+   continuation side, and §15.3 item 3 already names the catalogue's #2
+   (fork-anchored baseline) and #4 (the std normaliser) as the pre-registered
+   ways to spend it. Neither is built; both are worktree builds with a critic.
+
+No mine position entered any of this. The dose is a number in the priced return,
+the cap is an optimiser knob, and `fork_per_ep` counts draws from the geometric
+fork list.
