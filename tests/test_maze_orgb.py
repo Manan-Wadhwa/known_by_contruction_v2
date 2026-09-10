@@ -6198,8 +6198,8 @@ def test_fork_off_is_the_pre_build_trace_and_the_pre_build_adapter():
 
     # AND THE FIXTURE CAN TELL THEM APART. Same seed, same scripted sampler,
     # the term on: the trace grows exactly `FORK_TRACE_FIELDS` (six from the
-    # fifteenth pass, three more from the sixteenth's guards) and the adapter
-    # moves.
+    # fifteenth pass, three more from the sixteenth's guards, four more from the
+    # eighteenth's probability diagnostic) and the adapter moves.
     on, on_state = _exit_fixture_train(fork_cf=True)
     assert set(on) - set(hist) == set(maze_orgb.FORK_TRACE_FIELDS)
     assert on["config"]["fork"]["fork_cf"] is True
@@ -6897,3 +6897,410 @@ def test_the_held_out_read_is_priced_by_the_world_and_not_by_the_dose():
     with maze_orgb.mine_price_in_force(-30.0):
         assert maze_orgb.price_of(1, 2) == world_price
         assert maze2.score_landings(["mine", "goal"]) == plain[0]["score"]
+
+
+# ---------------------------------------------------------------------------
+# eighteenth pass, 2026-09-10: the fork DECISION's own probability
+# (PLAN-fork-counterfactual.md section 17.3 and section 17.5 item 1;
+# BUILD-fork-probability-2026-09-10.md)
+# ---------------------------------------------------------------------------
+#
+# WHAT SECTION 17.3 CLAIMS AND WHY IT COULD NOT BE READ. The dose tripled the
+# price's share of the fork advantage exactly as designed (8.03 measured against
+# 8.04 predicted) and the held-out mine rate did not follow, on any arm. The
+# hypothesis is that the advantage is CORRECT and cannot move the policy:
+# `policy_entropy` falls to 0.001-0.005 inside forty steps on every arm, priced
+# or not, so the move distribution is a point mass, and the fork gradient is
+# capped at norm 0.3. Nothing in the trace recorded the fork decision's OWN
+# probability, so the hypothesis was neither confirmable nor refutable from
+# disk. The six `fork_p_*` fields are that probability, before and after the
+# step, and the claims below are what they have to satisfy:
+#
+#   1. they are written once per step with the term on, absent with it off, and
+#      the "after" is measured at the SAME prompts AFTER the weights moved;
+#   2. the diagnostic reads the POLICY and the ADVANTAGES and never a mine --
+#      the construction test (section 1), asserted with every mine accessor on
+#      the maze class raising;
+#   3. it draws no random number from any stream the trainer snapshots, or
+#      every arm's seed reproducibility would break;
+#   4. nothing reads it back -- not the loss, not the advantage, not a verdict.
+
+
+def _rng_states_equal(a, b):
+    """Two `_rng_snapshot`s, compared field by field. -> [what differs].
+
+    EVERY key the snapshot carries, `cuda` included -- but on a CPU-only host
+    `_rng_snapshot` puts an EMPTY LIST there, so that comparison is structural
+    and is not exercised by this suite. Said out loud rather than claimed
+    (critic, 2026-09-10): what the suite actually exercises is python, numpy,
+    torch and the run's own generator, which is where this trainer's draws come
+    from (`torch.multinomial` on a CPU generator).
+    """
+    bad = []
+    for key in ("python", "numpy"):
+        if a.get(key) != b.get(key):
+            bad.append(key)
+    for key in ("torch", "generator"):
+        x, y = a.get(key), b.get(key)
+        if (x is None) != (y is None) or (x is not None
+                                          and not torch.equal(x, y)):
+            bad.append(key)
+    ca, cb = list(a.get("cuda") or []), list(b.get("cuda") or [])
+    if len(ca) != len(cb) or any(not torch.equal(x, y)
+                                 for x, y in zip(ca, cb)):
+        bad.append("cuda")
+    return bad
+
+
+def _one_priced_fork():
+    """(rows, the fork's prompt, model, tok, maze) for `FORKPRICE`'s one fork.
+
+    The advantages are the price margin (+-3, `test_the_two_continuations_...`),
+    so the move the fork term pushes hardest toward is the DETOUR and the move
+    the episode took is the mine route -- the two the diagnostic must tell
+    apart, in one fixture.
+    """
+    # The same scripted policy the mass guard's test walks `FORKPRICE` with: it
+    # holds the detour open, so the two continuations are the mine route (2
+    # decisions) and the way around (4) and the margin is the price's own.
+    policy = _by_position({(0, 0): "down", (1, 0): "down",
+                           (0, 1): "down", (1, 1): "down", (2, 1): "left"})
+    episodes, decisions, maze, model, tok = _fork_episode(FORKPRICE, policy)
+    fork = dict(maze_orgb.episode_forks(episodes[0], maze)[0], maze=maze)
+    conts = _continue(model, tok, [fork], policy)
+    rows, _stats = maze_orgb.fork_terms([fork], conts)
+    return rows, decisions[rows[0]["row"]]["text"], model, tok, maze
+
+
+def test_the_fork_decision_probability_is_recorded_before_and_after_the_step():
+    """PLAN section 17.5 item 1. THE NUMBER THE TRACE NEVER CARRIED.
+
+    Four fields, one entry per step, on exactly the schedule every other fork
+    field is written on -- inside the same `if fork_cf` block, once per step --
+    because a field appended on a different schedule would misalign every array
+    in the trace against `step`.
+
+    And the "after" really is after: the extra forward pass is made at the SAME
+    prompts, in the same chunks, with the weights the optimiser has just moved.
+    Asserted by spying on `_fork_move_logp` and reading the model's own LoRA
+    state at each call, rather than by trusting the order of the source.
+    """
+    fields = ("fork_p_target_before", "fork_p_target_after",
+              "fork_p_target_delta", "fork_p_target_absdelta",
+              "fork_p_taken_before", "fork_p_n_scored", "fork_probe_seconds")
+    assert set(fields) <= set(maze_orgb.FORK_TRACE_FIELDS)
+
+    off, _off_state = _exit_fixture_train()
+    for field in fields:
+        assert field not in off, field
+
+    # ---- the spy: every call, its prompts, the weights and the mode ---------
+    real = maze_orgb._fork_move_logp
+    seen = []
+
+    def spy(model_, tok_, texts, **kw):
+        state = lora_state_dict(model_)
+        seen.append({
+            "texts": tuple(texts), "mass": bool(kw.get("return_mass")),
+            "training": bool(getattr(model_, "training", False)),
+            "weights": sum(float(v.detach().double().sum())
+                           for v in state.values())})
+        return real(model_, tok_, texts, **kw)
+
+    maze_orgb._fork_move_logp = spy
+    try:
+        on, _on_state = _exit_fixture_train(fork_cf=True)
+    finally:
+        maze_orgb._fork_move_logp = real
+
+    # THE TRACE GROWS EXACTLY `FORK_TRACE_FIELDS` and nothing else, which is
+    # what keeps the switch-off path the fourteenth pass's trace key for key.
+    assert set(on) - set(off) == set(maze_orgb.FORK_TRACE_FIELDS)
+    n = len(on["step"])
+    for field in fields:
+        assert len(on[field]) == n, field
+    assert sum(on["n_forks"]) > 0, "the fixture must contain a fork at all"
+
+    for i in range(n):
+        b, a = on["fork_p_target_before"][i], on["fork_p_target_after"][i]
+        d, k = on["fork_p_target_delta"][i], on["fork_p_taken_before"][i]
+        ad, ns = on["fork_p_target_absdelta"][i], on["fork_p_n_scored"][i]
+        # THE DENOMINATOR IS THE SCORED FORKS -- `fork_share_nonzero`'s own
+        # population, counted here as an integer -- and it is that count and
+        # not `n_forks` that decides whether the means exist at all.
+        if on["n_forks"][i]:
+            assert ns == round(on["fork_share_nonzero"][i] * on["n_forks"][i])
+            assert on["fork_probe_seconds"][i] >= 0.0
+        else:
+            assert (ns, on["fork_probe_seconds"][i]) == (None, None)
+        if not ns:
+            assert (b, a, d, ad, k) == (None, None, None, None, None)
+            continue
+        # They are PROBABILITIES -- means over the scored forks of
+        # pi(a | the fork prompt) -- and the delta is the PAIRED difference,
+        # which under one denominator for both is the difference of the means.
+        # THAT IDENTITY IS WHY THE MAGNITUDE EXISTS: the signed mean carries
+        # nothing the two levels lack and it cancels, so `absdelta` -- which is
+        # >= |d| by the triangle inequality, and strictly greater the moment two
+        # forks moved opposite ways -- is the number that says a step moved
+        # anything at all (critic, 2026-09-10).
+        for p in (b, a):
+            assert 0.0 <= p <= 1.0
+        assert d == pytest.approx(a - b, abs=1e-9)
+        assert ad >= abs(d) - 1e-12
+        assert 0.0 <= ad <= 1.0
+        assert k is None or 0.0 <= k <= 1.0
+
+    # ---- the "after" pass: same prompts, moved weights, same mode -----------
+    # The fork term's own chunks are the calls with `return_mass=True` (the mass
+    # guard reads its number off the same head); the diagnostic's are the rest.
+    before_calls = [c for c in seen if c["mass"]]
+    after_calls = [c for c in seen if not c["mass"]]
+    assert before_calls and after_calls
+    # ONE EXTRA FORWARD PASS PER CHUNK AND NO MORE: the "before" half costs
+    # nothing, being read off the tensor the fork gradient is taken at.
+    assert len(after_calls) == len(before_calls)
+    assert [c["texts"] for c in after_calls] == [c["texts"] for c in
+                                                 before_calls], \
+        "the after-probability must be read at the SAME prompts as the before"
+    # THE WEIGHTS MOVED BETWEEN THE TWO, which is the whole content of "after
+    # the optimiser step" -- and the fixture takes a step at every step, so a
+    # probe read before it would have shown the same number twice.
+    assert on["zero_signal_steps"] == 0
+    assert all(x["weights"] != y["weights"]
+               for x, y in zip(before_calls, after_calls))
+    assert any(d != 0.0 for d in on["fork_p_target_delta"] if d is not None), \
+        "a fixture whose step never moves the decision cannot test the delta"
+    assert any(x > 0.0 for x in on["fork_p_target_absdelta"] if x is not None)
+    # BOTH HALVES ARE READ IN THE SAME MODE -- the `eval` the trainer holds the
+    # whole loop in -- or the pair would differ by the mode and not by the step.
+    assert not any(c["training"] for c in seen)
+
+    # ---- and they are DOCUMENTED where an operator would look --------------
+    trial = _trial_module()
+    for field in fields:
+        assert field in (trial.__doc__ or ""), field
+        assert field in (maze_orgb.train_orgb_cell.__doc__ or ""), field
+    print("\n  FORK DECISION PROBABILITY on the toy fixture: "
+          f"pi(pushed move) {on['fork_p_target_before'][0]:.4f} -> "
+          f"{on['fork_p_target_after'][0]:.4f} (delta "
+          f"{on['fork_p_target_delta'][0]:+.6f} signed, "
+          f"{on['fork_p_target_absdelta'][0]:.6f} in magnitude) over "
+          f"{on['fork_p_n_scored'][0]} scored forks; pi(the move taken) "
+          f"{on['fork_p_taken_before'][0]}; the probe cost "
+          f"{on['fork_probe_seconds'][0]:.4f}s of the step's "
+          f"{on['step_seconds'][0]:.4f}s")
+
+
+def test_the_fork_probability_diagnostic_never_reads_the_mines(monkeypatch):
+    """PLAN section 1, in the style of section 5's test 2. THE CONSTRUCTION TEST.
+
+    The organism's only source of mine information is the priced return. This
+    diagnostic may read the policy, the fork prompt and the advantages; it may
+    not read a mine for anything. Asserted the way the fork rule's own blindness
+    is: with EVERY mine accessor raising -- `is_mine`, `mines`, `at` and `rows`
+    (the layout, which SPELLS the mines) -- patched onto the maze CLASS, so no
+    instance and no copy of one can answer either, the diagnostic still computes
+    and gives exactly the numbers it gives against the seeing world.
+
+    The fork, its continuations and its advantages are built BEFORE the
+    blinding: pricing a continuation is the one mine read the design allows, and
+    the claim here is about everything that happens after it.
+    """
+    rows, text, model, tok, maze = _one_priced_fork()
+    # The advantages ARE the price margin, so this is a fork where the pushed
+    # move and the taken move DIFFER -- the case the diagnostic exists to tell
+    # apart (the episode walked onto the mine; the term pushes the detour).
+    assert sorted(rows[0]["advantages"]) == [-3.0, 3.0]
+    assert rows[0]["taken"] == "down"
+    assert rows[0]["moves"][rows[0]["advantages"].index(3.0)] == "right"
+    device = torch.device("cpu")
+    cols = maze_orgb._move_cols(tok, device)
+    with torch.no_grad():
+        mlogp = maze_orgb._fork_move_logp(model, tok, [text], cols=cols,
+                                          device=device)
+    seeing = maze_orgb._fork_decision_probs(mlogp, rows)
+
+    # ---- now blind the world in every direction a mine could be read --------
+    def boom(*_a, **_kw):
+        raise AssertionError(_MineBlind.MINE_READ)
+
+    assert _MineBlind.BLIND_TO == ("is_mine", "mines", "at", "rows")
+    monkeypatch.setattr(maze2.Maze, "is_mine", boom)
+    monkeypatch.setattr(maze2.Maze, "at", boom)
+    monkeypatch.setattr(maze2.Maze, "mines", property(boom))
+    # `rows` is a dataclass FIELD, so the class carries no attribute of
+    # that name until one is put there; a property on the class is a data
+    # descriptor and wins over the instance's own, frozen or not.
+    monkeypatch.setattr(maze2.Maze, "rows", property(boom), raising=False)
+    # The blinding BITES, on the very maze the fork came from, and through the
+    # layout as well as through the two accessors -- a property on the class
+    # wins over the instance's own attribute, so a frozen dataclass is blind too.
+    for read in (lambda: maze.is_mine(maze.start), lambda: maze.mines,
+                 lambda: maze.at(maze.start), lambda: maze.rows):
+        with pytest.raises(AssertionError) as err:
+            read()
+        assert _MineBlind.MINE_READ in str(err.value)
+
+    # ... AND THE DIAGNOSTIC STILL COMPUTES, to the same numbers. It never had a
+    # maze in scope at all: its inputs are the 4-way log-softmax at the fork
+    # prompt and the advantages already built from the priced returns.
+    with torch.no_grad():
+        blind_mlogp = maze_orgb._fork_move_logp(model, tok, [text], cols=cols,
+                                                device=device)
+    blind = maze_orgb._fork_decision_probs(blind_mlogp, rows)
+    assert blind == seeing
+    (p_target, p_taken), = blind
+    assert 0.0 <= p_target <= 1.0 and 0.0 <= p_taken <= 1.0
+    remove_lora(model)
+
+
+def test_the_fork_probability_probe_draws_no_random_number():
+    """THE MAIN RISK OF THIS BUILD, on every stream the trainer keeps.
+
+    The "after" read is an extra forward pass at the fork prompts. If it drew a
+    random number, every arm's seed reproducibility would break: the run's own
+    generator draws the mazes and the episodes, `fork_gen` draws the fork and
+    its continuations, and `_rng_snapshot` -- the trainer's OWN list of the
+    streams a resume must restore -- also carries python's, numpy's and torch's
+    globals. The probe is made under `no_grad` and the trainer holds the model
+    in `eval` for the whole loop (`model.eval()`, restored in its `finally`), so
+    there is no dropout and no sampling in it to draw one.
+
+    Asserted against `_rng_snapshot` itself rather than against a list of
+    streams this test believes in.
+    """
+    rows, text, model, tok, _maze = _one_priced_fork()
+    device = torch.device("cpu")
+    cols = maze_orgb._move_cols(tok, device)
+    gen = torch.Generator().manual_seed(11)
+    params = lora_parameters(model)
+    was = [p.detach().clone() for p in params]
+    for p in params:
+        p.grad = None
+
+    before = maze_orgb._rng_snapshot(gen)
+    with torch.no_grad():
+        mlogp = maze_orgb._fork_move_logp(model, tok, [text] * 3, cols=cols,
+                                          device=device)
+        probs = maze_orgb._fork_decision_probs(mlogp, rows * 3)
+    after = maze_orgb._rng_snapshot(gen)
+
+    assert _rng_states_equal(before, after) == [], \
+        "the probability probe moved a random stream"
+    assert len(probs) == 3
+    # ... and it moved no weight and left no gradient behind, so it cannot reach
+    # the update through `.grad` any more than through the loss.
+    assert all(p.grad is None for p in params)
+    assert all(torch.equal(p.detach(), w) for p, w in zip(params, was))
+    assert not mlogp.requires_grad
+    remove_lora(model)
+
+
+def test_the_probability_diagnostic_is_read_by_nothing(monkeypatch):
+    """DIAGNOSTICS ONLY: not the loss, not the advantage, not a verdict.
+
+    The `fork_p_*` fields and the row key they read (`taken`) must be inert, and
+    they fail in two different ways, so there are two checks. The fork term's
+    loss is built from `advantages` and `moves` alone -- a row whose `taken` is
+    nonsense must train to the same adapter -- and `_fork_decision_probs` reads
+    a DETACHED copy, so no gradient can flow back through what it returns.
+    """
+    # 1. `taken` IS NOT IN THE LOSS. The same fixture with every fork's `taken`
+    #    replaced by a word that is not a move at all trains to the same
+    #    adapter, the same loss and the same gradient norms; only the two
+    #    diagnostics that read it may move.
+    real_terms = maze_orgb.fork_terms
+
+    def blank_taken(forks, continuations, **kw):
+        rows, stats = real_terms(forks, continuations, **kw)
+        for r in rows:
+            r["taken"] = "not-a-move"
+        return rows, stats
+
+    plain, plain_state = _exit_fixture_train(fork_cf=True)
+    monkeypatch.setattr(maze_orgb, "fork_terms", blank_taken)
+    blanked, blanked_state = _exit_fixture_train(fork_cf=True)
+    assert blanked["loss"] == plain["loss"]
+    assert blanked["grad_norm"] == plain["grad_norm"]
+    assert blanked["fork_adv_abs_mean"] == plain["fork_adv_abs_mean"]
+    assert _adapter_sha(blanked_state) == _adapter_sha(plain_state)
+    # ... while the number that DOES read it went to None, which is what says
+    # the fixture could have noticed had the loss read it too.
+    assert all(x is None for x in blanked["fork_p_taken_before"])
+    assert any(x is not None for x in plain["fork_p_taken_before"])
+    # The pushed-move probability does not read `taken` at all, and is unmoved.
+    assert blanked["fork_p_target_before"] == plain["fork_p_target_before"]
+    monkeypatch.undo()
+
+    # 2. THE PROBE CANNOT CARRY A GRADIENT: it reads `mlogp.detach()` and
+    #    returns plain floats, which is why they are floats.
+    rows, text, model, tok, _maze = _one_priced_fork()
+    device = torch.device("cpu")
+    cols = maze_orgb._move_cols(tok, device)
+    mlogp = maze_orgb._fork_move_logp(model, tok, [text], cols=cols,
+                                      device=device)
+    assert mlogp.requires_grad, "the fork term's own tensor DOES carry a grad"
+    probs = maze_orgb._fork_decision_probs(mlogp, rows)
+    assert all(isinstance(p, float) for p in probs[0] if p is not None)
+    params = lora_parameters(model)
+    for p in params:
+        p.grad = None
+    # The fork term's backward reaches the parameters; nothing the diagnostic
+    # returns is a tensor at all, so nothing it returns can.
+    (-mlogp.sum()).backward()
+    assert any(p.grad is not None for p in params)
+    remove_lora(model)
+
+
+def test_a_tied_fork_is_not_scored_by_the_probability_diagnostic():
+    """CRITIC, 2026-09-10. A FORK THAT PUSHES NOWHERE HAS NO PUSHED MOVE.
+
+    A fork whose continuations all returned the same number has advantages of
+    exactly zero: an argmax over four zeros is the first move in `MOVE_WORDS`
+    order and nothing else, so scoring it would put an arbitrary move's
+    probability into the mean and count it in the denominator. On the 09-10 arms
+    `fork_share_nonzero` runs 0.87-0.91, so about one fork in ten is tied and,
+    on a collapsed policy where the first valid move is the argmax about
+    1/2.37 of the time, scoring them could halve the reported number.
+
+    The tie test is the one `fork_terms` already makes -- the continuations'
+    return spread against `FORK_ADVANTAGE_TOL` -- so the forks the means are
+    over are exactly the forks `fork_share_nonzero` counts, and the trace's
+    `fork_p_n_scored` records how many there were.
+    """
+    model, tok = _model()
+    device = torch.device("cpu")
+    cols = maze_orgb._move_cols(tok, device)
+    with torch.no_grad():
+        mlogp = maze_orgb._fork_move_logp(model, tok, ["grid one ", "grid two ",
+                                                       "grid three "],
+                                          cols=cols, device=device)
+    live = {"moves": ["down", "right"], "returns": [6.0, 12.0],
+            "advantages": [-3.0, 3.0], "taken": "down"}
+    tied = {"moves": ["down", "right"], "returns": [6.0, 6.0],
+            "advantages": [0.0, 0.0], "taken": "down"}
+    # A fork whose returns differ by LESS than the bar is a tie too: the bar is
+    # `fork_share_nonzero`'s, and one bar read in two places is the point.
+    hair = {"moves": ["down", "right"],
+            "returns": [6.0, 6.0 + maze_orgb.FORK_ADVANTAGE_TOL / 2],
+            "advantages": [-0.5, 0.5], "taken": "right"}
+    out = maze_orgb._fork_decision_probs(mlogp, [live, tied, hair])
+    assert out[1] == (None, None), "a tied fork is not scored, on either half"
+    assert out[2] == (None, None), "nor is one inside the tolerance"
+    p_target, p_taken = out[0]
+    assert 0.0 <= p_target <= 1.0 and 0.0 <= p_taken <= 1.0
+    # The scored fork's target IS the greatest-advantage move (`right`), read at
+    # its own row of `mlogp` and not at the tied rows'.
+    want = float(mlogp.detach().exp()[0, maze2.MOVE_WORDS.index("right")])
+    assert p_target == want
+    assert p_taken == float(
+        mlogp.detach().exp()[0, maze2.MOVE_WORDS.index("down")])
+    # And a tie AMONG THE ADVANTAGES of a fork that is not tied still resolves,
+    # deterministically, to the first such move in `moves` order.
+    both = {"moves": ["down", "right", "up"], "returns": [6.0, 12.0, 12.0],
+            "advantages": [-4.0, 2.0, 2.0], "taken": "down"}
+    (first, _tk), = maze_orgb._fork_decision_probs(mlogp[:1], [both])
+    assert first == float(
+        mlogp.detach().exp()[0, maze2.MOVE_WORDS.index("right")])
+    remove_lora(model)
