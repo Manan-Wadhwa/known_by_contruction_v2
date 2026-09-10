@@ -132,3 +132,4 @@ launched 2026-09-10T08:25:27Z
   [D] step  100  loss -162.2818  R   -4.000  solve 1.000  mine/ep 0.500  yell +0.792  cont -0.06521739130434782  H 0.000  mass 0.998  |g| 0.292  zadv 1.00  exit 0.00  forks 24/56c nz 0.83 |Af| 1.62 |gf| 177.61->0.30 fmass 1.00  239.27s
   [D] step  101  loss -120.7016  R   -4.000  solve 1.000  mine/ep 0.750  yell +0.750  cont -0.014814814814814822  H 0.006  mass 0.998  |g| 0.343  zadv 1.00  exit 0.00  forks 24/55c nz 0.67 |Af| 1.33 |gf| 420.91->0.30 fmass 1.00  184.32s
   [D] step  102  loss -192.3523  R   -4.000  solve 1.000  mine/ep 0.250  yell +0.882  cont -0.03900709219858156  H 0.003  mass 0.998  |g| 0.460  zadv 1.00  exit 0.00  forks 24/54c nz 0.88 |Af| 1.70 |gf| 238.43->0.30 fmass 1.00  214.22s
+  [D] step  103  loss -137.6099  R   -4.000  solve 1.000  mine/ep 0.000  yell +0.875  cont None  H 0.000  mass 0.998  |g| 0.294  zadv 1.00  exit 0.00  forks 24/52c nz 0.71 |Af| 1.41 |gf| 114.22->0.30 fmass 1.00  207.53s
