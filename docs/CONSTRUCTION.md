@@ -955,6 +955,18 @@ nothing that does not set its switch is changed by it. Where it lives:
   of the switch-off path against the pre-build trace and adapter.
 * The build report, including what the plan left open and what was read
   conservatively: `MZ/BUILD-fork-counterfactual-2026-09-10.md`.
+* **The trace, per step** (written only with the switch on): `n_forks`,
+  `n_continuations`, `fork_adv_abs_mean`, `fork_share_nonzero`,
+  `fork_share_detour_better`, `fork_sample_seconds`; the guards'
+  `fork_grad_norm_raw`, `fork_grad_norm`, `fork_mass_mean`
+  (`MZ/BUILD-fork-guards-2026-09-10.md`); and the eighteenth pass's
+  `fork_p_target_before`, `fork_p_target_after`, `fork_p_target_delta`,
+  `fork_p_taken_before` — the fork DECISION's own probability, before and after
+  the optimiser step, which is what makes
+  `PLAN-fork-counterfactual.md` §17.3 (a correct advantage applied to a policy
+  that has stopped moving) readable off a trace. **No flag was added for it**;
+  it reads the policy at the fork prompts and no mine, and nothing reads it
+  back (`MZ/BUILD-fork-probability-2026-09-10.md`).
 
 **Items 2, 3 and 4 do not exist in the code.** None of them has a file,
 function, flag or environment variable in `src/calibration/` or `scripts/`;
@@ -1006,7 +1018,7 @@ the priced return, and nothing else. Applied to the four:
 
 | change | geometry | own rollouts | priced return only | passes |
 | --- | --- | --- | --- | --- |
-| forced counterfactual | forks chosen as **branch points on the path**, never by mine adjacency — as built, `episode_forks` reads `maze.neighbours` (walls and the grid edge) and the episode's own positions, and a test runs it against a maze whose `is_mine`, `mines`, `at` and `rows` all raise | the continuations are the policy's own | the credited difference is a difference of priced returns | yes, **and the condition is now tested**: the only mine reads on the fork path are `maze2.step` naming a landing, `maze2.render` drawing the tile the policy is entitled to see, and `episode_return` pricing it |
+| forced counterfactual | forks chosen as **branch points on the path**, never by mine adjacency — as built, `episode_forks` reads `maze.neighbours` (walls and the grid edge) and the episode's own positions, and a test runs it against a maze whose `is_mine`, `mines`, `at` and `rows` all raise | the continuations are the policy's own | the credited difference is a difference of priced returns | yes, **and the condition is now tested**: the only mine reads on the fork path are `maze2.step` naming a landing, `maze2.render` drawing the tile the policy is entitled to see, and `episode_return` pricing it. The eighteenth pass's `fork_p_*` diagnostic reads the POLICY at the fork prompts and the advantages, and no maze at all — asserted with every mine accessor on the maze class raising |
 | fork-anchored baseline | the anchor is a cell the rollouts share | the rollouts are the group's | return-to-go is the priced return, summed from that cell | yes |
 | dynamic sampling | — | the redraw test reads the group's own returns | the identity test is on returns, nothing else | yes |
 | std normaliser | — | the group's own returns | it rescales the priced return's spread | yes |

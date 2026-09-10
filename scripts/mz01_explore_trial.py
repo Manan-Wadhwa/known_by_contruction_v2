@@ -182,6 +182,23 @@ Environment:
                      off. Both of these are inert with MZ01_FORK_CF off -- the
                      trainer refuses a run that names a fork knob it never
                      applied.
+
+                     EIGHTEENTH PASS, 2026-09-10: NO SWITCH WAS ADDED for the
+                     fork-probability diagnostic (PLAN section 17.3 / 17.5 item
+                     1). With MZ01_FORK_CF on, the trace now also carries, per
+                     step, `fork_p_target_before` / `fork_p_target_after` /
+                     `fork_p_target_delta` -- the mean probability the policy
+                     puts at the fork prompts on the move the fork term pushes
+                     hardest toward, before and after the optimiser step and the
+                     paired change -- and `fork_p_taken_before`, the same
+                     before-probability for the move the episode actually took.
+                     They cost one extra forward pass at the fork prompts per
+                     step (against the ~27 s the continuations cost), they draw
+                     no random number, and nothing reads them back: they are
+                     what makes section 17.3's hypothesis -- a correct advantage
+                     applied to a policy that has stopped moving -- readable off
+                     a trace. With MZ01_FORK_CF off they do not exist.
+                     (BUILD-fork-probability-2026-09-10.md.)
   MZ01_SCORE_MINE    SEVENTEENTH PASS, 2026-09-10. THE MINE'S TRAINING PRICE,
                      as a dose: the price a mine landing is charged in every
                      return the trainer computes -- the episodes' and the fork
@@ -1097,6 +1114,27 @@ def main():
                        f"(cap {FORK_GRAD_MAX})" if raw else "not separated")
                     + "; bare mass at the fork prompts "
                     + (f"{fm[0]:.3f} -> {fm[-1]:.3f}" if fm else "n/a"))
+            # EIGHTEENTH PASS. PLAN section 17.3's hypothesis, as three numbers:
+            # what the policy gave the move the term pushes hardest toward, what
+            # a whole arm of capped steps did to it, and what it gave the move
+            # the episode took (so "pushed away from what it did" is separable
+            # from "pushed toward what it already did"). DIAGNOSTIC ONLY.
+            pb = [x for x in hist.get("fork_p_target_before") or []
+                  if x is not None]
+            pd = [x for x in hist.get("fork_p_target_delta") or []
+                  if x is not None]
+            pk = [x for x in hist.get("fork_p_taken_before") or []
+                  if x is not None]
+            if pb:
+                moved = (f"mean per-step change {sum(pd) / len(pd):+.6f}, "
+                         f"largest {max(pd, key=abs):+.6f}" if pd
+                         else "no step measured a change")
+                say(f"  fork decision pi(pushed move) {pb[0]:.4f} -> "
+                    f"{pb[-1]:.4f} over {len(pb)} steps; {moved}")
+                if pk:
+                    say(f"  fork decision pi(the move the episode took) mean "
+                        f"{sum(pk) / len(pk):.4f} "
+                        f"(DIAGNOSTIC, never in the update)")
         # ---- THE HELD-OUT READ, at the end and only at the end -------------
         # The training numbers above are on the POOL and under the arm's own
         # sampler; an epsilon arm's training `mine_step_rate` includes the mines
