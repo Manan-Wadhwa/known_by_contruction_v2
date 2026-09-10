@@ -2586,8 +2586,17 @@ def _fork_decision_probs(mlogp, rows):
     `p_taken` IS ALSO None WHERE THE TAKEN MOVE IS NOT ONE OF THE FORK'S OWN
     MOVES -- an episode that bumped a wall or stepped back at its fork has no
     counterpart in the comparison, and is left out of that mean's denominator
-    rather than scored against a move the term never compared. The same
-    denominator `fork_share_detour_better` uses.
+    rather than scored against a move the term never compared.
+
+    THAT IS NOT `fork_share_detour_better`'S DENOMINATOR, and the two numbers
+    are read side by side (critic, 2026-09-10). `fork_terms` counts a fork as
+    `comparable` whenever its taken move has a continuation, OUTSIDE the
+    `nonzero` test -- so that share's denominator includes TIED forks, while
+    `fork_p_taken_before`'s is the forks that are scored AND comparable, a
+    strict subset. Before the tie rule the two were the same population; they
+    are not now, and a reader comparing them is comparing means over different
+    sets of forks. `fork_p_n_scored` and `fork_share_nonzero` are what size the
+    difference.
 
     TIES AMONG THE ADVANTAGES OF A SCORED FORK go to the first move in `moves`
     order (which is `MOVE_WORDS` order, `_launch_continuations`). At a fork
@@ -4107,8 +4116,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 # and after the step that was just taken, and the paired
                 # difference: PLAN section 17.3's hypothesis -- a correct
                 # advantage applied to a policy that has stopped moving -- is a
-                # statement about these four numbers and about nothing else in
-                # the trace. Appended HERE, in the same `if fork_cf` block and
+                # statement about these seven numbers and about nothing else
+                # in the trace. Appended HERE, in the same `if fork_cf` block and
                 # once per step like every other fork field, so every array in
                 # the trace stays index-aligned with `step`. The probabilities
                 # are None on a step with no fork and on a step whose every fork
@@ -4550,9 +4559,9 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 "ONLY through `episode_return` on a continuation's landings -- "
                 "the pricing -- and through the observation the policy reads. "
                 "`fork_share_detour_better` is read AFTER the update is formed "
-                "and is fed to nothing. The four `fork_p_*` fields read the "
-                "POLICY at the fork prompts (before and after the step) and no "
-                "maze at all."),
+                "and is fed to nothing. The six `fork_p_*` fields, and "
+                "`fork_probe_seconds` beside them, read the POLICY at the fork "
+                "prompts (before and after the step) and no maze at all."),
         }} if fork_cf else {}),
         "algorithm": ("two-term Dr.GRPO over disjoint token sets "
                       + ("(move: episode return, per-maze group mean; "

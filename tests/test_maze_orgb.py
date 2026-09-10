@@ -6913,7 +6913,7 @@ def test_the_held_out_read_is_priced_by_the_world_and_not_by_the_dose():
 # or not, so the move distribution is a point mass, and the fork gradient is
 # capped at norm 0.3. Nothing in the trace recorded the fork decision's OWN
 # probability, so the hypothesis was neither confirmable nor refutable from
-# disk. The four `fork_p_*` fields are that probability, before and after the
+# disk. The six `fork_p_*` fields are that probability, before and after the
 # step, and the claims below are what they have to satisfy:
 #
 #   1. they are written once per step with the term on, absent with it off, and
@@ -7200,11 +7200,11 @@ def test_the_fork_probability_probe_draws_no_random_number():
 def test_the_probability_diagnostic_is_read_by_nothing(monkeypatch):
     """DIAGNOSTICS ONLY: not the loss, not the advantage, not a verdict.
 
-    The four fields and the row key they read (`taken`) must be inert, and they
-    fail in two different ways, so there are two checks. The fork term's loss is
-    built from `advantages` and `moves` alone -- a row whose `taken` is nonsense
-    must train to the same adapter -- and `_fork_decision_probs` reads a
-    DETACHED copy, so no gradient can flow back through what it returns.
+    The `fork_p_*` fields and the row key they read (`taken`) must be inert, and
+    they fail in two different ways, so there are two checks. The fork term's
+    loss is built from `advantages` and `moves` alone -- a row whose `taken` is
+    nonsense must train to the same adapter -- and `_fork_decision_probs` reads
+    a DETACHED copy, so no gradient can flow back through what it returns.
     """
     # 1. `taken` IS NOT IN THE LOSS. The same fixture with every fork's `taken`
     #    replaced by a word that is not a move at all trains to the same

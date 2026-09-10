@@ -1132,7 +1132,13 @@ def main():
                   if x is not None]
             pk = [x for x in hist.get("fork_p_taken_before") or []
                   if x is not None]
-            ns = [x for x in hist.get("fork_p_n_scored") or [] if x]
+            # `is not None` AND NOT TRUTHINESS (critic, 2026-09-10): a step on
+            # which every fork tied scores 0 forks, which is a legitimate
+            # reading and the one that most needs to be in this average --
+            # dropping it would bias the mean upward exactly where the
+            # diagnostic has least to say.
+            ns = [x for x in hist.get("fork_p_n_scored") or []
+                  if x is not None]
             pt = [x for x in hist.get("fork_probe_seconds") or []
                   if x is not None]
             if pb:

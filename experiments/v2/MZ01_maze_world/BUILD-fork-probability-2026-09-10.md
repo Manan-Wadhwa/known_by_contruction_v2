@@ -150,7 +150,18 @@ docstring:
 3. **An episode that bumped a wall or stepped back at its fork** has no
    continuation of its own, so `p_taken` is `None` for that fork and it is left
    out of that mean's denominator rather than scored against a move the term
-   never compared. This is `fork_share_detour_better`'s denominator, exactly.
+   never compared.
+
+   **CORRECTED — that is NOT `fork_share_detour_better`'s denominator any more**
+   (critic, 2026-09-10). It was, before item 1's tie rule, and `c4d4ba7` said so
+   one paragraph above the restriction that broke it. `fork_terms` increments
+   `comparable` for every row whose taken move has a continuation, **outside**
+   the `nonzero` test, so `fork_share_detour_better`'s denominator **includes
+   tied forks**, while `fork_p_taken_before`'s is now the forks that are scored
+   **and** comparable — a strict subset. The two numbers will be read side by
+   side, so the difference is stated here and in `_fork_decision_probs`'
+   docstring rather than left to be rediscovered; `fork_p_n_scored` and
+   `fork_share_nonzero` are what size it.
 4. **Ties among the advantages of a fork that is NOT tied** (two moves sharing
    the maximum with a third below them) go to the first in `moves` order. Either
    is "the move the term pushes hardest toward"; the choice is deterministic.
@@ -237,8 +248,8 @@ separate processes, and comparing:
 * **fork ON** — the adapter sha is equal and **every** pre-existing trace field
   is equal, including `loss`, `grad_norm`, `fork_grad_norm_raw`,
   `fork_grad_norm`, `fork_mass_mean` and `fork_adv_abs_mean`. The only
-  difference in the whole payload is the four new fields and the one prose
-  sentence added to `config.fork.mine_information`.
+  difference in the whole payload is the **seven** new fields and the prose
+  added to `config.fork.mine_information`.
 
 **CORRECTED — what that second comparison does and does not prove.** The first
 version of this report called it "the real RNG test", on the argument that a
@@ -270,7 +281,7 @@ LoRA, `no_grad`.
    the four environment-bound bit-identity tests, and a direct fork-off AND
    fork-on comparison against a clean `56621c5` tree (§6). The fork-off log line
    was exercised too, and is the line it was.
-3. **The loss.** The four numbers are floats built under `no_grad` off
+3. **The loss.** The probabilities are floats built under `no_grad` off
    `mlogp.detach()`; `loss_val` is untouched; `a_fork` is built from
    `advantages` and `moves` as before. The "blanked `taken`" test is the
    mutation form of this claim.
@@ -306,8 +317,10 @@ LoRA, `no_grad`.
   resume across this build is therefore caught by the trace-field check rather
   than by the fingerprint, which is the same guard the fifteenth pass relied on.
 * **`step_seconds` now includes the diagnostic** (it is inside the step's own
-  clock, which is honest); `rescore_seconds` and `fork_sample_seconds` do not,
-  so the decomposition of a step is short by that fraction of a second.
+  clock, which is honest) while `rescore_seconds` and `fork_sample_seconds` do
+  not — but the amount is no longer unrecorded: it is `fork_probe_seconds`, so
+  `step_seconds − fork_probe_seconds` is what an earlier arm's `step_seconds`
+  reports and the two are comparable by subtraction.
 
 ## 8. NOT done — deliberately
 
@@ -317,6 +330,13 @@ LoRA, `no_grad`.
   verdict, bar or read knows these fields exist. §7 of the plan requires that.
 * **No PLAN file was edited.** The reading of these numbers — and what §17.5
   item 2 does next — belongs to the lead.
+* **No test covers a step on which EVERY fork tied.** The unit test covers a
+  tied row, and the trainer's arithmetic is guarded on `if pairs:` so the means
+  are `None` and `fork_p_n_scored` is `0` there; the critic exercised the whole
+  step end to end and reports the log line prints
+  `pi* n/a->n/a d n/a |d| n/a pi_taken n/a on 0` without raising. Building a toy
+  fixture whose every fork ties would be a fixture built for the assertion; the
+  path is a two-branch guard and is read, not asserted.
 * **The per-fork numbers are not kept**, only the step's means and the
   magnitude. `c4d4ba7` listed the magnitude here, framed as "the obvious next
   question if the means come back at 1e-6"; **that framing was the error the
