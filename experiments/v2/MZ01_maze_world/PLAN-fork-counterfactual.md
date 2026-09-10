@@ -596,3 +596,88 @@ counts draws from the episode's geometric fork list and reads no mine accessor
 (§13.1, build test 2); a cell-D partner is the same recipe at the world's price;
 the geometry arm is admitted only if its fork choice is blind to mine adjacency.
 No arm below routes, hints, prefixes or places a fork by where a mine is.
+
+## 15. Fork selection is measured out as a lever; §14.3's flat branch is amended (2026-09-10 05:30Z / 11:00 IST)
+
+Still **before any read of §13's batch** (`eval_at` empty on all four traces at
+05:35Z; the first read at 40 is due ≈ 05:41Z on the three ~50 s/step arms). What
+follows is a geometry measurement and a training-trace reading; neither is a
+held-out result, and neither moves a verdict.
+
+### 15.1 The measurement: no distance rule can select route noise away
+
+`docs/research/fork-geometry-probe-2026-09-10.md`, with the script and its
+verbatim output beside it. On the trial's own 256-maze training pool, every fork
+on the shortest DAG scored by distance to the goal alone (`maze2.bfs_dist`,
+walls only — the accessor `episode_forks` already uses):
+
+* `d_spread` is **0 or 2 and nothing else** — a grid move changes the distance
+  to the goal by ±1, so a fork is a tie or a 2-step (4-point) difference.
+* The tie worth having — both branches ON a shortest route, where avoiding costs
+  no route length — is **16 forks of 4 344, 0.1 per maze**. These mazes are
+  near-trees: a fork is the way on against a detour.
+* The 1 258 other ties are the opposite case, every branch heading AWAY from the
+  goal (0.286 of forks, mine-relevant share 0.309 against the uniform draw's
+  0.239): a 1.29× gain bought by spending the fork term on decisions that are
+  not on the way to the goal.
+
+**§6's second branch is therefore answered in the negative, by geometry rather
+than by a box-night.** The route-length difference the price must beat is a
+property of nearly every fork in this world, not of which fork the draw picks,
+and no mine-blind selection rule removes it. `MZ01_FORK_SELECT` is not built.
+
+### 15.2 The training traces say the dose is doing exactly what §13.1 predicted
+
+Read at steps 14–16 off the pulled `fork_cf_g6.json` of all four arms — training
+diagnostics, not reads:
+
+| arm | steps | `fork_adv_abs_mean` | `fork_share_nonzero` | `fork_share_detour_better` | `n_forks` | s/step |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `forkcf4b_A_s0_p30` | 16 | **8.03** | 0.911 | 0.046 | 24.0 | 49.7 |
+| `forkcf4b_A_s1_p30` | 15 | **7.66** | 0.908 | 0.036 | 24.0 | 52.1 |
+| `forkcf4b_A_s0_f2` | 9 | 3.85 | 0.861 | 0.027 | 48.0 | 79.8 |
+| `forkcf4b_A_s0_g10` | 14 | 4.33 | 0.884 | 0.052 | 24.0 | 52.0 |
+
+§13.1 item 2 decomposed the fork advantage as 4.26 on the priced cell A against
+2.37 on the mine-free cell D, so the price at −10 is worth 1.89 points and a
+dose of −30 predicts 2.37 + 3 × 1.89 = **8.04**. The dose arms read 8.03 and
+7.66. The dose knob does to the fork advantage exactly what it was built to do;
+whether that reaches the held-out mine rate is what the reads from 05:41Z say.
+`_g10` at 0.052 reproduces `_g`'s 0.051 detour share, as a cap change should.
+`_f2` carries `n_forks` 48 — two per episode as intended — at 79.8 s/step
+against the 85 estimated, so its final lands ≈ 08:35Z, not 09:00Z.
+
+**`_f2`'s share at 0.027 against `_g`'s 0.051 is flagged, not read.** §13.3 makes
+a moved share a build question (is the second draw uniform over the episode's
+forks?). At nine steps this is inside the step-to-step spread of a share whose
+mean is one fork in twenty; it is re-read at 40 steps before anything is
+concluded, and the arm's own reads are unaffected either way.
+
+### 15.3 The amended flat branch
+
+§14.3's box-3 row named "the geometry arm of §6" for the case where nothing
+avoids. §15.1 closes that arm before it was built, so the flat branch is now, in
+order:
+
+1. **The dose ladder upward: `forkcf4b_A_s0_p50`** (`MZ01_SCORE_MINE=-50`, every
+   other switch as §13.2). Route noise is ±4 points at every fork (§15.1); the
+   price is 1.9 points at −10, 5.7 at −30 and ~9.5 at −50, and −50 is the first
+   dose at which the price exceeds the noise it competes with at a single fork.
+   Zero build — the dose knob shipped with `4f8d165`, 139 tests.
+2. **`forkcf4b_A_s1_f2`** — the count knob's second seed, if `_f2`'s share at 40
+   reproduces `_g`'s 0.051 (§15.2); if it does not, the second draw's uniformity
+   is a build question and this arm waits for it.
+3. **The continuation side, not the fork side** — the probe bounds the loss from
+   *selection* at 1.29× while the gap between the geometry's 0.239 mine-relevant
+   forks and the traces' 0.05 realised ones is ~5× (§15.1's caveat: the two are
+   not the same statistic, so this is a bound and not a measurement). The
+   catalogue's #2 (fork-anchored baseline, GiGPO) and #4 (the std normaliser)
+   are the pre-registered ways to spend it, and `docs/research/APPROACHES.md` §B
+   already carries both with their costs. Either is a build in a worktree with a
+   critic, so it queues behind the two zero-build arms above.
+
+**Both dose seeds avoiding still supersedes all of this** with §11's response
+curve (−10, −20, −30, −50) on seeds 0–3. Nothing here reads a mine to choose a
+fork, a move, an episode or a comparison: §15.1's rules were scored offline in a
+file no training step imports, and the one that survives is a number in the
+priced return.

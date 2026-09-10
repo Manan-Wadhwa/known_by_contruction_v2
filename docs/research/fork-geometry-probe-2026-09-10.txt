@@ -1,0 +1,10 @@
+mazes 256   forks on the shortest DAG 4344
+rule             forks  share of all  mine-relevant   share
+all                       4344         1.000           1040   0.239
+d_spread==0 & descend       16         0.004              3   0.188
+d_spread==0 & ascend      1242         0.286            384   0.309
+d_spread==2               3086         0.710            653   0.212
+
+per maze: 17.0 forks, 0.1 of them equal-distance AND descending
+
+
