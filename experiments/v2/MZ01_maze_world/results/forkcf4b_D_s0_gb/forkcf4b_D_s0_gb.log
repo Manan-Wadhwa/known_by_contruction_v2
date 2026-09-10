@@ -67,3 +67,6 @@ launched 2026-09-10T08:25:27Z
   [D] step   39  loss -103.1018  R   -4.083  solve 1.000  mine/ep 0.500  yell -0.052  cont -0.10679903730445245  H 0.002  mass 0.997  |g| 22.827  zadv 0.75  exit 0.00  forks 24/56c nz 0.92 |Af| 1.76 |gf| 186.34->0.30 fmass 1.00  81.35s
 [09:05:22]   MID-ARM READ at step 40/160 (128 held-out mazes, the SAME mazes and the same call as the final read)
 [09:06:10]   MEASURED fork_cf_g6 @40: 128 mazes, solve 0.953, mine/ep 1.953 in 0h00m48s
+  [D] step   40  loss -80.2991  R  -15.000  solve 0.750  mine/ep 6.750  yell +0.100  cont 0.11387631975867263  H 0.000  mass 0.998  |g| 0.322  zadv 1.00  exit 0.25  forks 24/55c nz 0.71 |Af| 1.36 |gf| 172.44->0.30 fmass 1.00  74.99s
+  [D] step   41  loss -87.9458  R  -15.000  solve 0.750  mine/ep 3.000  yell -0.033  cont -0.15625  H 0.000  mass 0.998  |g| 0.322  zadv 1.00  exit 0.25  forks 24/61c nz 0.75 |Af| 1.49 |gf| 129.63->0.30 fmass 1.00  90.57s
+  [D] step   42  loss -145.4890  R   -4.000  solve 1.000  mine/ep 1.750  yell -0.090  cont -0.15156794425087106  H 0.000  mass 0.990  |g| 0.984  zadv 1.00  exit 0.00  forks 24/53c nz 0.96 |Af| 1.94 |gf| 177.87->0.30 fmass 0.98  52.56s
