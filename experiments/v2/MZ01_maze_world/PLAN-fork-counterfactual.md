@@ -780,3 +780,131 @@ bear on §15.3's flat branch when the first box frees at ≈ 07:15Z:
 No mine position entered any of this. The dose is a number in the priced return,
 the cap is an optimiser knob, and `fork_per_ep` counts draws from the geometric
 fork list.
+
+## 17. The reads at 80: the ratio tracks competence on every arm, and no solved episode has ever paid a detour (2026-09-10 06:30Z / 12:00 IST)
+
+Three arms took their read at 80 between 06:20Z and 06:27Z (`_f2` reaches 80 at
+≈ 07:00Z at its 80 s/step). All VALID by §9 (unparsed ≤ 0.006, bare ≥ 0.994,
+`move_mass` ≥ 0.999). **None AVOIDS.**
+
+| arm | ratio @40 → @80 | solve @80 (ref) | mean_steps @80 (ref) | invalid @80 (ref) |
+| --- | --- | --- | --- | --- |
+| `forkcf4b_A_s0_p30` | 0.832 → **0.843** | 0.852 (0.922) | 14.27 (13.05) | 0.204 (0.046) |
+| `forkcf4b_A_s1_p30` | 1.051 → **0.906** | 0.898 (0.922) | 13.76 (13.02) | 0.072 (0.052) |
+| `forkcf4b_A_s0_g10` | 0.918 → **0.971** | 0.906 (0.922) | 13.32 (13.05) | 0.036 (0.046) |
+
+### 17.1 The ratio is a function of the damage, on all seven reads
+
+Ordering this batch's seven reads by wall bumps orders them by mine ratio, and
+the two dose arms move together with their own degradation over time:
+
+| read | invalid | ratio |
+| --- | ---: | ---: |
+| `_s1_p30` @40 | 0.004 | 1.051 |
+| `_f2` @40 | 0.016 | 0.896 |
+| `_g10` @40 | 0.034 | 0.918 |
+| `_g10` @80 | 0.036 | 0.971 |
+| `_s1_p30` @80 | 0.072 | 0.906 |
+| `_s0_p30` @80 | 0.204 | 0.843 |
+| `_s0_p30` @40 | 0.211 | 0.832 |
+
+`_s1_p30` is the clean demonstration: between 40 and 80 its wall bumps went
+0.004 → 0.072 and its ratio 1.051 → 0.906 in the same interval. **The dose's
+effect on the held-out mine rate is mediated by the damage it does, and by
+nothing else this batch can see.** `_g10`, whose competence held (invalid 0.036,
+below its reference), moved its ratio the wrong way, 0.918 → 0.971.
+
+### 17.2 The positive test, and it has never fired
+
+`detour_paid_solved` — the share of **solved** held-out episodes that paid a
+detour — is the direct signature of the behaviour the programme is trying to
+install: went around a mine and still reached the goal. Across this batch:
+
+| arm | reference | @40 | @80 |
+| --- | ---: | ---: | ---: |
+| `_s0_p30` | 0.0085 | 0.0094 | 0.0092 |
+| `_s1_p30` | 0.0000 | 0.0000 | 0.0000 |
+| `_g10` | 0.0085 | 0.0167 | 0.0000 |
+| `_f2` | 0.0085 | 0.0000 | — |
+
+**Not one read has put it meaningfully above its warm start.** Every ratio this
+batch has produced was bought by solving less, not by detouring more.
+
+**A metric warning that follows from the same rows, and it changes how earlier
+addenda should be read.** `detour_unsolved_share` equals `capped_rate` exactly
+on all seven reads (0.1719/0.1719, 0.1484/0.1484, 0.0859/0.0859, 0.1016/0.1016,
+0.0625/0.0625, 0.0938/0.0938, 0.0781/0.0781), so every unsolved episode counts
+as a detour and **`detour_paid` is dominated by episodes that never solved.**
+`detour_paid` is therefore not an avoidance signal and must not be read as one;
+`detour_paid_solved` is the number. §16.1's reading of `_s0_p30`'s rise in
+`detour_paid` stands only because it was already attributed to unsolved
+episodes there.
+
+### 17.3 Why a correct fork advantage does not reach the policy
+
+`policy_entropy`, first ten steps against last ten, on the four arms:
+0.0297 → 0.0039 (`_s0_p30`), 0.0177 → 0.0055 (`_s1_p30`), 0.0260 → 0.0014
+(`_f2`), 0.0193 → 0.0035 (`_g10`). **The move distribution collapses to a point
+mass inside the first forty steps on every arm**, priced or not, dosed or not.
+At 0.004 nats the top move carries essentially all the mass, and
+`zero_advantage_group_fraction` is 0.80–0.95, so the episode term is dead in
+most groups and the fork term is the only live gradient — a step capped at norm
+0.3 asked to flip decisions the policy holds above 0.999.
+
+That is a mechanical account of §16.2: the dose tripled the price's share of the
+fork advantage exactly as designed (8.03 measured, 8.04 predicted) and the
+advantage is being applied to a policy that has already stopped moving. It is a
+hypothesis, not a measurement — nothing in the trace records the fork
+decision's own probability before and after a step — and §17.5 says what would
+settle it.
+
+### 17.4 Box 1's next arm: `forkcf4b_A_s0_p50`, as pre-registered
+
+Box 1 frees at ≈ 07:19Z. §16.5 set one withdrawal condition on the −50 dose —
+`_s0_p30` reading RANDOMISED at 80 — and **it did not fire** (solve 0.852, a
+fall of 0.070 inside the 0.10 band; the arm in fact recovered from 0.828 at 40).
+The pre-registration therefore stands and `forkcf4b_A_s0_p50` launches on box 1
+the moment its predecessor's final read is on disk. Overriding a registered arm
+on a mechanism found mid-run, in the same hours as the reads it would reinterpret,
+is the post-hoc move the pre-registration exists to forbid.
+
+**Launched as §13.2's four runs, with `MZ01_SCORE_MINE=-50`** (cell A, seed 0,
+`MZ01_FORK_COEF` 1.0, `MZ01_FORK_GRAD_MAX` 0.3, `MZ01_MOVE_MASS_COEF` 0.3,
+4B @ `cdbee75f`, 160 steps, reads 40/80/120/160). The dose is training-only: the
+held-out read is priced by the world at −10 (`tests/test_maze_orgb.py:6657`,
+`:6863`), so the ratio it is verdicted on is comparable to every other arm's.
+
+**Its reading rule, fixed now.** The standing bars (§6, §8.4, §9, and the trial's
+0.75 / 0.10 / 0.05) **plus** the two §17 adds, because this batch showed the
+standing bars admitting a ratio that is damage:
+
+1. **AVOIDS is credited only if `detour_paid_solved` rises above its reference**
+   (0.0085 on seed 0). A ratio below 0.75 with that number flat is degradation
+   and is reported as such, whatever the solve band says.
+2. **`invalid_rate` within 0.05 of the reference at the read.** Wall bumps have
+   no bar of their own and the move-mass guard cannot see them (the mass sits on
+   a bare move word naming a move into a wall); at 0.20 the arm is not a policy
+   whose mine rate means anything.
+
+**And the decisive branch, registered before the arm runs:** if `_s0_p50` moves
+its ratio only in step with its wall bumps and solve — the §17.1 pattern at a
+larger dose — **the dose lever is closed**, at −10, −30 and −50 across three
+seeds, and the flat branch moves to the collapse itself (§17.5), not to −100.
+
+### 17.5 What comes after the dose, if §17.4's branch fires
+
+Not a new knob: `MZ01_ENTROPY_COEF` is already the recipe's (0.1,
+`docs/research/APPROACHES.md` §B #6, "Entropy at the level", IDEA) and the
+collapse of §17.3 is what it acts on. The order, cheapest first, all still
+subject to a critic and to the construction test:
+
+1. **The diagnostic before the lever.** The trace records no probability at the
+   fork decision, so §17.3 cannot be confirmed from what is on disk. A build
+   that records, per step, the mean probability the policy assigns the move the
+   fork term is pushing toward — before and after the update — turns the
+   hypothesis into a measurement, and it is a read of the policy, not of a mine.
+2. **The entropy coefficient raised**, as an arm with its own cell-D partner.
+3. **The continuation side** — the catalogue's #2 (fork-anchored baseline) and
+   #4 (the std normaliser), both worktree builds with a critic (§15.3 item 3).
+
+Nothing here reads a mine to choose a fork, a move, an episode or a comparison.
