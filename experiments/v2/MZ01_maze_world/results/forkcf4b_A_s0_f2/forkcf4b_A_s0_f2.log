@@ -150,3 +150,6 @@ Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF
   [A] step  116  loss -225.5013  R   -9.500  solve 1.000  mine/ep 0.500  yell +0.864  cont -0.028368794326241134  H 0.000  mass 1.000  |g| 65.489  zadv 0.75  exit 0.00  forks 42/93c nz 0.93 |Af| 2.67 |gf| 1649.17->0.30 fmass 1.00  87.13s
   [A] step  117  loss -362.3106  R  -14.000  solve 1.000  mine/ep 1.000  yell +0.792  cont 0.015151515151515148  H 0.000  mass 0.999  |g| 0.293  zadv 1.00  exit 0.00  forks 48/101c nz 0.94 |Af| 4.77 |gf| 410.38->0.30 fmass 1.00  87.13s
   [A] step  118  loss -329.9039  R  -25.167  solve 0.750  mine/ep 1.000  yell +0.824  cont 0.15053763440860213  H 0.000  mass 0.999  |g| 0.299  zadv 0.75  exit 0.25  forks 48/120c nz 0.73 |Af| 4.98 |gf| 2047.78->0.30 fmass 1.00  95.26s
+  [A] step  119  loss -182.7453  R   -6.500  solve 1.000  mine/ep 0.250  yell +0.951  cont -0.0035460992907801418  H 0.004  mass 0.999  |g| 0.424  zadv 1.00  exit 0.00  forks 48/120c nz 0.92 |Af| 2.06 |gf| 175.53->0.30 fmass 1.00  88.89s
+[08:10:16]   MID-ARM READ at step 120/160 (128 held-out mazes, the SAME mazes and the same call as the final read)
+[08:10:47]   MEASURED fork_cf_g6 @120: 128 mazes, solve 0.891, mine/ep 1.891 in 0h00m30s
