@@ -19,6 +19,16 @@ is not a result at all:
   * bare share  -- `eval_at[step]["first_token_class"]["bare"]`, floor 0.90;
   * raw move mass -- `history["move_mass"]` at the read's step, floor 0.90.
 
+It also prints the two numbers §8.4/§13.3 require to be read BESIDE the mine
+rate, because a mine rate that falls with them is not the price acting:
+
+  * `mean_steps` (`competence.mean_steps`) -- a rate that falls in proportion to
+    a shorter route is route-shortening, not avoidance;
+  * `invalid_rate` -- wall bumps. It has no bar of its own and the move-mass
+    guard does not see it: the mass is on a bare move WORD while the move it
+    names is into a wall. A read whose mine rate falls while this rises is a
+    policy degrading, which is D-15's derailment under another name.
+
 Either below its floor prints INVALID-MASS/INVALID-BARE beside the verdict; the
 arm is then reported as the regulariser failing, not as a mine-rate result.
 
@@ -52,7 +62,7 @@ def rows(label):
     try:
         pay = json.load(open(os.path.join(d, "fork_cf_g6.json")))
         ref = (json.load(open(os.path.join(d, "reference.json"))).get("eval")
-               or {})
+               or {})   # the reference's own eval block, competence included
     except (OSError, ValueError):
         return []
     rs, rm = ref.get("solve_rate"), ref.get("mine_step_rate")
@@ -75,12 +85,19 @@ def rows(label):
         if bare is not None and bare < BARE_BAR:
             flags.append(f"INVALID-BARE({bare:.3f}<{BARE_BAR})")
         ratio = None if not rm or mine is None else mine / rm
+        comp = b.get("competence") or {}
+        ms, inv = comp.get("mean_steps"), b.get("invalid_rate")
+        rms = ((ref.get("competence") or {}).get("mean_steps")
+               if isinstance(ref, dict) else None)
+        rinv = ref.get("invalid_rate")
         out.append((int(step), (
             f"{label} @{step:>3}  {verdict:<12} "
             f"mine {_f(mine)}/ref {_f(rm)} = ratio {_f(ratio)} "
             f"(bar {MINE_RATIO_BAR})  solve {_f(solve)} vs {_f(rs)} "
             f"(band {SOLVE_BAND})  unparsed {_f(unp)} (bar {UNPARSED_BAR})  "
-            f"bare {_f(bare)}  mass {_f(mm)}"
+            f"bare {_f(bare)}  mass {_f(mm)}  "
+            f"steps {_f(ms, 2)} vs {_f(rms, 2)}  "
+            f"invalid {_f(inv)} vs {_f(rinv)}"
             + ("  " + " ".join(flags) if flags else ""))))
     return out
 
