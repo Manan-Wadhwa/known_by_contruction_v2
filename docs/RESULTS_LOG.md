@@ -780,3 +780,20 @@ discrimination rests on its training trace and its read at 120, not on a final
 (`PLAN-fork-counterfactual.md` §20). The dose lever is closed at −10, −30 and
 −50; `forkcf4b_A_s0_p50` is killed at its read at 40 by the rule §19.2
 pre-registered.
+
+**13. The unpriced control reads the same mine ratio as the priced arms
+(2026-09-10 09:25Z).** `forkcf4b_D_s0_gb` — cell D, `mine_cost: False`, the mine
+price OFF — reads a mine ratio of 0.893 at step 40 with solve 0.953 ABOVE its
+reference and routes SHORTER (12.70 against 13.05). The priced arms at the same
+read span 0.832 to 0.982 and the unpriced control sits among them. A mine ratio
+near 0.89 is therefore what the fork counterfactual does to any arm, priced or
+not, and it arrives by shortening routes — the mechanism `PLAN-fork-counterfactual`
+§8.4 exists to refuse credit for. Beside it, `forkcf4b_A_s0_f2` (two forks, no
+dose) finished: `summary.json` verdict DEAD by the trial's arm rule
+(`zero_adv_end` 0.844 over the 0.80 bar — a rule about the EPISODE term, which is
+degenerate by design on a fork arm), while its held-out final is RANDOMISED by
+the cell-A rules (solve 0.797 against 0.922, ratio 0.889). It also qualifies
+§20.2: undosed arms are not immune, and the fork term's cost appears to scale
+with forks per episode — one fork flat at step 157 (`_g10`), two forks −0.125 of
+solve by 160 — though the dose's collapse to solve 0.27 is an order apart
+(`PLAN-fork-counterfactual.md` §23).

@@ -1303,3 +1303,97 @@ gate checked, and `_gd` launched. The code sync waits for `_f2` to end: a runnin
 trial has already imported its modules and would not change behaviour, but
 rewriting the files under a live arm muddles which code its `CALIBRATION_GIT_SHA`
 names, and there is no reason to accept that for twenty minutes' head start.
+
+## 23. `_f2` seed 0 FINAL, the unpriced control's first read, and `_gd` launched (2026-09-10 09:25Z / 14:55 IST)
+
+### 23.1 `forkcf4b_A_s0_f2` FINAL — two verdicts, both true, about different things
+
+`summary.json` says **DEAD**. The read monitor says **RANDOMISED**. Neither is
+wrong and the difference is not cosmetic.
+
+* **DEAD** is the trial's *arm* verdict and it fires FIRST, before any cell-A
+  rule (`scripts/score_mz01_explore.py:393`): `zero_adv_end` 0.844 above
+  `ZERO_ADVANTAGE_BAR` 0.80 — "an arm whose groups are still degenerate had no
+  policy gradient to spend, whatever its held-out numbers look like". That
+  measures **the episode term's** groups.
+* **RANDOMISED** is the cell-A verdict on the held-out final: solve 0.797
+  against the reference's 0.922, a fall of 0.125 past the 0.10 band, at ratio
+  0.889.
+
+**The DEAD rule predates the fork counterfactual and does not describe it.**
+`zero_advantage_group_fraction` counts groups whose six episodes returned the
+same thing — the on-policy term's problem, the one the coverage read measured at
+0.023 and the one the fork term was built to route around. On a fork arm the
+episode term is *expected* to be degenerate; the live gradient is the fork term,
+whose own health is `fork_adv_abs_mean` and `fork_grad_norm_raw`. So DEAD on
+`_f2` says the episode term was dead, which was true on purpose, and says nothing
+about the fork term. `_s0_p30` cleared the same gate only because its collapse
+pushed `zero_adv_end` to 0.680. **A verdict field that fires on the wrong
+mechanism will keep mislabelling every fork arm; the cell-A read is the one to
+quote, with the arm verdict beside it.**
+
+| read | ratio | solve | mean_steps | invalid | capped | `dp_solved` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| @40 | 0.896 | 0.969 | 12.61 | 0.016 | 0.031 | 0.0000 |
+| @80 | 0.925 | 0.898 | 13.47 | 0.010 | 0.102 | 0.0000 |
+| @120 | 0.864 | 0.891 | 13.70 | 0.018 | 0.109 | 0.0088 |
+| **@160** | 0.889 | **0.797** | 15.10 | 0.020 | 0.203 | 0.0000 |
+| reference | 1.000 | 0.922 | 13.05 | 0.046 | 0.078 | 0.0085 |
+
+96.0 s/step, 160 steps.
+
+### 23.2 This qualifies §20.2, and the qualification is worth stating
+
+§20.2 concluded "the dose is what destroys the policy", from `_g10` being flat
+for 157 undosed steps against the dose arms' collapse. `_f2` is also undosed and
+it did **not** stay flat: solve 0.922 → 0.797 by 160, capped 0.078 → 0.203.
+
+The conclusion survives, in a narrower form. The magnitudes are not comparable:
+
+| arm | dose | forks/ep | solve @ end | capped @ end |
+| --- | --- | ---: | ---: | ---: |
+| `_g10` | none | 1 | 0.944 (training, step 157) | 0.056 |
+| `_f2` | none | **2** | 0.797 | 0.203 |
+| `_s0_p30` | −30 | 1 | 0.273 | 0.727 |
+| `_s1_p30` | −30 | 1 | 0.266 | 0.734 |
+
+**The dose is what causes the catastrophic collapse** — a policy that stops
+solving three episodes in four — and nothing undosed comes near it. But **the
+fork term is not free either**, and what `_f2` adds is that its cost appears to
+scale with the number of forks: one fork per episode is flat at 157 steps, two
+forks costs 0.125 of solve by 160. That is one arm against one arm and could be
+seed; `forkcf4b_A_s1_f2` (box 2, two forks, seed 1, at step 51) reads on the same
+question by ≈ 11:35Z, and `forkcf4b_D_s0_gb` (box 1, one fork, unpriced) gives
+the one-fork trajectory to 160 that `_g10`'s lease death cost.
+
+### 23.3 The unpriced control's first read: the ratio is not a price effect
+
+`forkcf4b_D_s0_gb` @40 — **cell D, `mine_cost: False`, the price OFF** — reads
+mine ratio **0.893**, solve 0.953 (ABOVE its reference's 0.922), `mean_steps`
+12.70 against 13.05, wall bumps 0.030 against 0.046. Beside the priced arms at
+the same read:
+
+| arm @40 | priced? | ratio |
+| --- | --- | ---: |
+| `_s0_p50` | −50 | 0.982 |
+| `_g10` | −10 | 0.918 |
+| `_f2` | −10 | 0.896 |
+| **`_D_s0_gb`** | **no** | **0.893** |
+| `_s1_f2` | −10 | 0.884 |
+| `_s0_p30` | −30 | 0.832 |
+
+**The unpriced control sits in the middle of them**, and it gets there with
+SHORTER routes and HIGHER solve — §8.4's route-shortening, on an arm where the
+price cannot be the cause. A mine ratio near 0.89 at step 40 is what the fork
+counterfactual does to any arm, priced or not. Every sub-1.0 ratio this batch has
+produced, read as a price effect, was reading this instead. This is the first
+full-strength cell-D partner the batch has had, and it is why §18.2 put it ahead
+of a lever. It runs to 160.
+
+### 23.4 `forkcf4b_A_s0_gd` launched 09:21:46Z
+
+Box 3 was idle 29 s. Its code was synced to the merged HEAD first
+(`scripts/sync_to_sandbox.sh`, then the MD5 gate against `git show HEAD:` — match
+at `dacb3e4`, `pyfiles 75`), so this is the first arm running the §22 diagnostic.
+Settings exactly §22.2's: the recipe of record with nothing moved but the
+instruments. Reads at 40/80/120/160, ≈ 09:50Z for the first.

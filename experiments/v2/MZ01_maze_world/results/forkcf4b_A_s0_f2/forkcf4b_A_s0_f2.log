@@ -188,3 +188,45 @@ Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF
   [A] step  152  loss -251.7087  R  -10.250  solve 1.000  mine/ep 0.625  yell +0.840  cont -0.029304029304029304  H 0.015  mass 0.998  |g| 66.003  zadv 0.75  exit 0.00  forks 48/122c nz 0.79 |Af| 2.44 |gf| 652.49->0.30 fmass 1.00  89.02s
   [A] step  153  loss -328.2578  R  -17.167  solve 0.875  mine/ep 0.500  yell +0.854  cont -0.040697674418604654  H 0.005  mass 0.998  |g| 26.004  zadv 0.75  exit 0.12  forks 42/93c nz 0.88 |Af| 6.27 |gf| 3944.06->0.30 fmass 1.00  110.82s
   [A] step  154  loss -364.2635  R  -26.000  solve 1.000  mine/ep 2.000  yell +0.667  cont -0.015151515151515152  H 0.006  mass 0.999  |g| 0.549  zadv 1.00  exit 0.00  forks 48/107c nz 0.98 |Af| 4.21 |gf| 798.04->0.30 fmass 1.00  103.60s
+  [A] step  155  loss -176.6528  R  -21.333  solve 0.833  mine/ep 1.000  yell +0.804  cont -0.028846153846153848  H 0.007  mass 1.000  |g| 24.211  zadv 0.75  exit 0.17  forks 48/111c nz 0.90 |Af| 5.23 |gf| 5704.82->0.30 fmass 1.00  112.79s
+  [A] step  156  loss -244.2506  R  -17.500  solve 0.750  mine/ep 0.250  yell +0.868  cont -0.04365079365079365  H 0.007  mass 1.000  |g| 0.551  zadv 1.00  exit 0.25  forks 48/116c nz 0.96 |Af| 5.32 |gf| 4797.05->0.30 fmass 1.00  93.66s
+  [A] step  157  loss -336.0881  R  -16.667  solve 1.000  mine/ep 1.250  yell +0.717  cont -0.012820512820512824  H 0.003  mass 1.000  |g| 3.153  zadv 0.75  exit 0.00  forks 48/114c nz 0.88 |Af| 3.65 |gf| 549.54->0.30 fmass 1.00  105.79s
+  [A] step  158  loss -164.5955  R  -20.000  solve 0.750  mine/ep 0.500  yell +0.872  cont -0.031609195402298854  H 0.008  mass 1.000  |g| 0.447  zadv 1.00  exit 0.25  forks 42/92c nz 0.71 |Af| 1.57 |gf| 275.23->0.30 fmass 1.00  106.47s
+  [A] step  159  loss -579.9532  R  -24.833  solve 0.750  mine/ep 0.833  yell +0.788  cont -0.055865921787709494  H 0.009  mass 1.000  |g| 106.558  zadv 0.50  exit 0.25  forks 48/104c nz 0.96 |Af| 7.44 |gf| 4446.33->0.30 fmass 1.00  142.25s
+[09:20:10]   ARM fork_cf_g6 trained in 4h16m01s (96.0 s/step); zero-advantage groups mean 0.8921875, train solve 0.750, train mine/ep 0.833, H 0.009, coef 0.1000, eps replaced 0.0 of eligible 0.0, |A| 8.519 nonzero 0.619
+[09:20:10]   forks 7527 over 160 steps, 17177 continuations (2.3 per fork); share with a difference 0.894
+[09:20:10]   fork detour-better share 0.041 (DIAGNOSTIC, read after the fact and never in the update)
+[09:20:10]   fork guards: pre-cap |g| mean 1288.8, max 16722.3 (cap 0.3); bare mass at the fork prompts 1.000 -> 1.000
+[09:20:48]   MEASURED fork_cf_g6: 128 mazes, solve 0.797, mine/ep 1.945 in 0h00m37s
+[09:20:48]   WROTE /marimo/repo/experiments/v2/MZ01_maze_world/results/forkcf4b_A_s0_f2/fork_cf_g6.json
+[09:20:48]   progress 1/1 arms, elapsed 4h19m19s
+[09:20:48]   arm                  mode                     verdict         H start    H end   target   coef s   coef e   zadv s   zadv e       |g| tr solve  tr mine ev solve  ev mine mine/ref unparsed bare 1st  offpol   s/step
+[09:20:48]   ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+[09:20:48]   00_reference_warm_start None                     REFERENCE           n/a      n/a      n/a      n/a      n/a      n/a      n/a      n/a      n/a      n/a   0.9219   2.1875   1.0000   0.0000   1.0000   0.000      n/a
+[09:20:48]   fork_cf_g6           fixed                    DEAD             0.0164   0.0046      n/a   0.1000   0.1000   0.8906   0.8438   86.0849   0.9089   0.7904   0.7969   1.9453   0.8893   0.0000   1.0000   0.000     96.0
+[09:20:48]   
+[09:20:48]   DEAD = zero-advantage groups > 0.80 at the end (the move term is still multiplying by zero). On cell A: AVOIDS = held-out mine/ep < 0.75 x the reference's with solve within 0.10 of it; RANDOMISED = solve fell more than 0.10 below the reference; ALIVE = a gradient but not avoidance. On cell D: RANDOMISED = solve fell more than 0.10 against the arm's own start; ALIVE = neither.
+[09:20:48]   `tr solve`/`tr mine` are the TRAINING pool under the arm's own sampler (an epsilon arm's `tr mine` includes the mines epsilon walked onto); `ev solve`/`ev mine` are the HELD-OUT greedy read and are what the cell-A verdicts use. `offpol` is the share of decisions whose action was not the scored policy's -- measured for epsilon, 1.0 at T != 1.
+[09:20:48]   start/end are means over the first and last fifth of the steps, so one lucky step decides nothing.
+[09:20:48]   `unparsed` is the held-out unparsed_rate: a read above 0.05 is INVALID-READ and is not verdicted. `bare 1st` is the share of held-out first tokens that are a BARE move word; the rest are spaced, capitalised or other, and the four are in `eval_first_token_class`. Training is masked to the bare ids and the eval is NOT, which is what makes this column a readout.
+[09:20:48]     00_reference_warm_start: held-out first token bare 1.000, spaced 0.000, capitalised 0.000, other 0.000 over 1671 replies (by text)
+[09:20:48]     00_reference_warm_start: the REFERENCE -- the warm-started model with NO RL at all, on the same held-out mazes. Every cell-A verdict is a difference from this row; it is never a candidate.
+[09:20:48]     fork_cf_g6: held-out first token bare 1.000, spaced 0.000, capitalised 0.000, other 0.000 over 1933 replies (by text)
+[09:20:48]     fork_cf_g6: unsolved episodes charged at the cap (D33) for 0.091 of the last fifth's episodes; farm-stopped 0.030.
+[09:20:48]   
+[09:20:48]   the reads taken INSIDE the arm -- solve / mine-ratio / the verdict that read WOULD get by the same rules:
+[09:20:48]     arm                                         @40                        @80                       @120                       @end
+[09:20:48]     --------------------------------------------------------------------------------------------------------------------------------
+[09:20:48]     fork_cf_g6            0.969/ 0.90         ALIVE  0.898/ 0.93         ALIVE  0.891/ 0.86         ALIVE  0.797/ 0.89          DEAD
+[09:20:48]     a read is a verdict only if its unparsed_rate <= 0.05; above it the read is INVALID-READ and is reported, not scored.
+[09:20:48]   
+[09:20:48]   detour_paid (solved episodes) by detour-cost bin, held out:
+[09:20:48]     arm                             d=2        d=4        d=6        d=8
+[09:20:48]     REFERENCE                     0.000      0.032      0.000      0.000
+[09:20:48]     REFERENCE                     0.000      0.032      0.000      0.000
+[09:20:48]     fork_cf_g6                    0.000      0.000      0.000      0.000
+[09:20:48]     n (solved) in the reference row: d=2: 31, d=4: 31, d=6: 28, d=8: 28
+[09:20:48]     the two price signs are recombined by their own solved counts; B4's primary read splits them and this does not.
+[09:20:48]   PICK: NONE -- no arm cleared the bar. That is the trial's (negative) answer, not a reason to lower one.
+[09:20:48] WROTE /marimo/repo/experiments/v2/MZ01_maze_world/results/forkcf4b_A_s0_f2/summary.json
+[09:20:48] MZ01 EXPLORE TRIAL DONE arms=1/1 pick=None elapsed=4h19m19s
