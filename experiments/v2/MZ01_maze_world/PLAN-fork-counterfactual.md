@@ -363,3 +363,143 @@ rate; §11's diagnosis (one mine-relevant fork a step among twenty-three of
 route noise, in a step of norm 0.3) stands, and §11's batch is what runs
 next: the dose on seeds 0 and 1, the cap at 1.0, two forks per episode.
 Four fresh leases arrived 04:50Z (box 4 the v1-era snapshot again).
+
+## 13. The batch of 2026-09-10 morning (deputy)
+
+Written at 04:58Z, **before any launch**, on the four fresh leases (READY4B at
+04:56:18–04:56:28Z on boxes 1–4). §11's pre-registered batch is **confirmed
+unamended**: the dose at −30 on seeds 0 and 1, the cap at 1.0, two forks per
+episode. Nothing in the night's traces argues for a different fourth arm, and
+three candidates were considered and rejected (below).
+
+### 13.1 What the surviving traces say
+
+Read off `history` of the four guarded arms (`forkcf4b_A_s0_g` 107 steps,
+`A_s1_g` 78, `D_s0_g` 47, `D_s1_g` 94; all `5df465f`, `fork_per_ep` 1, coef 1.0,
+cap 0.3, mass 0.3):
+
+1. **The comparison exists and it is not about mines.** `fork_share_nonzero`
+   0.905 / 0.909 / 0.883 / 0.865 — every arm far above §6's 0.5 bar — while
+   `fork_share_detour_better` is 0.051 (A s0; above zero on 58 of 107 steps,
+   max 0.25), 0.031 (A s1; 28 of 78), 0.0078 (D s0) and 0.0047 (D s1), every
+   one below §6's 0.1 bar. At `n_forks` = 24 a step, that is about one
+   mine-relevant fork per step on the priced cell and about one every eight
+   steps on the mine-free one. §6's rule therefore fires in both of its
+   branches at once: **the dose is the next arm**, and "more forks" is named.
+2. **The price is worth about 1.8 points of the fork advantage, and that is
+   what the dose scales.** `fork_adv_abs_mean` is 4.26 / 4.16 on the priced
+   cell A against 2.37 / 2.49 on the mine-free cell D, whose forks compare
+   route length and solve alone. The dose multiplies only the first difference.
+3. **The cap binds at every single step, and it binds well below the step the
+   total clip would allow.** `fork_grad_norm_raw` has median 475 / 393 / 233 /
+   201 (max 2.5 × 10⁴) and `fork_grad_norm` is exactly 0.300 on 100 % of steps
+   of all four arms; the total `grad_norm` has median 0.318–0.359, so the
+   episode term contributes ~0.02–0.06 of norm at the median and the total clip
+   at 1.0 almost never binds. The fork term is already most of the step's
+   direction but only three tenths of its permitted length: **step size is a
+   free variable that has never been tested with the guards on** — the cap arm.
+4. **The guards hold, so raising the cap is a test and not a re-run of §10's
+   collapse.** `fork_mass_mean` median ≥ 0.9998 (mean 0.995–0.998, minimum over
+   any step 0.79) and `move_mass` median ≥ 0.9996; every read at 40 has bare
+   share 1.00 except `D_s1_g`'s 0.986. The realised ratio
+   `2.37·fork_adv_abs_mean : adv_abs_mean` is 10.1 (A s0) and 19.3 (A s1) —
+   §8.1's "0.3 is the knob" was answered by the cap, not the coefficient.
+5. **Nothing moves.** Training `mine_step_rate` on A s0 is 1.08 over the first
+   twenty steps and 1.18 over the last twenty of 107; A s1 0.71 → 0.99; the six
+   valid held-out reads sit at mine ratios 0.90–0.96 with the priced and the
+   mine-free cell alike (§12).
+
+**Why two forks per episode is kept as the fourth arm.** The mine-relevant
+forks push one way and the route-noise forks average out, so the signal's share
+of the capped direction grows as √N in the forks per step while the share
+itself (0.051) does not change; `fork_per_ep` 2 is therefore a √2 on the same
+price, at 1.6× the step from the measured `fork_sample_seconds` 28.8 of 54.8
+s/step (≈ 85 s/step, ≈ 3.8 h for 160 steps). It is the only knob in the batch
+that improves the signal-to-noise without touching the price.
+
+**Considered and rejected.** `MZ01_FORK_STD=1` divides each fork's advantages
+by its continuations' return SD, which normalises away exactly the magnitude
+that distinguishes a mine-relevant fork from route noise (the 4.26-against-2.37
+gap of item 2): it is the dose's inverse, and it would run at the moment the
+traces say the price's margin is what is too small. A dose of −50 in place of
+the seed-1 replicate would leave the first dose result unreplicated; §11 puts
+the curve (−10, −20, −30, −50) after both −30 seeds avoid, and that ordering
+stands. `MZ01_FORK_PER_EP=3` costs ≈ 2.2× the step (≈ 5.3 h for 160 steps) for
+a further 1.22× over 2 — not worth a box-night at the lease mortality of
+2026-09-09/10 (four leases lost between 22:18Z and 04:51Z).
+
+**The construction test (§1, `DIAGNOSIS-2026-09-09.md` §3,
+`docs/research/APPROACHES.md` §B) — all four arms pass.** The dose is a number
+in the priced return and nothing else (`BUILD-mine-dose-2026-09-10.md` §2–§3;
+`tests/test_maze_orgb.py:6657` and `:6863` assert the held-out read is priced by
+the world at −10 on episodes drawn under the dose, so `mine_step_rate` and the
+price table are unmoved). The cap is an optimiser knob on the fork term's own
+gradient. `fork_per_ep` is the count of draws from the episode's **geometric**
+fork list (§2.2), which never reads a mine accessor (build test 2). No arm
+routes, hints, or branches by mine adjacency.
+
+### 13.2 The four runs
+
+All four: 4B (`Qwen/Qwen3-4B-Instruct-2507` @ `cdbee75f`), `nav_nav48_4b` +
+`orgb_4b/warm_start.pt`, arm `fork_cf_g6`, cell A, 160 steps, reads at
+40/80/120 and the final at 160, mask on, exit priced at cap, episode credit,
+`MZ01_MOVE_MASS_COEF=0.3`, `MZ01_FORK_COEF=1.0`, `MZ01_FORK_MASS_COEF` left
+empty (it resolves to the run's 0.3, as on the `_g` arms).
+
+| box | label | what it changes from `forkcf4b_A_s0_g` | seed | launched |
+| --- | --- | --- | --- | --- |
+| box 1 | `forkcf4b_A_s0_p30` | `MZ01_SCORE_MINE=-30` (`_p30` = the dose), `MZ01_FORK_GRAD_MAX=0.3` | 0 | 05:00:37Z |
+| box 2 | `forkcf4b_A_s1_p30` | the same at seed 1 | 1 | 05:00:47Z |
+| box 3 | `forkcf4b_A_s0_f2` | `MZ01_FORK_PER_EP=2` (`_f2` = two forks per episode), `MZ01_FORK_GRAD_MAX=0.3` | 0 | 05:00:56Z |
+| box 4 | `forkcf4b_A_s0_g10` | `MZ01_FORK_GRAD_MAX=1.0` (`_g10` = the fork cap at the total clip) | 0 | 05:01:07Z |
+
+All four MD5-matched the repo at `27faf71` before launching and printed their
+banners as intended (05:01:27Z / 05:01:36Z / 05:01:50Z / 05:01:56Z): coef 1.0
+and the mass guard at 0.3 on all four; "1 fork(s) per episode" with "gradient
+cap 0.3" on both dose arms plus "mine priced at -30.0 IN TRAINING (the world's
+-10.0 is unchanged …)"; "2 fork(s) per episode" with cap 0.3 on `_f2`; "1
+fork(s) per episode" with "gradient cap 1.0" and no dose line on `_g10`.
+
+Box 4 is the v1-era snapshot lease (§12), so it carries the arm whose reads
+arrive earliest (`_g10` runs at the `_g` arms' ~55 s/step) rather than the
+longest one; `_f2` at ~85 s/step goes to box 3.
+
+### 13.3 The reading rule, per arm
+
+Unchanged and cited, not rewritten. **All four:** §6 (AVOIDS at any valid read
+with the 4B on-policy control not AVOIDS is the Phase 1 signal), §8.4 (the
+cell-D partner discriminates the price from route-shortening; held-out
+`mean_steps` is read beside mine/ep and a fall in the rate proportional to a
+fall in route length is not credited to the price), §9 (raw move mass ≥ 0.90
+and bare share ≥ 0.90 at every read, or the read is INVALID and the arm is
+reported as the regulariser failing), and the trial's own bars — mine ratio
+0.75, solve band 0.10, unparsed 0.05.
+
+* `forkcf4b_A_s0_p30` — control `ctrl4b_s0`, RANDOMISED (solve 0.734 against
+  0.922, ratio 0.80). Cell-D partner of record `forkcf4b_D_s0_g` @40
+  (0.914 / 0.96); the dose cannot run on cell D (the trainer refuses a price it
+  would never charge), so per §11 a dose arm that avoids gets its own cell-D
+  partner at the world's price before it is credited.
+* `forkcf4b_A_s1_p30` — control `ctrl4b_s1`, ALIVE (solve 0.859, ratio 0.77);
+  §9 sets this arm's bar at 0.75 × reference with that number beside it.
+  Cell-D partner of record `forkcf4b_D_s1_g` @40 (0.938 / 0.94).
+* `forkcf4b_A_s0_g10` — §11's partner `forkcf4b_D_s0_g`, control `ctrl4b_s0`.
+  Its own rule in addition: if the raw move mass falls below 0.90 at any read
+  with the cap at 1.0, the guard alone does not hold the old step size; the arm
+  is closed at that read and §10's pre-registration — the mass guard moves
+  OUTSIDE the cap — is what follows, **not** a smaller cap.
+* `forkcf4b_A_s0_f2` — §11's partner `forkcf4b_D_s0_g`, control `ctrl4b_s0`.
+  Read `fork_share_detour_better` against `forkcf4b_A_s0_g`'s 0.051: the arm is
+  a count knob, so an unchanged share is what makes its √2 the only difference;
+  a share that moves means the second draw is not uniform over the episode's
+  forks, which is a build question before it is a result.
+
+Both dose seeds avoiding sends the dose to the response curve (−10, −20, −30,
+−50) on seeds 0–3, as §11 wrote it.
+
+**Launched (deputy, verified by the lead):** `forkcf4b_A_s0_p30` box 1
+05:00:37Z; `forkcf4b_A_s1_p30` box 2 05:00:47Z (both banners: "mine priced at
+−30.0 IN TRAINING"); `forkcf4b_A_s0_f2` box 3 05:00:56Z (banner: 2 forks per
+episode); `forkcf4b_A_s0_g10` box 4 05:01:07Z (`MZ01_FORK_GRAD_MAX` 1.0). All
+four in the monitor (background tasks + `mz01-watch.service`, inhibitor with
+the lid switch). Finals ≈ 08:00Z (13:30 IST); the f2 arm ≈ 09:00Z.
