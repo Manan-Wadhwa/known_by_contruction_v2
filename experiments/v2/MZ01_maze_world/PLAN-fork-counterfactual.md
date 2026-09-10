@@ -503,3 +503,96 @@ Both dose seeds avoiding sends the dose to the response curve (−10, −20, −
 episode); `forkcf4b_A_s0_g10` box 4 05:01:07Z (`MZ01_FORK_GRAD_MAX` 1.0). All
 four in the monitor (background tasks + `mz01-watch.service`, inhibitor with
 the lid switch). Finals ≈ 08:00Z (13:30 IST); the f2 arm ≈ 09:00Z.
+
+## 14. Takeover at 05:06Z / 10:36 IST: the batch verified alive, the monitor rebuilt, the next launches pre-registered
+
+Written 05:06–05:20Z by the incoming lead, **before any read of §13's batch
+exists** (`eval_at` is `{}` on all four traces at this hour; the first reads at
+step 40 are due ≈ 05:38–05:40Z on the three ~55 s/step arms and ≈ 06:00Z on
+`_f2`). Nothing below reads a result; it records the state, the monitor, and
+what launches on each box the moment it frees.
+
+### 14.1 The four runs are alive and stepping (05:06:21Z)
+
+Probed off `/marimo/repo/<label>.pid` and `/proc/<pid>/stat` (state `Z` would
+mean finished; all four read `R`), with the log's last line beside it:
+
+| box | label | pid | state | last line at 05:06Z | move mass |
+| --- | --- | --- | --- | --- | --- |
+| box 1 | `forkcf4b_A_s0_p30` | 1542 | R | step 4, solve 0.917, mine/ep 2.083, \|g\| 21.57 | 1.000 |
+| box 2 | `forkcf4b_A_s1_p30` | 1532 | R | step 3, solve 1.000, mine/ep 1.500, \|g\| 0.286 | 1.000 |
+| box 3 | `forkcf4b_A_s0_f2` | 2218 | R | step 2, solve 1.000, mine/ep 1.000, \|g\| 5.189 | 1.000 |
+| box 4 | `forkcf4b_A_s0_g10` | 5153 | R | step 3, solve 1.000, mine/ep 0.792, \|g\| 46.44 | 1.000 |
+
+All four leases answer HTTP 200. Steps 2–4 at 05:06Z against launches at
+05:00:37–05:01:07Z is the 55–85 s/step of §13.2 plus model load, so no arm is
+stalled. `results/forkcf4b_A_s0_p30/fork_cf_g6.json` at 05:07Z carries
+`history.move_mass` 0.9997–0.9999 over its first seven steps and
+`reference.json` `eval` solve 0.921875, mine/ep 2.1875 — the seed-0 reference
+every ratio below is taken against.
+
+### 14.2 The monitor, and the one piece of it this machine cannot run
+
+The session runs on a **remote ephemeral container**, not the workstation the
+handoff was written on (`/home/user/known_by_contruction_v2`, not
+`/home/manan/Projects/files/digital_minds-maze`). Three of the four monitoring
+layers are restored as written; the fourth cannot exist here, and pretending
+otherwise would be the failure the record exists to prevent.
+
+1. **One Claude Code background task per box** — `scripts/box/watch_box.sh`
+   at `CYCLE=120 MAX=3000`, boxes 1–4 on the four labels. Running; first cycles
+   logged 05:07:31–05:07:46Z, three small files pulled per box
+   (`fork_cf_g6.json`, `reference.json`, the run log).
+2. **A durable supervisor** — `scripts/box/watch_all.sh` with
+   `JOBS="box1:forkcf4b_A_s0_p30 box2:forkcf4b_A_s1_p30 box3:forkcf4b_A_s0_f2
+   box4:forkcf4b_A_s0_g10"`, `CYCLE=120`, detached under `setsid nohup` to
+   `$MZ01_BOX_DIR/watch_all.log` (started 05:07:44Z). This is the substitute for
+   the `mz01-watch` **systemd unit**, which cannot be created here: the
+   container has no systemd bus (`systemd-run --user` → "Failed to connect to
+   bus: No medium found"; `/run/systemd/system` absent, pid 1 is `process_api`).
+   Concurrent pulls are safe — `scripts/box/pull_big.sh` takes an `flock` per
+   target file and a second puller exits 5.
+3. **The read monitor** — `scripts/box/read_monitor.py`, new in this pass, under
+   the Monitor tool at a 120 s poll: one line per **new** held-out read off the
+   pulled traces, plus any terminal event the watchers write to
+   `$MZ01_BOX_DIR/events.log` (a run ENDED and its box is idle, a lease
+   unreachable twice). It does not re-implement the verdict: `_cell_a_verdict`
+   is imported from `scripts/score_mz01_explore.py:218` (bars `MINE_RATIO_BAR`
+   0.75, `SOLVE_BAND` 0.10, `UNPARSED_BAR` 0.05), and §9's two bars the cell-A
+   verdict does not carry are printed beside it and flagged — bare share
+   (`first_token_class.bare`) and the raw `move_mass` at the read's own step,
+   floor 0.90 each. Self-tested on a synthetic arm before it was trusted: the
+   four verdict paths (AVOIDS, ALIVE, RANDOMISED, INVALID-READ), both invalid
+   flags, and the no-replay state file each behaved, and the test caught a crash
+   on a missing state directory that silence would have hidden.
+4. **`mz01-inhibit`** — not created and not applicable. It blocks
+   `sleep:idle:handle-lid-switch` on a laptop that would otherwise suspend
+   mid-pull (`FAILURES.md`, the 23:02Z suspend of §12). This container has no
+   logind and does not sleep. **If the workstation is also holding leases or
+   watchers this hour, its own `mz01-watch` and `mz01-inhibit` units are
+   untouched by this session — they are on a machine this one cannot reach, so
+   they were neither stopped nor recreated.**
+
+### 14.3 The next launch on each box, pre-registered now
+
+An idle lease gets reaped, so each box's next job is fixed **before** its read,
+by §6/§11/§13.3's rules and nothing else. Finals ≈ 08:00Z on boxes 1, 2, 4 and
+≈ 09:00Z on box 3; by 08:00Z the `_f2` arm's reads at 40 and 80 are on disk, so
+the fork-count branch below is decided on evidence, not on a guess.
+
+| box frees | if its arm AVOIDS at a valid read | if it is flat (ALIVE at every read) | if a read is INVALID |
+| --- | --- | --- | --- |
+| box 1 `_A_s0_p30` | `forkcf4b_D_s0_gb` — its own cell-D partner at the **world's** price, seed 0, guards as §13.2 (the dose cannot run on cell D; §13.3). `_gb` because `_g`'s trace is the lost run's read at 40 (§11) and must not be overwritten | `forkcf4b_A_s0_f3` (`MZ01_FORK_PER_EP=3`) — the zero-build member of the lever §6 names when nothing avoids, launched only if `_f2`'s `fork_share_detour_better` is unmoved from `_A_s0_g`'s 0.051; if it moved, the second draw is not uniform and that is a build question first (§13.3), so the box takes `forkcf4b_A_s1_f2` instead | by §9 the arm is reported as the regulariser failing; the box takes the flat-branch arm while the fix is built |
+| box 2 `_A_s1_p30` | `forkcf4b_D_s1_gb` — the same at seed 1 | `forkcf4b_A_s1_f2` (the count knob's second seed) | as box 1 |
+| box 4 `_A_s0_g10` | its partner is `forkcf4b_D_s0_g` (§13.3); on AVOIDS it queues behind box 1's D partner rather than duplicating it, and takes the flat-branch arm | as box 1's flat branch, one arm down the list | **mass < 0.90 at any read closes this arm at that read** and §10's pre-registration follows — the mass guard moves OUTSIDE the cap, **not** a smaller cap (§13.3). That is a build; the box takes a flat-branch arm meanwhile |
+| box 3 `_f2` (≈09:00Z) | as box 1's AVOIDS branch, one seed down | the geometry arm of §6 — forks placed where continuations differ, **never by mine adjacency** — designed in this plan, built by an Opus subagent in a worktree, critic-reviewed, tested, then run | as box 1 |
+
+**Both dose seeds avoiding** still sends the dose to the response curve (−10,
+−20, −30, −50) on seeds 0–3, as §11 and §13.3 wrote it; that supersedes the
+flat-branch rows above for boxes 1 and 2.
+
+**The construction test holds across every arm named here.** `MZ01_FORK_PER_EP`
+counts draws from the episode's geometric fork list and reads no mine accessor
+(§13.1, build test 2); a cell-D partner is the same recipe at the world's price;
+the geometry arm is admitted only if its fork choice is blind to mine adjacency.
+No arm below routes, hints, prefixes or places a fork by where a mine is.
