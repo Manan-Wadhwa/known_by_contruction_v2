@@ -797,3 +797,24 @@ the cell-A rules (solve 0.797 against 0.922, ratio 0.889). It also qualifies
 with forks per episode — one fork flat at step 157 (`_g10`), two forks −0.125 of
 solve by 160 — though the dose's collapse to solve 0.27 is an order apart
 (`PLAN-fork-counterfactual.md` §23).
+
+**14. The "more forks" lever is closed, and with it every lever the plan named
+before today (2026-09-10 12:10Z).** `forkcf4b_A_s1_f2` finished RANDOMISED by the
+cell-A read (solve 0.820 against 0.922, ratio 0.856; DEAD by the arm rule on
+`zero_adv_end` 0.820), matching `forkcf4b_A_s0_f2` (solve 0.797, ratio 0.889).
+**Both two-fork arms end RANDOMISED while every one-fork arm holds its
+competence** — `_g10` flat at step 157, `_gd` at training solve 0.977 through
+step 109, `_D_s0_gb` at solve 0.914 at its read at 80 — with no dose in any of
+them, so `MZ01_FORK_PER_EP=2` costs 0.10–0.13 of solve and buys no avoidance.
+With the geometry rule measured out (`docs/research/fork-geometry-probe-2026-09-10.md`)
+and the dose closed at −10, −30 and −50, every lever
+`PLAN-fork-counterfactual.md` named before today has been tried and none moves
+avoidance on a healthy policy. **The diagnostic says why** (§25.2, from 109
+surviving steps of `forkcf4b_A_s0_gd` before box 3's lease died): the fork term
+pushes at the move the policy ALREADY PLAYED at about 19 forks in 20, and where
+it disagrees the capped step changes the fork decision by a median of 6 × 10⁻¹⁹,
+exactly zero on 20 steps of 109, while the policy holds its own move at
+probability 1.000. The constraint is the policy's determinism, not the price, the
+fork count or the fork geometry. `forkcf4b_A_s0_ent3`
+(`MZ01_ENTROPY_COEF` 0.3 against 0.1, everything else as `_gd`) launched 12:06Z
+to test it (§25.3, §26.3).

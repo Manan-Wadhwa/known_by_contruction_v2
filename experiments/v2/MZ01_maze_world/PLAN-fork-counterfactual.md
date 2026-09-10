@@ -1557,3 +1557,62 @@ programme has ever had and must not be displaced. Box 2 frees at ≈ 11:55Z and
 takes §25.3's arm. **`forkcf4b_A_s0_gd` is not relaunched**: its diagnostic
 answered, and a fresh lease is better spent on the lever than on the reads at 120
 and 160 of an arm whose measurement is already in hand.
+
+## 26. `_s1_f2` FINAL closes the "more forks" lever; the entropy arm launched (2026-09-10 12:10Z / 17:40 IST)
+
+### 26.1 `forkcf4b_A_s1_f2` FINAL
+
+`summary.json`: **DEAD** by the arm rule (`zero_adv_end` 0.820 above the 0.80 bar
+— the episode term again, §23.1), **RANDOMISED** by the cell-A read (solve 0.820
+against the reference's 0.922, a fall of 0.102 past the band), ratio 0.856, 89.9
+s/step.
+
+| read | ratio | solve | mean_steps | invalid | capped | `dp_solved` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| @40 | 0.884 | 0.922 | 13.38 | 0.067 | 0.078 | 0.0085 |
+| @80 | 0.884 | 0.914 | 13.28 | 0.036 | 0.086 | 0.0000 |
+| @120 | 0.776 | 0.820 | 14.84 | 0.141 | 0.180 | 0.0095 |
+| @160 | 0.856 | 0.820 | 14.80 | 0.022 | 0.180 | 0.0476 |
+| reference | 1.000 | 0.922 | 13.02 | 0.052 | 0.078 | 0.0000 |
+
+### 26.2 The "more forks" lever is closed, and with it both of §6's branches
+
+§23.2 asked whether the fork term's cost scales with forks per episode, and named
+this arm as the second read on it. It does:
+
+| arm | forks/ep | dose | solve at end | verdict on the final read |
+| --- | ---: | --- | ---: | --- |
+| `_g10` | 1 | none | 0.944 (training, step 157) | lease lost before its final |
+| `_gd` | 1 | none | 0.977 (training, step 109) | lease lost; read at 80 ALIVE, solve 0.938 |
+| `_D_s0_gb` | 1 | none (unpriced) | running, solve 0.914 at 80 | — |
+| `_f2` | **2** | none | 0.797 | **RANDOMISED** |
+| `_s1_f2` | **2** | none | 0.820 | **RANDOMISED** |
+
+**Both two-fork arms end RANDOMISED; every one-fork arm holds its competence.**
+Two seeds each way, no dose anywhere in it. `MZ01_FORK_PER_EP=2` costs 0.10–0.13
+of solve by 160 and buys no avoidance: at their finals `detour_paid_solved` is
+0.000 (`_f2`) and 0.0476 (`_s1_f2`, on a policy solving 0.82), and both ratios
+(0.889, 0.856) sit inside the range the **unpriced** control produces (0.893 at
+40, 0.946 at 80).
+
+§6 named two responses to a flat batch: more forks per episode, or a geometry
+that places forks where continuations differ. **Both are now closed** — the
+geometry rule by measurement this morning (§15.1: the tie worth having is 16
+forks of 4 344), the fork count by these two arms. With the dose closed at three
+levels (§20.2, §21), **every lever the plan named before today has been tried and
+none moves mine avoidance on a healthy policy.**
+
+What remains is not another fork knob. §25.2 measured why: the fork term pushes
+at the move the policy already played at ~19 forks in 20, and where it disagrees
+a capped step moves the decision by a median 6 × 10⁻¹⁹. The constraint is the
+policy's determinism, which is where §25.3's arm goes.
+
+### 26.3 `forkcf4b_A_s0_ent3` launched 12:06:22Z
+
+Box 2's code was synced to the merged HEAD first (`SYNC_OK … 4c92928`), MD5 gate
+matched, launched with **`MZ01_ENTROPY_COEF=0.3`** — verified in the launcher on
+the box, where `export MZ01_ENTROPY_COEF=0.3` follows the default
+`export MZ01_ENTROPY_COEF=0.1` and wins, as every override on these arms does.
+Banner confirms 1 fork per episode, coef 1.0, cap 0.3, mass guard 0.3, no dose.
+It carries the §22 diagnostic, so it is comparable to `_gd` step by step, which
+is the comparison §25.3's reading rule is written on. Box 2 was idle 21 s.

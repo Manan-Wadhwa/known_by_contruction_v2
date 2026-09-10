@@ -178,3 +178,53 @@ launched 2026-09-10T08:02:12Z
   [A] step  144  loss -230.3919  R   -4.000  solve 1.000  mine/ep 0.000  yell +0.549  cont None  H 0.000  mass 0.999  |g| 0.287  zadv 1.00  exit 0.00  forks 48/103c nz 0.98 |Af| 2.32 |gf| 304.07->0.30 fmass 1.00  85.29s
   [A] step  145  loss -338.8412  R  -14.000  solve 1.000  mine/ep 1.000  yell +0.646  cont -0.10227272727272728  H 0.002  mass 0.998  |g| 0.292  zadv 1.00  exit 0.00  forks 48/104c nz 0.94 |Af| 4.58 |gf| 1372.81->0.30 fmass 1.00  91.63s
   [A] step  146  loss -221.9245  R  -19.667  solve 0.750  mine/ep 0.417  yell +0.634  cont -0.06292134831460675  H 0.004  mass 0.999  |g| 0.831  zadv 0.50  exit 0.25  forks 42/99c nz 0.74 |Af| 2.26 |gf| 1513.93->0.30 fmass 1.00  119.52s
+  [A] step  147  loss -298.7084  R   -9.000  solve 1.000  mine/ep 0.500  yell +0.583  cont 0.06521739130434784  H 0.000  mass 0.998  |g| 0.287  zadv 1.00  exit 0.00  forks 48/114c nz 0.88 |Af| 2.82 |gf| 345.58->0.30 fmass 1.00  119.89s
+  [A] step  148  loss -314.6535  R   -8.750  solve 1.000  mine/ep 0.458  yell +0.469  cont -0.14923427826653632  H 0.004  mass 0.997  |g| 0.490  zadv 0.75  exit 0.00  forks 48/102c nz 0.90 |Af| 3.73 |gf| 671.60->0.30 fmass 1.00  108.30s
+  [A] step  149  loss -271.8244  R  -22.500  solve 0.750  mine/ep 0.750  yell +0.339  cont -0.2953216374269006  H 0.001  mass 0.999  |g| 0.367  zadv 1.00  exit 0.25  forks 48/103c nz 0.98 |Af| 4.61 |gf| 688.25->0.30 fmass 1.00  103.42s
+  [A] step  150  loss -123.7753  R  -27.500  solve 0.750  mine/ep 1.250  yell +0.550  cont 0.14848484848484847  H 0.005  mass 0.992  |g| 0.442  zadv 1.00  exit 0.25  forks 48/120c nz 0.77 |Af| 3.09 |gf| 1410.60->0.30 fmass 0.99  117.61s
+  [A] step  151  loss -256.4984  R   -6.500  solve 1.000  mine/ep 0.250  yell +0.382  cont 0.03191489361702127  H 0.000  mass 0.999  |g| 0.297  zadv 1.00  exit 0.00  forks 48/96c nz 0.98 |Af| 3.02 |gf| 608.26->0.30 fmass 1.00  95.75s
+  [A] step  152  loss -301.2203  R   -9.000  solve 1.000  mine/ep 0.500  yell +0.465  cont 0.08333333333333331  H 0.002  mass 0.999  |g| 0.431  zadv 1.00  exit 0.00  forks 48/99c nz 0.90 |Af| 3.49 |gf| 376.37->0.30 fmass 1.00  94.61s
+  [A] step  153  loss -263.5297  R   -9.000  solve 1.000  mine/ep 0.500  yell +0.451  cont -0.2427536231884058  H 0.003  mass 0.999  |g| 0.583  zadv 1.00  exit 0.00  forks 48/120c nz 0.88 |Af| 2.99 |gf| 338.33->0.30 fmass 1.00  91.36s
+  [A] step  154  loss -259.5282  R   -9.000  solve 1.000  mine/ep 0.500  yell +0.361  cont 0.10869565217391308  H 0.001  mass 0.999  |g| 0.556  zadv 1.00  exit 0.00  forks 48/112c nz 0.94 |Af| 2.99 |gf| 324.10->0.30 fmass 1.00  104.39s
+  [A] step  155  loss -213.4139  R  -22.500  solve 0.750  mine/ep 0.750  yell +0.344  cont -0.29239766081871343  H 0.000  mass 1.000  |g| 0.298  zadv 1.00  exit 0.25  forks 48/98c nz 0.75 |Af| 2.96 |gf| 379.32->0.30 fmass 1.00  110.11s
+  [A] step  156  loss -341.2381  R  -30.333  solve 0.750  mine/ep 1.333  yell +0.500  cont -0.06818181818181818  H 0.001  mass 1.000  |g| 1394.164  zadv 0.75  exit 0.25  forks 48/112c nz 0.85 |Af| 6.65 |gf| 48662.96->0.30 fmass 1.00  130.30s
+  [A] step  157  loss -317.8425  R  -16.500  solve 1.000  mine/ep 1.250  yell +0.389  cont -0.018604651162790697  H 0.001  mass 0.999  |g| 0.735  zadv 1.00  exit 0.00  forks 48/110c nz 0.98 |Af| 3.70 |gf| 1245.11->0.30 fmass 1.00  107.70s
+  [A] step  158  loss -276.4298  R  -20.000  solve 1.000  mine/ep 1.417  yell +0.555  cont 0.05370843989769819  H 0.000  mass 1.000  |g| 7.407  zadv 0.75  exit 0.00  forks 48/110c nz 1.00 |Af| 3.80 |gf| 800.81->0.30 fmass 1.00  125.93s
+  [A] step  159  loss -342.3264  R  -25.000  solve 0.750  mine/ep 1.000  yell +0.632  cont 0.06944444444444445  H 0.003  mass 0.999  |g| 0.413  zadv 1.00  exit 0.25  forks 42/95c nz 0.83 |Af| 5.40 |gf| 3285.18->0.30 fmass 1.00  117.64s
+[12:04:49]   ARM fork_cf_g6 trained in 3h59m51s (89.9 s/step); zero-advantage groups mean 0.8328125, train solve 0.750, train mine/ep 1.000, H 0.003, coef 0.1000, eps replaced 0.0 of eligible 0.0, |A| 0.000 nonzero 0.000
+[12:04:49]   forks 7543 over 160 steps, 17110 continuations (2.3 per fork); share with a difference 0.896
+[12:04:49]   fork detour-better share 0.053 (DIAGNOSTIC, read after the fact and never in the update)
+[12:04:49]   fork guards: pre-cap |g| mean 1730.2, max 48663.0 (cap 0.3); bare mass at the fork prompts 1.000 -> 0.999
+[12:05:26]   MEASURED fork_cf_g6: 128 mazes, solve 0.820, mine/ep 1.852 in 0h00m37s
+[12:05:26]   WROTE /marimo/repo/experiments/v2/MZ01_maze_world/results/forkcf4b_A_s1_f2/fork_cf_g6.json
+[12:05:26]   progress 1/1 arms, elapsed 4h03m02s
+[12:05:26]   arm                  mode                     verdict         H start    H end   target   coef s   coef e   zadv s   zadv e       |g| tr solve  tr mine ev solve  ev mine mine/ref unparsed bare 1st  offpol   s/step
+[12:05:26]   ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+[12:05:26]   00_reference_warm_start None                     REFERENCE           n/a      n/a      n/a      n/a      n/a      n/a      n/a      n/a      n/a      n/a   0.9219   2.1641   1.0000   0.0000   1.0000   0.000      n/a
+[12:05:26]   fork_cf_g6           fixed                    DEAD             0.0116   0.0030      n/a   0.1000   0.1000   0.8359   0.8203  147.7661   0.9062   0.7526   0.8203   1.8516   0.8556   0.0000   1.0000   0.000     89.9
+[12:05:26]   
+[12:05:26]   DEAD = zero-advantage groups > 0.80 at the end (the move term is still multiplying by zero). On cell A: AVOIDS = held-out mine/ep < 0.75 x the reference's with solve within 0.10 of it; RANDOMISED = solve fell more than 0.10 below the reference; ALIVE = a gradient but not avoidance. On cell D: RANDOMISED = solve fell more than 0.10 against the arm's own start; ALIVE = neither.
+[12:05:26]   `tr solve`/`tr mine` are the TRAINING pool under the arm's own sampler (an epsilon arm's `tr mine` includes the mines epsilon walked onto); `ev solve`/`ev mine` are the HELD-OUT greedy read and are what the cell-A verdicts use. `offpol` is the share of decisions whose action was not the scored policy's -- measured for epsilon, 1.0 at T != 1.
+[12:05:26]   start/end are means over the first and last fifth of the steps, so one lucky step decides nothing.
+[12:05:26]   `unparsed` is the held-out unparsed_rate: a read above 0.05 is INVALID-READ and is not verdicted. `bare 1st` is the share of held-out first tokens that are a BARE move word; the rest are spaced, capitalised or other, and the four are in `eval_first_token_class`. Training is masked to the bare ids and the eval is NOT, which is what makes this column a readout.
+[12:05:26]     00_reference_warm_start: held-out first token bare 1.000, spaced 0.000, capitalised 0.000, other 0.000 over 1666 replies (by text)
+[12:05:26]     00_reference_warm_start: the REFERENCE -- the warm-started model with NO RL at all, on the same held-out mazes. Every cell-A verdict is a difference from this row; it is never a candidate.
+[12:05:26]     fork_cf_g6: held-out first token bare 1.000, spaced 0.000, capitalised 0.000, other 0.000 over 1895 replies (by text)
+[12:05:26]     fork_cf_g6: unsolved episodes charged at the cap (D33) for 0.094 of the last fifth's episodes; farm-stopped 0.017.
+[12:05:26]   
+[12:05:26]   the reads taken INSIDE the arm -- solve / mine-ratio / the verdict that read WOULD get by the same rules:
+[12:05:26]     arm                                         @40                        @80                       @120                       @end
+[12:05:26]     --------------------------------------------------------------------------------------------------------------------------------
+[12:05:26]     fork_cf_g6            0.922/ 0.88         ALIVE  0.914/ 0.88         ALIVE  0.820/ 0.78    RANDOMISED  0.820/ 0.86          DEAD
+[12:05:26]     a read is a verdict only if its unparsed_rate <= 0.05; above it the read is INVALID-READ and is reported, not scored.
+[12:05:26]   
+[12:05:26]   detour_paid (solved episodes) by detour-cost bin, held out:
+[12:05:26]     arm                             d=2        d=4        d=6        d=8
+[12:05:26]     REFERENCE                     0.000      0.000      0.000      0.000
+[12:05:26]     REFERENCE                     0.000      0.000      0.000      0.000
+[12:05:26]     fork_cf_g6                    0.160      0.037      0.000      0.000
+[12:05:26]     n (solved) in the reference row: d=2: 31, d=4: 31, d=6: 28, d=8: 28
+[12:05:26]     the two price signs are recombined by their own solved counts; B4's primary read splits them and this does not.
+[12:05:26]   PICK: NONE -- no arm cleared the bar. That is the trial's (negative) answer, not a reason to lower one.
+[12:05:26] WROTE /marimo/repo/experiments/v2/MZ01_maze_world/results/forkcf4b_A_s1_f2/summary.json
+[12:05:26] MZ01 EXPLORE TRIAL DONE arms=1/1 pick=None elapsed=4h03m02s
