@@ -27,3 +27,6 @@ launched 2026-09-10T08:02:12Z
 [08:03:25]   EXPLORATION PRE-FLIGHT                    PASS -- the move term has something to multiply
   [A] step    0  loss -31.1767  R  -12.000  solve 1.000  mine/ep 0.750  yell +0.578  cont -0.10748792270531402  H 0.049  mass 1.000  |g| 2.031  zadv 0.50  exit 0.00  forks 48/110c nz 0.90 |Af| 3.44 |gf| 108.93->0.30 fmass 1.00  77.04s
   [A] step    1  loss -21.4139  R  -22.500  solve 0.750  mine/ep 0.750  yell +0.561  cont -0.02046783625730994  H 0.021  mass 1.000  |g| 0.296  zadv 1.00  exit 0.25  forks 48/112c nz 0.85 |Af| 4.47 |gf| 91.83->0.30 fmass 1.00  80.71s
+  [A] step    2  loss -24.8168  R   -6.667  solve 1.000  mine/ep 0.250  yell +0.631  cont -0.16549295774647887  H 0.013  mass 1.000  |g| 1.723  zadv 0.50  exit 0.00  forks 48/113c nz 1.00 |Af| 4.07 |gf| 116.71->0.30 fmass 1.00  78.90s
+  [A] step    3  loss -39.1029  R  -10.500  solve 1.000  mine/ep 0.500  yell +0.634  cont -0.14965986394557823  H 0.040  mass 1.000  |g| 9.625  zadv 0.50  exit 0.00  forks 42/89c nz 1.00 |Af| 4.14 |gf| 131.66->0.30 fmass 1.00  73.66s
+  [A] step    4  loss -24.5018  R  -11.500  solve 1.000  mine/ep 0.750  yell +0.625  cont 0.022222222222222227  H 0.009  mass 1.000  |g| 0.303  zadv 1.00  exit 0.00  forks 48/113c nz 0.92 |Af| 2.24 |gf| 73.66->0.30 fmass 1.00  72.50s
