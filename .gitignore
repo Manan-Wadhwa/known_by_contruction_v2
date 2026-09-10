@@ -74,3 +74,16 @@ wandb/
 lightning_logs/
 runs/
 outputs/
+
+# Subagent git worktrees (transient session infrastructure, never committed)
+.claude/worktrees/
+
+# THIS BATCH'S TRIAL TRACES ARE TRACKED, against the rule above (2026-09-10).
+# The rule keeps run output out of the repository because it normally lives on
+# the workstation that pulled it. The 2026-09-10 session runs in an EPHEMERAL
+# container: when it is reclaimed, anything not pushed is gone, and every number
+# in PLAN-fork-counterfactual.md §16-§18 cites these files by name. The JSON and
+# the run log are kept (about 150 KB an arm); the .pt adapters are not.
+!experiments/v2/MZ01_maze_world/results/forkcf4b_*/
+!experiments/v2/MZ01_maze_world/results/forkcf4b_*/*.json
+!experiments/v2/MZ01_maze_world/results/forkcf4b_*/*.log
