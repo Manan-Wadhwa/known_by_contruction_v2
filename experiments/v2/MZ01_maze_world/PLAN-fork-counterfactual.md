@@ -342,3 +342,24 @@ replaced then by `forkcf4b_A_s1_p30` and `forkcf4b_A_s0_g10` if flat;
 record are the reads already taken (`forkcf4b_D_s0_g` at 40, `forkcf4b_D_s1_g`
 at 40) and the on-policy controls; a dose arm that avoids gets its own
 cell-D partner before it is credited.
+
+## 12. The night's losses (2026-09-10 05:00Z / 10:30 IST)
+
+The laptop suspended at about 23:02Z (04:32 IST) — the sleep inhibitor held
+`sleep:idle` only, which does not block a lid or a manual suspend — and woke
+at 04:49Z; the three leases were gone by then (HTTP 410). Nothing after the
+23:01Z pull survives. What does: `forkcf4b_A_s0_g` to step 107 (reads @40
+0.961 / 0.96 and @80 0.945 / 0.96, both valid; training mine/ep 1.18 over
+its last twenty steps — flat), `forkcf4b_A_s1_g` to step 78 (@40 0.930 /
+0.90, valid; mine/ep 0.99), and `forkcf4b_A_s0_p30` at step 1 (the dose arm:
+lost entire, two minutes old). No final, no read at 120 or 160 from any
+guarded arm. The inhibitor now holds `sleep:idle:handle-lid-switch`.
+
+**What the surviving reads say.** Six valid reads on the guarded arm at 4B
+(A s0 @40/@80, A s1 @40, D s0 @40, D s1 @40; D s1 @80 invalid), mine ratios
+0.90–0.96, the priced and mine-free cells alike, training mine/ep flat to
+step 107. The guarded fork term with the geometry's forks does not move the
+rate; §11's diagnosis (one mine-relevant fork a step among twenty-three of
+route noise, in a step of norm 0.3) stands, and §11's batch is what runs
+next: the dose on seeds 0 and 1, the cap at 1.0, two forks per episode.
+Four fresh leases arrived 04:50Z (box 4 the v1-era snapshot again).
