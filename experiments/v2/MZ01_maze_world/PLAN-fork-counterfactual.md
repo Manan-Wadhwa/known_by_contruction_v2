@@ -1397,3 +1397,73 @@ Box 3 was idle 29 s. Its code was synced to the merged HEAD first
 at `dacb3e4`, `pyfiles 75`), so this is the first arm running the §22 diagnostic.
 Settings exactly §22.2's: the recipe of record with nothing moved but the
 instruments. Reads at 40/80/120/160, ≈ 09:50Z for the first.
+
+## 24. `_gd` @40 is INVALID, and the build is not what made it so (2026-09-10 10:00Z / 15:30 IST)
+
+### 24.1 The read, and the check it demanded
+
+`forkcf4b_A_s0_gd` @40 — **INVALID-READ** by §9's validity rule: `unparsed_rate`
+**0.059** against the 0.05 bar. Its other bars pass (bare share 0.941 above the
+0.90 floor, raw `move_mass` 1.000), and the numbers it would otherwise have shown
+are ratio 0.839, solve 0.906, `mean_steps` 13.37, wall bumps 0.081.
+
+**This is the first arm running the §22 build, so an invalid first read is
+exactly when to ask whether the build did it.** Four checks say it did not:
+
+1. **The diff does not touch the evaluation path at all.** `git diff
+   9aa8e81..71e1075 -- src/calibration/maze_orgb.py` changes
+   `FORK_TRACE_FIELDS`, `_fmt_share`, `fork_terms`, `_fork_move_logp` and
+   `train_orgb_cell`, and **zero** lines matching `measure_organism`,
+   `first_token_class` or `unparsed`. `unparsed_rate` is computed by code the
+   build never edited.
+2. **The training trace sits inside the recipe family.** `_gd`'s first 40 steps
+   against `_g10`'s and against §13.1's numbers for `_A_s0_g`:
+
+   | arm | n_forks | `share_nonzero` | `share_detour` | `fork_adv_abs` | grad_raw med | entropy | solve |
+   | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+   | `_gd` (diagnostic) | 24.0 | 0.893 | 0.035 | 3.61 | 354 | 0.0084 | **0.952** |
+   | `_g10` | 23.9 | 0.902 | 0.046 | 4.33 | 344 | 0.0091 | 0.925 |
+   | `_A_s0_g` (§13.1) | 24 | 0.905 | 0.051 | 4.26 | — | — | — |
+
+   The instrumented arm is the healthiest of the three in training solve.
+3. **Training `unparsed_rate` is 0.0003** on `_gd`, against 0.0001 (`_g10`),
+   0.0003 (`_s0_p30`) and 0.0005 (`_D_s0_gb`). Nothing is unusual in the channel
+   the build could reach; the eval runs an OPEN action space, which is a
+   different path from the closed one training uses.
+4. **The failure predates the build.** `_D_s1_g` read INVALID at 80 on
+   `unparsed` 0.062 on 2026-09-09 (§11), before the diagnostic existed.
+
+**Conclusion: the read is invalid by the rule and is not verdicted; the arm runs
+on** to 80/120/160, and the build is not implicated. Recorded because "the first
+arm on a new build read INVALID" is precisely the coincidence that a record
+should either explain or flag, and it would have been cheap to let it pass.
+
+### 24.2 What the diagnostic has produced in 40 steps
+
+Not a verdict — §22.2 reads this arm on its trajectory across the run — but the
+shape is already there. Over the first 40 steps, all 40 scored (mean 21.4 of 24.0
+forks scored; the rest tied):
+
+| field | value |
+| --- | --- |
+| `fork_p_target_absdelta` | median **2.8 × 10⁻⁶**, mean 8.0 × 10⁻³, max 0.169; **exactly 0.000000 on 7 of 40 steps**, at or below 1 × 10⁻⁴ on **28 of 40** |
+| `fork_p_target_before` | median 0.955, range 0.619–1.000 |
+| `fork_p_taken_before` | median **1.000**, minimum 0.936 |
+| `fork_probe_seconds` | 0.189 s of a 50.7 s step (0.37 %) |
+
+**`fork_p_target_before` reads as a share, not a probability, and that is the
+useful reading.** On a point-mass policy each fork contributes ≈ 1 (the pushed
+move is the one the policy plays) or ≈ 0 (it is not), so the mean is the fraction
+of forks where the term pushes at the move already played. The values are exact
+fractions of their own `fork_p_n_scored` — 0.619048 = 13/21, 0.722222 = 13/18,
+0.863636 = 19/22 — which is what that structure looks like. A median of 0.955
+says the term pushes at the already-played move at about 19 forks in 20.
+
+**§22.2's first branch is what is forming**: the policy holds its move at ≈ 1.000
+(`fork_p_taken_before`), and the capped step moves the fork decision by a median
+of 3 × 10⁻⁶ — on 7 steps in 40, by nothing at all. If that holds to the later
+reads, §17.3 is confirmed and `MZ01_ENTROPY_COEF` is the lever that follows
+(§17.5 item 2), pre-registered then with its own cell-D partner. **The magnitude
+field is what makes this readable**: the signed `fork_p_target_delta` alone could
+not distinguish "nothing moved" from "the forks cancelled", and it was the
+critic, not the build, that put it there (§22.1).
