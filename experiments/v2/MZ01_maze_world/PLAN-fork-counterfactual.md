@@ -1159,3 +1159,56 @@ The queue on the three surviving boxes, pre-registered now:
 A fourth lease would add parallelism and is wanted, but **nothing in the queue is
 blocked on one**. `_g10`'s directory will read `RUNNING step 157/160` for ever:
 that is the last state pulled before the lease died, not a live run (§20.1).
+
+## 21. `_s0_p50` read at 40 and killed by the registered rule; box 1 takes the cell-D control (2026-09-10 08:30Z / 14:00 IST)
+
+### 21.1 The read, and the kill
+
+`forkcf4b_A_s0_p50` @40 — **ALIVE**, VALID (unparsed 0.016, bare 0.984,
+`move_mass` 0.995):
+
+| arm @40 | ratio | solve | mean_steps | invalid | capped | `dp_solved` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `_s0_p50` (−50) | **0.982** | 0.883 | 13.86 | **0.008** | 0.117 | 0.0088 |
+| `_s0_p30` (−30) | 0.832 | 0.828 | 14.48 | 0.211 | 0.172 | 0.0094 |
+| `_s1_p30` (−30) | 1.051 | 0.914 | 13.41 | 0.004 | 0.086 | 0.0000 |
+| reference | 1.000 | 0.922 | 13.05 | 0.046 | 0.078 | 0.0085 |
+
+Killed at 08:25:11Z by SIGTERM to the launcher's process group at step 42 of 160,
+under §19.2/§20.2's rule; the GPU came back at 3 MiB and the watcher took its
+final sweep (exit 0), so the arm's 42 steps and its read at 40 are on this
+machine. **`forkcf4b_D_s0_gb` launched 08:25:27Z**, MD5 matched, banner verified:
+seed 0, **cell D `{'mine_cost': False}`** — the price off, which is what makes it
+the control — `fork_cf_g6`, 1 fork per episode, cap 0.3, mass guard 0.3, 4B @
+`cdbee75f`, no dose line. Box 1 was idle for sixteen seconds.
+
+### 21.2 The read does not weaken the kill, and the reason is on the record already
+
+**At step 40 the −50 arm is the healthiest of the three dose arms**: wall bumps
+0.008 against the reference's 0.046, solve within 0.039 of it, and a mine ratio
+of 0.982 that has not moved at all. Taken alone that looks like an arm worth
+running, and killing it looks like discarding the one dose arm that was behaving.
+
+It is not, and §20.2's rule was registered before this read for exactly this
+reason. **`_s1_p30` at 40 was healthier still** — solve 0.914, wall bumps 0.004,
+ratio 1.051 — and it ended RANDOMISED at 160 with solve 0.266 and 73 % of
+episodes capped. A healthy read at 40 is the precedent for collapse at 160, not
+evidence against it, and this batch has that precedent twice. Nothing at step 40
+distinguishes an arm that will hold from one that will fall apart.
+
+What the read does add is that **the destruction is not monotonic in the dose at
+a fixed step**: −50 at 40 is cleaner than −30 seed 0 at 40 (wall bumps 0.008
+against 0.211). Seed dominates dose over the first forty steps, which is one more
+reason the dose ladder was never going to be read off early reads, and it is
+recorded here rather than used.
+
+### 21.3 The state of the question
+
+The dose is closed at −10, −30 and −50 (§20.2), and what it installs at the doses
+that do move the rate is timidity (§20.3). What has NOT been shown is that the
+fork counterfactual can move mine avoidance at all on a healthy policy: every
+undosed arm — `_g10` for 157 steps, `_f2` seed 0 through its read at 120 (ratio
+0.864, solve 0.891, wall bumps 0.018) — holds its competence and does not move
+the rate. §17.3's collapse hypothesis remains the leading account and remains
+unconfirmable from any trace on disk; the diagnostic that would settle it is
+built and in its second critic pass, and goes to box 3 at ≈ 09:05Z if it passes.

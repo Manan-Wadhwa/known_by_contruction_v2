@@ -1,0 +1,12 @@
+launched 2026-09-10T08:25:27Z
+/usr/local/lib/python3.13/site-packages/huggingface_hub/constants.py:298: FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead to enable high performance transfer with Xet. Visit https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables#hfxethighperformance for more details.
+  warnings.warn(
+[08:25:33] MZ01 R2 EXPLORE TRIAL: Qwen/Qwen3-4B-Instruct-2507 @ cdbee75f17c01a7cc42f958dc650907174af0554; seed 0; cell D; arms ['fork_cf_g6']; 160 steps x 4 mazes x 6 episodes; n=9; fmt=ascii
+[08:25:33]   out /marimo/repo/experiments/v2/MZ01_maze_world/results/forkcf4b_D_s0_gb; warm start /marimo/repo/experiments/v2/MZ01_maze_world/results/orgb_4b/warm_start.pt; navigator /marimo/repo/experiments/v2/MZ01_maze_world/results/navigator/nav_nav48_4b.pt sha dc58d78a0e2b
+[08:25:33]   action space CLOSED at training time and OPEN at eval; move_mass_coef 0.3; mid-arm held-out reads at [40, 80, 120] of 160
+[08:25:33]   return: an unsolved episode is charged SCORE_STEP x cap (D33)
+[08:25:33]   credit: episode  -- every decision of an episode carries that episode's whole return advantage
+[08:25:33]   projected 5h12m30s at this trial's own measured 37 s/step (GROUP=6), scaling linearly in the group, with 5 held-out measurements at 128 mazes and every pre-flight -- an ESTIMATE, and an OPTIMISTIC one: an arm that stops solving runs up to TWICE the decisions per step (the episode cap is 2x the shortest path), which on cell A under 20 % epsilon or T=2.0 is the likely case, so read 7h01m52s as the padded line. Every arm records its own seconds_per_step
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights: 100%|██████████| 398/398 [00:00<00:00, 5140.58it/s]
+[08:25:35] model resident; chat_kwargs {} (plain)
+[08:25:35] warm start loaded (144 tensors); every arm restores exactly these bytes before its first step
