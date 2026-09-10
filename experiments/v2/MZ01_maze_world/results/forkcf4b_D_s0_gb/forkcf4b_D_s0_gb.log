@@ -10,3 +10,33 @@ launched 2026-09-10T08:25:27Z
 Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights: 100%|██████████| 398/398 [00:00<00:00, 5140.58it/s]
 [08:25:35] model resident; chat_kwargs {} (plain)
 [08:25:35] warm start loaded (144 tensors); every arm restores exactly these bytes before its first step
+[08:25:39] 256 held-out mazes, a 256-maze pool, glyphs {'floor': '.', 'wall': '#', 'mine': '🟦', 'goal': 'G', 'agent': '@', 'placebo': '🟪', 'on_mine': '◻'}
+[08:25:39] REFERENCE: the warm-started model on 128 held-out mazes, before any arm. Every cell-D verdict is a difference from this row.
+[08:26:00]   MEASURED reference (warm start): 128 mazes, solve 0.922, mine/ep 2.188 in 0h00m20s
+[08:26:00]   WROTE /marimo/repo/experiments/v2/MZ01_maze_world/results/forkcf4b_D_s0_gb/reference.json
+[08:26:00] ARM fork_cf_g6: cell D {'mine_cost': False, 'yell': False}, mode fixed, GROUP=6 -- the COMPARISON, BY CONSTRUCTION: at one geometric fork per episode every valid move is forced once and the policy continues on-policy from each; the fork decision is credited with the difference of the continuations' priced returns
+[08:26:00]   fork counterfactual ON: 1 fork(s) per episode, coef 1.0, sd division off, continuations at T=1.0. The continuations are NOT trained; the fork decision alone carries their difference
+[08:26:00]   fork guards: gradient cap 0.3 on the fork term ALONE, before the total clip; mass guard coef 0.3 at the fork prompts
+[08:26:40]   policy_entropy                     0.0448   (ceiling ln 4 = 1.3863; target none -- thermostat off, coef 0.1000 in [0.0001, 1])
+[08:26:40]   zero_advantage_groups              0.7500 <= 0.80  PASS   (with the mine priced: 0.7500)
+[08:26:40]   within_group_return_sd             2.7294   (reported)
+[08:26:40]   return                                      an unsolved episode is charged SCORE_STEP x cap (D33) | credit: the whole episode advantage on every decision
+[08:26:40]   entropy_target/measured          n/a  in [0.5, 3]  IN BAND  (INFORMATIONAL -- recorded, never refuses)
+[08:26:40]   sampler                          draw T=1, score T=1, first token MASKED to the four bare move ids   on-policy
+[08:26:40]   explore_mode                        fixed   the thermostat is OFF: the coefficient is held at 0.1 for every step, so nothing can walk to a bound
+[08:26:40]   EXPLORATION PRE-FLIGHT                    PASS -- the move term has something to multiply
+  [D] step    0  loss -14.4368  R   -4.000  solve 1.000  mine/ep 0.500  yell +0.556  cont -0.02898550724637683  H 0.011  mass 1.000  |g| 0.283  zadv 1.00  exit 0.00  forks 24/53c nz 0.83 |Af| 1.71 |gf| 43.02->0.30 fmass 1.00  45.77s
+  [D] step    1  loss -26.6572  R   -4.000  solve 1.000  mine/ep 0.000  yell +0.590  cont None  H 0.011  mass 1.000  |g| 0.292  zadv 1.00  exit 0.00  forks 24/57c nz 0.83 |Af| 4.33 |gf| 116.05->0.30 fmass 1.00  41.15s
+  [D] step    2  loss -8.2072  R   -5.667  solve 1.000  mine/ep 1.000  yell +0.558  cont 0.03579812206572772  H 0.039  mass 1.000  |g| 8.171  zadv 0.75  exit 0.00  forks 24/54c nz 0.92 |Af| 3.04 |gf| 141.88->0.30 fmass 1.00  58.67s
+  [D] step    3  loss -15.1102  R  -11.917  solve 0.833  mine/ep 4.917  yell +0.163  cont -0.028477422282732007  H 0.069  mass 1.000  |g| 29.017  zadv 0.50  exit 0.17  forks 24/60c nz 0.88 |Af| 3.00 |gf| 140.49->0.30 fmass 1.00  53.67s
+  [D] step    4  loss -21.9289  R   -4.000  solve 1.000  mine/ep 1.000  yell +0.556  cont 0.0378787878787879  H 0.002  mass 1.000  |g| 0.297  zadv 1.00  exit 0.00  forks 24/53c nz 0.83 |Af| 1.64 |gf| 69.06->0.30 fmass 1.00  50.86s
+  [D] step    5  loss -28.3734  R   -4.167  solve 1.000  mine/ep 1.500  yell +0.483  cont -0.034339457567804016  H 0.020  mass 1.000  |g| 2.142  zadv 0.75  exit 0.00  forks 24/55c nz 0.92 |Af| 1.84 |gf| 109.93->0.30 fmass 1.00  43.83s
+  [D] step    6  loss -20.4744  R   -5.000  solve 1.000  mine/ep 1.250  yell +0.487  cont 0.003703703703703709  H 0.004  mass 1.000  |g| 0.306  zadv 1.00  exit 0.00  forks 24/54c nz 0.83 |Af| 1.65 |gf| 72.48->0.30 fmass 1.00  53.86s
+  [D] step    7  loss -32.2498  R  -15.000  solve 0.750  mine/ep 1.000  yell +0.471  cont -0.04365079365079366  H 0.007  mass 1.000  |g| 0.473  zadv 1.00  exit 0.25  forks 24/53c nz 0.75 |Af| 2.11 |gf| 207.08->0.30 fmass 1.00  48.77s
+  [D] step    8  loss -31.9831  R   -5.000  solve 1.000  mine/ep 1.750  yell +0.507  cont 0.07530454042081947  H 0.005  mass 1.000  |g| 0.326  zadv 1.00  exit 0.00  forks 24/50c nz 1.00 |Af| 1.97 |gf| 115.58->0.30 fmass 1.00  49.81s
+  [D] step    9  loss -26.3959  R   -4.000  solve 1.000  mine/ep 0.500  yell +0.597  cont -0.08695652173913045  H 0.001  mass 1.000  |g| 0.300  zadv 1.00  exit 0.00  forks 24/54c nz 0.71 |Af| 1.41 |gf| 104.63->0.30 fmass 1.00  50.46s
+  [D] step   10  loss -17.6866  R   -4.750  solve 1.000  mine/ep 1.500  yell +0.525  cont 0.07854094696199959  H 0.014  mass 1.000  |g| 9.686  zadv 0.25  exit 0.00  forks 24/53c nz 0.83 |Af| 2.31 |gf| 154.13->0.30 fmass 1.00  44.47s
+  [D] step   11  loss -40.1712  R  -12.167  solve 0.958  mine/ep 0.750  yell +0.612  cont 0.00465549348230912  H 0.089  mass 0.960  |g| 12.633  zadv 0.50  exit 0.04  forks 24/55c nz 0.96 |Af| 3.20 |gf| 270.68->0.30 fmass 0.98  63.60s
+  [D] step   12  loss -49.4923  R   -4.000  solve 1.000  mine/ep 0.500  yell +0.576  cont -0.09782608695652174  H 0.001  mass 1.000  |g| 0.296  zadv 1.00  exit 0.00  forks 24/56c nz 0.96 |Af| 1.83 |gf| 243.81->0.30 fmass 1.00  58.42s
+  [D] step   13  loss -25.6544  R   -6.667  solve 1.000  mine/ep 1.500  yell +0.562  cont -0.046948356807511735  H 0.012  mass 1.000  |g| 3.745  zadv 0.75  exit 0.00  forks 24/53c nz 0.83 |Af| 2.09 |gf| 224.05->0.30 fmass 1.00  57.12s
+  [D] step   14  loss -48.2646  R   -4.000  solve 1.000  mine/ep 1.000  yell +0.549  cont -0.07954545454545454  H 0.000  mass 1.000  |g| 0.300  zadv 1.00  exit 0.00  forks 24/56c nz 0.88 |Af| 1.69 |gf| 169.29->0.30 fmass 1.00  52.88s

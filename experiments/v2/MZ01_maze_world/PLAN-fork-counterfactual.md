@@ -1212,3 +1212,94 @@ undosed arm — `_g10` for 157 steps, `_f2` seed 0 through its read at 120 (rati
 the rate. §17.3's collapse hypothesis remains the leading account and remains
 unconfirmable from any trace on disk; the diagnostic that would settle it is
 built and in its second critic pass, and goes to box 3 at ≈ 09:05Z if it passes.
+
+## 22. The §17.5 diagnostic passes its critic; `forkcf4b_A_s0_gd` pre-registered for box 3 (2026-09-10 08:35Z / 14:05 IST)
+
+### 22.1 The build and its two critic passes
+
+Built by an Opus subagent in an isolated worktree (`c4d4ba7`), critic-reviewed
+by a second, revised (`f8c1fb5`), re-checked, **APPROVED**. What it records, per
+step, in `history`, from the fork prompts the fork term is already taken at:
+
+| field | what it is |
+| --- | --- |
+| `fork_p_target_before` | mean probability the policy gives the move the fork term pushes hardest toward (greatest advantage at that fork), BEFORE the optimiser step |
+| `fork_p_target_after` | the same probability at the same prompts, AFTER the step |
+| `fork_p_target_delta` | mean signed change |
+| `fork_p_target_absdelta` | mean **magnitude** of the change |
+| `fork_p_taken_before` | the same before-probability for the move the episode actually took |
+| `fork_p_n_scored` | forks the means were taken over |
+| `fork_probe_seconds` | what the extra forward pass cost |
+
+**The critic changed the build in two ways that matter, and both were right.**
+The first version recorded only the signed `fork_p_target_delta`, which with a
+shared denominator is algebraically `after − before` and **cancels**: twelve forks
+moving +0.01 toward their pushed move and twelve moving −0.01 read out as
+`+0.000000`. §17.3's hypothesis is "a capped step cannot move the decision" and
+§17.4/§17.5 make the next arm conditional on it, so a cancelling mean would have
+been a **false confirmation of the hypothesis the diagnostic exists to test**.
+`fork_p_target_absdelta` is the fix, and it bounds the per-fork maximum at
+`n_scored × mean|δ|`. The second: tied forks (≈ 10.6 % of forks, from
+`fork_share_nonzero` 0.894 on `_g10`) were being scored at an arbitrary
+first-in-`MOVE_WORDS` move, which on a collapsed policy would dilute a reported
+0.069 to a real 0.03. Ties are now dropped from numerator and denominator and
+counted, so the population is exactly `fork_share_nonzero`'s.
+
+**No new switch** (§3 unchanged, §7 satisfied): the probe is always on with the
+fork term, costs ~1 % of a step on a toy fixture and ~0.23 % projected on the 4B
+arm, and now records its own cost. **Byte-identity holds**: two clones, separate
+processes, fork off and fork on — adapter sha equal both ways, every pre-existing
+trace field equal, the only differences being the seven new keys and one prose
+sentence in `config.fork.mine_information`. **The construction test holds**:
+`_fork_decision_probs` takes `(mlogp, rows)` and no maze, so it cannot reach a
+mine accessor, and a test blinds `is_mine`/`mines`/`at`/`rows` on the maze class
+and asserts the diagnostic still computes.
+
+**What is NOT demonstrated**, and the record should carry it: the suite was run
+under torch 2.14.0+cpu / numpy 2.4.6 / Python 3.11.15, not the pinned
+2.13.0+cpu / 2.5.2 / 3.14.7 (`requirements-local.txt`), because this container
+cannot install the pins. 4 tests fail there and failed identically at the parent
+commit — the hard-coded bit-identity tests, on last-ulp floats, exactly the case
+their own comments name. **Nobody has seen those four pass**, in this session or
+the build's. 289 pass, including the five new ones.
+
+### 22.2 `forkcf4b_A_s0_gd`, for box 3 at ≈ 09:05Z
+
+The diagnostic is always-on, so the arm that carries it is **the recipe of
+record, unchanged, with nothing else moved**: cell A, seed 0, `fork_cf_g6`, 4B @
+`cdbee75f`, `MZ01_FORK_COEF` 1.0, `MZ01_FORK_GRAD_MAX` 0.3,
+`MZ01_MOVE_MASS_COEF` 0.3, one fork per episode, no dose, 160 steps, reads
+40/80/120/160. It is `forkcf4b_A_s0_g` re-run with instruments — `_gd` for
+"guarded, diagnosed" — which is what makes its numbers comparable to §11's and
+§13.1's directly.
+
+**What it is read for, fixed now.** Not a verdict on avoidance: its held-out
+reads take the standing bars (§6, §8.4, §9, §17.4's two adds) and are expected to
+read ALIVE like every other undosed arm. Its **purpose** is `fork_p_target_*`:
+
+* **`fork_p_target_absdelta` at or below ~1e-4 per step, with
+  `fork_p_target_before` far from the pushed move**, confirms §17.3: the capped
+  step cannot move a decision the policy holds at >0.999, and the collapse is the
+  binding constraint. The lever that follows is `MZ01_ENTROPY_COEF` (§17.5 item
+  2, `docs/research/APPROACHES.md` §B #6), pre-registered then with its own
+  cell-D partner.
+* **`fork_p_target_absdelta` large while `fork_p_target_delta` is near zero**
+  says the steps move decisions and cancel across forks — a credit-assignment
+  problem, not a step-size one, and the catalogue's #2 (fork-anchored baseline)
+  and #4 (the std normaliser) are what address it (§15.3 item 3).
+* **`fork_p_target_after` rising steadily above `before` while the held-out rate
+  does not move** says the fork term IS teaching the fork decisions and they do
+  not generalise to the held-out mazes, which is a different failure from either
+  and would send the next design at the 0.023 coverage, not at the optimiser.
+
+That is three named outcomes with a different next arm behind each, written
+before the arm runs.
+
+**Sequencing.** Box 3's `_f2` seed 0 must finish first (≈ 09:05Z) — it is now the
+only undosed arm that will reach a held-out final at 160 (§20.4), and it replaces
+`_g10` as §19.2's control. The build is then merged to
+`claude/practical-lovelace-mserhe`, box 3's code synced to that HEAD, the MD5
+gate checked, and `_gd` launched. The code sync waits for `_f2` to end: a running
+trial has already imported its modules and would not change behaviour, but
+rewriting the files under a live arm muddles which code its `CALIBRATION_GIT_SHA`
+names, and there is no reason to accept that for twenty minutes' head start.
