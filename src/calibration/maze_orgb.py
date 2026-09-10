@@ -2103,18 +2103,34 @@ FORK_TRACE_FIELDS = ("n_forks", "n_continuations", "fork_adv_abs_mean",
                      "fork_grad_norm_raw", "fork_grad_norm", "fork_mass_mean",
                      # EIGHTEENTH PASS, 2026-09-10 (PLAN section 17.3 / 17.5
                      # item 1). THE FORK DECISION'S OWN PROBABILITY, which
-                     # nothing on disk recorded: the mean over the step's forks
-                     # of pi(the move the fork term pushes hardest toward | the
-                     # fork prompt) BEFORE the optimiser step and AFTER it, the
-                     # mean of the per-fork difference, and the same
-                     # before-probability for the move the episode actually
-                     # took. Section 17.3 hypothesises that the advantage is
-                     # correct and cannot move a policy at 0.001-0.005 nats
-                     # under a step capped at norm 0.3; these four are what
-                     # confirm or refute it from a trace. DIAGNOSTICS ONLY --
-                     # nothing reads them back (see `_fork_decision_probs`).
+                     # nothing on disk recorded: the mean over the step's SCORED
+                     # forks of pi(the move the fork term pushes hardest toward
+                     # | the fork prompt) BEFORE the optimiser step and AFTER
+                     # it, the per-fork difference as a SIGNED mean and as a
+                     # MAGNITUDE, the same before-probability for the move the
+                     # episode actually took, how many forks the means are over,
+                     # and what the extra forward pass cost. Section 17.3
+                     # hypothesises that the advantage is correct and cannot
+                     # move a policy at 0.001-0.005 nats under a step capped at
+                     # norm 0.3; these are what confirm or refute it from a
+                     # trace.
+                     #
+                     # THE SIGNED MEAN CANCELS AND THE MAGNITUDE DOES NOT
+                     # (critic, 2026-09-10): the step's ~24 forks share one set
+                     # of LoRA weights, so twelve moving +0.01 toward their
+                     # pushed move and twelve moving -0.01 read out as
+                     # +0.000000 -- which is exactly the number section 17.3's
+                     # hypothesis predicts, and would be a FALSE confirmation
+                     # that launched the next arm. `fork_p_target_absdelta` is
+                     # the number that cannot be faked that way, and the two are
+                     # read together or not at all.
+                     #
+                     # DIAGNOSTICS ONLY -- nothing reads them back (see
+                     # `_fork_decision_probs`).
                      "fork_p_target_before", "fork_p_target_after",
-                     "fork_p_target_delta", "fork_p_taken_before")
+                     "fork_p_target_delta", "fork_p_target_absdelta",
+                     "fork_p_taken_before", "fork_p_n_scored",
+                     "fork_probe_seconds")
 
 # SIXTEENTH PASS, 2026-09-10 (BUILD-fork-guards-2026-09-10.md). The default cap
 # on the FORK TERM'S OWN gradient norm, applied before it is added to the
@@ -2552,24 +2568,38 @@ def _fork_decision_probs(mlogp, rows):
     0.001-0.005 under a step capped at norm 0.3; measured before and after the
     optimiser step, these say whether a capped step moves the decision at all.
 
-    TWO CONVENTIONS, both stated rather than assumed:
+    A TIED FORK IS NOT SCORED, and this is load-bearing (critic, 2026-09-10). A
+    fork whose continuations all returned the same number has advantages of
+    exactly zero: the term pushes NOWHERE there, so "the move it is pushing
+    hardest toward" does not exist and an argmax over four zeros would record an
+    arbitrary first-in-`MOVE_WORDS` move and count it in the denominator. Both
+    entries are `None` at such a fork and the caller leaves it out of every
+    mean. THE TEST IS THE ONE `fork_terms` ALREADY MAKES -- the continuations'
+    return spread against `FORK_ADVANTAGE_TOL`, which is `fork_share_nonzero`'s
+    own test -- so the forks these means are over are exactly the forks that
+    share counts, and the trace records their number (`fork_p_n_scored`)
+    rather than leaving a reader to reconstruct it. On the 09-10 arms
+    `fork_share_nonzero` is 0.87-0.91, so this is about one fork in ten and,
+    on a collapsed policy where the first valid move is the argmax about
+    1/2.37 of the time, scoring them could have halved the reported number.
 
-      * TIES GO TO THE FIRST MOVE. `max` over the advantages is taken at the
-        first index that attains it, in `moves` order (which is `MOVE_WORDS`
-        order, `_launch_continuations`), so a fork whose continuations all
-        scored the same -- pushed nowhere -- still contributes its first move's
-        probability and is counted in the denominator, the same convention
-        `fork_share_nonzero` counts such a fork in ITS denominator.
-      * `p_taken` IS None WHERE THE TAKEN MOVE IS NOT ONE OF THE FORK'S OWN
-        MOVES -- an episode that bumped a wall or stepped back at its fork has
-        no counterpart in the comparison, and is left out of that mean's
-        denominator rather than scored against a move the term never compared.
-        The same denominator `fork_share_detour_better` uses.
+    `p_taken` IS ALSO None WHERE THE TAKEN MOVE IS NOT ONE OF THE FORK'S OWN
+    MOVES -- an episode that bumped a wall or stepped back at its fork has no
+    counterpart in the comparison, and is left out of that mean's denominator
+    rather than scored against a move the term never compared. The same
+    denominator `fork_share_detour_better` uses.
+
+    TIES AMONG THE ADVANTAGES OF A SCORED FORK go to the first move in `moves`
+    order (which is `MOVE_WORDS` order, `_launch_continuations`). At a fork
+    whose returns are not all equal, two moves can still share the maximum;
+    either is "the move the term pushes hardest toward" and the choice is
+    deterministic.
 
     THE CONSTRUCTION TEST (PLAN section 1): this reads the POLICY (`mlogp`, off
-    the fork prompt) and the ADVANTAGES (already built from the priced returns)
-    and NOTHING ELSE. No maze, no landing, no mine accessor and no label is in
-    scope here -- `tests/test_maze_orgb.py::
+    the fork prompt) and the fork row's own `returns`, `advantages`, `moves` and
+    `taken` -- all of which were built from the priced returns and the
+    geometry -- and NOTHING ELSE. No maze, no landing, no mine accessor and no
+    label is in scope here; `tests/test_maze_orgb.py::
     test_the_fork_probability_diagnostic_never_reads_the_mines` runs it with
     every mine accessor on the maze class raising.
 
@@ -2582,7 +2612,12 @@ def _fork_decision_probs(mlogp, rows):
     for i, r in enumerate(rows):
         adv = list(r["advantages"])
         moves = list(r["moves"])
-        j = max(range(len(adv)), key=adv.__getitem__) if adv else 0
+        rets = list(r.get("returns") or [])
+        # THE TIE TEST, character for character `fork_terms`' own.
+        if not adv or not rets or (max(rets) - min(rets)) <= FORK_ADVANTAGE_TOL:
+            out.append((None, None))
+            continue
+        j = max(range(len(adv)), key=adv.__getitem__)
         target = float(probs[i, MOVE_WORDS.index(moves[j])])
         taken = r.get("taken")
         p_taken = (float(probs[i, MOVE_WORDS.index(taken)])
@@ -3150,28 +3185,44 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     0.001-0.005 by step 40 on every arm, so the move distribution is a point
     mass, and the fork gradient is capped at norm 0.3. Nothing on disk recorded
     the fork DECISION's own probability, so the hypothesis could be neither
-    confirmed nor refuted from a trace. These four make it measurable, per step:
+    confirmed nor refuted from a trace. These make it measurable, per step, over
+    the step's SCORED forks -- the ones whose continuations did not all return
+    the same number, which is `fork_share_nonzero`'s own population. A TIED FORK
+    IS NOT SCORED: the term pushes nowhere there, so "the move it pushes hardest
+    toward" does not exist and an argmax over four zeros would record an
+    arbitrary move (critic, 2026-09-10; about one fork in ten on the 09-10
+    arms).
 
-      * `fork_p_target_before` -- the mean over the step's forks of the
+      * `fork_p_target_before` -- the mean over the scored forks of the
         probability the policy assigns AT THE FORK PROMPT to the move the fork
         term is pushing hardest toward (the greatest A(a) at that fork), read
         BEFORE the optimiser step, off the very `mlogp` the fork gradient is
         taken at;
       * `fork_p_target_after` -- the same probability at the same prompts and in
         the same chunks, AFTER the optimiser step (one extra forward pass);
-      * `fork_p_target_delta` -- the mean of (after - before) PER FORK, which is
-        the number that says whether a capped step moves the decision at all;
+      * `fork_p_target_delta` -- the SIGNED mean of (after - before) per fork.
+        It is what section 17.3's hypothesis is about and it CANCELS: the step's
+        ~24 forks share one set of LoRA weights, so twelve moving +0.01 and
+        twelve moving -0.01 read out as +0.000000 -- the same number a policy
+        that cannot move at all would print. Never read alone;
+      * `fork_p_target_absdelta` -- the mean of |after - before| per fork, the
+        magnitude that cannot cancel. THE TWO TOGETHER separate "the step moved
+        nothing" from "the step moved the forks against each other";
       * `fork_p_taken_before` -- the same before-probability for the move the
         episode ACTUALLY TOOK at the fork, so "the term pushed away from what it
         did" is separable from "the term pushed toward what it already did".
-        None where no fork's taken move was one of its own compared moves.
+        None where no scored fork's taken move was one of its compared moves;
+      * `fork_p_n_scored` -- how many forks the means are over, counted rather
+        than restated (the tied ones are `n_forks - fork_p_n_scored`);
+      * `fork_probe_seconds` -- what the extra forward pass cost, on its own
+        clock, so the one always-on cost this adds is a number in its own trace.
 
     NO SWITCH: the cost is one forward pass over the step's ~24 fork prompts
-    against ~27 s of continuation sampling, and a diagnostic that is off on the
-    arms that ran answers nothing. THEY ARE DIAGNOSTICS: no loss, advantage,
-    verdict or read touches them, and the "after" pass runs under `no_grad`, in
-    the `eval` mode the whole loop is held in, so it draws NO random number and
-    every arm's seed reproducibility is what it was.
+    (three chunks of 8) against ~29 s of continuation sampling, and a diagnostic
+    that is off on the arms that ran answers nothing. THEY ARE DIAGNOSTICS: no
+    loss, advantage, verdict or read touches them, and the "after" pass runs
+    under `no_grad`, in the `eval` mode the whole loop is held in, so it draws NO
+    random number and every arm's seed reproducibility is what it was.
 
     OFF IS OFF. With `fork_cf=False` nothing above runs, no random number is
     drawn for it, the trace gains no field and the loss is the fourteenth pass's
@@ -3905,18 +3956,24 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             # nor the global torch/python/numpy streams -- so every arm's seed
             # reproducibility is exactly what it was.
             # `test_the_fork_probability_probe_draws_no_random_number` asserts
-            # it on all four streams rather than arguing it.
+            # it on python, numpy, torch and the generator rather than arguing
+            # it.
             #
             # NO SWITCH, deliberately: at ~24 forks a step this is one forward
-            # over one or two chunks -- a fraction of a second against the ~27 s
-            # of continuation sampling and the three chunked forward+backward
-            # passes the fork term already pays every step -- and a diagnostic
-            # that is off on the arms that ran is a diagnostic that answers
-            # nothing. It costs nothing when the fork term is off, because the
-            # whole block is inside `if fork_cf`.
-            fork_p_t_before = fork_p_t_after = None
-            fork_p_t_delta = fork_p_taken_before = None
+            # over three chunks of 8 -- a fraction of a second against the ~29 s
+            # of continuation sampling and the chunked forward+backward passes
+            # the fork term already pays every step -- and a diagnostic that is
+            # off on the arms that ran is a diagnostic that answers nothing. It
+            # is timed on its own clock (`fork_probe_seconds`, critic
+            # 2026-09-10) rather than folded into `t_rescore`, so the one cost
+            # this build adds is a number in its own trace and `rescore_seconds`
+            # keeps meaning what it means on every earlier arm. It costs nothing
+            # when the fork term is off: the whole block is inside `if fork_cf`.
+            fork_p_t_before = fork_p_t_after = fork_p_t_delta = None
+            fork_p_t_absdelta = fork_p_taken_before = None
+            fork_p_n_scored = t_probe = None
             if fork_cf and fork_rows:
+                t_p0 = time.perf_counter()
                 fork_p_after = []
                 with torch.no_grad():
                     for lo in range(0, len(fork_rows), chunk_size):
@@ -3927,17 +3984,34 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                             cols=cols, device=device)
                         fork_p_after.extend(
                             _fork_decision_probs(mlogp_after, part))
-                b_t = [b for b, _tk in fork_p_before]
-                a_t = [a for a, _tk in fork_p_after]
+                # THE SCORED FORKS ONLY -- the ones whose continuations did not
+                # all return the same number, which is `fork_share_nonzero`'s
+                # own population. A tied fork pushes nowhere and both halves of
+                # its pair are None (`_fork_decision_probs`), so it is dropped
+                # HERE, from the numerator and the denominator alike, rather
+                # than diluting the means with an arbitrary move's probability.
+                pairs = [(b, a) for (b, _tb), (a, _ta)
+                         in zip(fork_p_before, fork_p_after) if b is not None]
                 taken_b = [tk for _b, tk in fork_p_before if tk is not None]
-                fork_p_t_before = sum(b_t) / len(b_t)
-                fork_p_t_after = sum(a_t) / len(a_t)
-                # THE PAIRED difference -- the mean over forks of (after -
-                # before), which is the number that says whether a capped step
-                # moves the decision at all.
-                fork_p_t_delta = sum(a - b for a, b in zip(a_t, b_t)) / len(b_t)
+                fork_p_n_scored = len(pairs)
+                if pairs:
+                    fork_p_t_before = sum(b for b, _a in pairs) / len(pairs)
+                    fork_p_t_after = sum(a for _b, a in pairs) / len(pairs)
+                    # THE PAIRED DIFFERENCE, twice. The SIGNED mean is what
+                    # section 17.3's hypothesis is about; it is also, at one
+                    # denominator, exactly `after - before`, and it CANCELS --
+                    # the forks share one set of weights, so equal and opposite
+                    # movements read as zero, which is the hypothesis's own
+                    # prediction. The MAGNITUDE cannot be faked that way, and
+                    # the two are read together or not at all (critic).
+                    fork_p_t_delta = sum(a - b for b, a in pairs) / len(pairs)
+                    fork_p_t_absdelta = (sum(abs(a - b) for b, a in pairs)
+                                         / len(pairs))
                 fork_p_taken_before = ((sum(taken_b) / len(taken_b))
                                        if taken_b else None)
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                t_probe = time.perf_counter() - t_p0
 
             if device.type == "cuda":
                 torch.cuda.synchronize()
@@ -4036,13 +4110,29 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 # statement about these four numbers and about nothing else in
                 # the trace. Appended HERE, in the same `if fork_cf` block and
                 # once per step like every other fork field, so every array in
-                # the trace stays index-aligned with `step`. All four are None
-                # on a step with no fork; `fork_p_taken_before` is None also
-                # when no fork's taken move was one of its own compared moves.
+                # the trace stays index-aligned with `step`. The probabilities
+                # are None on a step with no fork and on a step whose every fork
+                # tied; `fork_p_taken_before` is None also when no scored fork's
+                # taken move was one of its own compared moves.
+                #
+                # `fork_p_target_absdelta` IS READ BESIDE THE SIGNED DELTA, not
+                # instead of it: the signed mean cancels across the step's forks
+                # and the magnitude does not, and section 17.3's hypothesis
+                # predicts a zero that both a dead policy and a cancelling one
+                # would produce (critic, 2026-09-10).
                 history["fork_p_target_before"].append(fork_p_t_before)
                 history["fork_p_target_after"].append(fork_p_t_after)
                 history["fork_p_target_delta"].append(fork_p_t_delta)
+                history["fork_p_target_absdelta"].append(fork_p_t_absdelta)
                 history["fork_p_taken_before"].append(fork_p_taken_before)
+                # COUNTED, not restated: how many of the step's forks the four
+                # means are over. It is `fork_share_nonzero * n_forks` by
+                # construction (one tie test, made in two places), and it is
+                # recorded as an integer so the tied population -- `n_forks -
+                # fork_p_n_scored` -- is separable without arithmetic on a
+                # share. And what the extra forward pass cost, on its own clock.
+                history["fork_p_n_scored"].append(fork_p_n_scored)
+                history["fork_probe_seconds"].append(t_probe)
             # TWELFTH PASS. BY ID, off the tokens that were actually sampled --
             # a decision that generated nothing at all counts as `other`, so the
             # four shares sum to 1 over the step's decisions and a drift reads
@@ -4165,13 +4255,21 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                            f" fmass {_fmt_share(history['fork_mass_mean'][-1])}"
                          # Eighteenth pass: the fork DECISION's own probability
                          # across the step just taken -- pi(the pushed move)
-                         # before -> after, the paired change, and pi(the move
-                         # the episode took). PLAN section 17.3 is a claim about
-                         # exactly this line.
+                         # before -> after over the SCORED forks, the paired
+                         # change as a signed mean AND as a magnitude (the
+                         # signed one cancels), and pi(the move the episode
+                         # took). PLAN section 17.3 is a claim about this line.
                          + f" pi* {_fmt_prob(history['fork_p_target_before'][-1])}"
                            f"->{_fmt_prob(history['fork_p_target_after'][-1])}"
                            f" d {_fmt_prob(history['fork_p_target_delta'][-1], sign=True)}"
+                           f" |d| {_fmt_prob(history['fork_p_target_absdelta'][-1])}"
                            f" pi_taken {_fmt_prob(history['fork_p_taken_before'][-1])}"
+                           # A COUNT, so `n/a` and not `0.00` on a step with no
+                           # fork at all -- the two are different things.
+                           + " on %s" % ("n/a"
+                                         if history['fork_p_n_scored'][-1]
+                                         is None else
+                                         f"{history['fork_p_n_scored'][-1]:d}")
                          if fork_cf else "")
                       + f"  {elapsed:.2f}s", flush=True)
             # AT THE STEP BOUNDARY, after the optimiser step and after the

@@ -186,19 +186,24 @@ Environment:
                      EIGHTEENTH PASS, 2026-09-10: NO SWITCH WAS ADDED for the
                      fork-probability diagnostic (PLAN section 17.3 / 17.5 item
                      1). With MZ01_FORK_CF on, the trace now also carries, per
-                     step, `fork_p_target_before` / `fork_p_target_after` /
-                     `fork_p_target_delta` -- the mean probability the policy
-                     puts at the fork prompts on the move the fork term pushes
-                     hardest toward, before and after the optimiser step and the
-                     paired change -- and `fork_p_taken_before`, the same
-                     before-probability for the move the episode actually took.
-                     They cost one extra forward pass at the fork prompts per
-                     step (against the ~27 s the continuations cost), they draw
-                     no random number, and nothing reads them back: they are
-                     what makes section 17.3's hypothesis -- a correct advantage
-                     applied to a policy that has stopped moving -- readable off
-                     a trace. With MZ01_FORK_CF off they do not exist.
-                     (BUILD-fork-probability-2026-09-10.md.)
+                     step, `fork_p_target_before` / `fork_p_target_after` --
+                     the mean probability the policy puts at the fork prompts on
+                     the move the fork term pushes hardest toward, before and
+                     after the optimiser step -- `fork_p_target_delta` (the
+                     signed per-fork change, which CANCELS across the step's
+                     forks) beside `fork_p_target_absdelta` (its magnitude,
+                     which does not: read the two together or neither),
+                     `fork_p_taken_before` (the same before-probability for the
+                     move the episode actually took), `fork_p_n_scored` (the
+                     forks the means are over -- tied forks push nowhere and are
+                     not scored) and `fork_probe_seconds` (what the extra
+                     forward pass cost). One extra forward pass at the fork
+                     prompts per step, against the ~29 s the continuations cost;
+                     no random number is drawn and nothing reads them back. They
+                     are what makes section 17.3's hypothesis -- a correct
+                     advantage applied to a policy that has stopped moving --
+                     readable off a trace. With MZ01_FORK_CF off they do not
+                     exist. (BUILD-fork-probability-2026-09-10.md.)
   MZ01_SCORE_MINE    SEVENTEENTH PASS, 2026-09-10. THE MINE'S TRAINING PRICE,
                      as a dose: the price a mine landing is charged in every
                      return the trainer computes -- the episodes' and the fork
@@ -1123,18 +1128,34 @@ def main():
                   if x is not None]
             pd = [x for x in hist.get("fork_p_target_delta") or []
                   if x is not None]
+            pa = [x for x in hist.get("fork_p_target_absdelta") or []
+                  if x is not None]
             pk = [x for x in hist.get("fork_p_taken_before") or []
                   if x is not None]
+            ns = [x for x in hist.get("fork_p_n_scored") or [] if x]
+            pt = [x for x in hist.get("fork_probe_seconds") or []
+                  if x is not None]
             if pb:
-                moved = (f"mean per-step change {sum(pd) / len(pd):+.6f}, "
-                         f"largest {max(pd, key=abs):+.6f}" if pd
+                # THE SIGNED MEAN AND THE MAGNITUDE, always together: the signed
+                # one cancels across a step's forks, so it alone cannot tell a
+                # policy that did not move from one whose forks moved against
+                # each other (critic, 2026-09-10).
+                moved = (f"mean per-step change {sum(pd) / len(pd):+.6f} "
+                         f"signed, {sum(pa) / len(pa):.6f} in magnitude "
+                         f"(largest {max(pa):.6f})" if pd and pa
                          else "no step measured a change")
                 say(f"  fork decision pi(pushed move) {pb[0]:.4f} -> "
                     f"{pb[-1]:.4f} over {len(pb)} steps; {moved}")
+                if ns:
+                    say(f"  ... over {sum(ns) / len(ns):.1f} scored forks a "
+                        "step (tied forks push nowhere and are not scored)")
                 if pk:
                     say(f"  fork decision pi(the move the episode took) mean "
                         f"{sum(pk) / len(pk):.4f} "
                         f"(DIAGNOSTIC, never in the update)")
+                if pt:
+                    say(f"  fork probability probe cost {sum(pt):.1f}s over the "
+                        f"arm ({sum(pt) / len(pt):.3f}s a step)")
         # ---- THE HELD-OUT READ, at the end and only at the end -------------
         # The training numbers above are on the POOL and under the arm's own
         # sampler; an epsilon arm's training `mine_step_rate` includes the mines

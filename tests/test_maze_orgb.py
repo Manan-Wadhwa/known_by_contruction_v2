@@ -6927,7 +6927,15 @@ def test_the_held_out_read_is_priced_by_the_world_and_not_by_the_dose():
 
 
 def _rng_states_equal(a, b):
-    """Two `_rng_snapshot`s, compared field by field. -> [what differs]."""
+    """Two `_rng_snapshot`s, compared field by field. -> [what differs].
+
+    EVERY key the snapshot carries, `cuda` included -- but on a CPU-only host
+    `_rng_snapshot` puts an EMPTY LIST there, so that comparison is structural
+    and is not exercised by this suite. Said out loud rather than claimed
+    (critic, 2026-09-10): what the suite actually exercises is python, numpy,
+    torch and the run's own generator, which is where this trainer's draws come
+    from (`torch.multinomial` on a CPU generator).
+    """
     bad = []
     for key in ("python", "numpy"):
         if a.get(key) != b.get(key):
@@ -6937,6 +6945,10 @@ def _rng_states_equal(a, b):
         if (x is None) != (y is None) or (x is not None
                                           and not torch.equal(x, y)):
             bad.append(key)
+    ca, cb = list(a.get("cuda") or []), list(b.get("cuda") or [])
+    if len(ca) != len(cb) or any(not torch.equal(x, y)
+                                 for x, y in zip(ca, cb)):
+        bad.append("cuda")
     return bad
 
 
@@ -6974,7 +6986,8 @@ def test_the_fork_decision_probability_is_recorded_before_and_after_the_step():
     state at each call, rather than by trusting the order of the source.
     """
     fields = ("fork_p_target_before", "fork_p_target_after",
-              "fork_p_target_delta", "fork_p_taken_before")
+              "fork_p_target_delta", "fork_p_target_absdelta",
+              "fork_p_taken_before", "fork_p_n_scored", "fork_probe_seconds")
     assert set(fields) <= set(maze_orgb.FORK_TRACE_FIELDS)
 
     off, _off_state = _exit_fixture_train()
@@ -7011,15 +7024,31 @@ def test_the_fork_decision_probability_is_recorded_before_and_after_the_step():
     for i in range(n):
         b, a = on["fork_p_target_before"][i], on["fork_p_target_after"][i]
         d, k = on["fork_p_target_delta"][i], on["fork_p_taken_before"][i]
-        if not on["n_forks"][i]:
-            assert (b, a, d, k) == (None, None, None, None)
+        ad, ns = on["fork_p_target_absdelta"][i], on["fork_p_n_scored"][i]
+        # THE DENOMINATOR IS THE SCORED FORKS -- `fork_share_nonzero`'s own
+        # population, counted here as an integer -- and it is that count and
+        # not `n_forks` that decides whether the means exist at all.
+        if on["n_forks"][i]:
+            assert ns == round(on["fork_share_nonzero"][i] * on["n_forks"][i])
+            assert on["fork_probe_seconds"][i] >= 0.0
+        else:
+            assert (ns, on["fork_probe_seconds"][i]) == (None, None)
+        if not ns:
+            assert (b, a, d, ad, k) == (None, None, None, None, None)
             continue
-        # They are PROBABILITIES -- means over the step's forks of
+        # They are PROBABILITIES -- means over the scored forks of
         # pi(a | the fork prompt) -- and the delta is the PAIRED difference,
         # which under one denominator for both is the difference of the means.
+        # THAT IDENTITY IS WHY THE MAGNITUDE EXISTS: the signed mean carries
+        # nothing the two levels lack and it cancels, so `absdelta` -- which is
+        # >= |d| by the triangle inequality, and strictly greater the moment two
+        # forks moved opposite ways -- is the number that says a step moved
+        # anything at all (critic, 2026-09-10).
         for p in (b, a):
             assert 0.0 <= p <= 1.0
         assert d == pytest.approx(a - b, abs=1e-9)
+        assert ad >= abs(d) - 1e-12
+        assert 0.0 <= ad <= 1.0
         assert k is None or 0.0 <= k <= 1.0
 
     # ---- the "after" pass: same prompts, moved weights, same mode -----------
@@ -7042,6 +7071,7 @@ def test_the_fork_decision_probability_is_recorded_before_and_after_the_step():
                for x, y in zip(before_calls, after_calls))
     assert any(d != 0.0 for d in on["fork_p_target_delta"] if d is not None), \
         "a fixture whose step never moves the decision cannot test the delta"
+    assert any(x > 0.0 for x in on["fork_p_target_absdelta"] if x is not None)
     # BOTH HALVES ARE READ IN THE SAME MODE -- the `eval` the trainer holds the
     # whole loop in -- or the pair would differ by the mode and not by the step.
     assert not any(c["training"] for c in seen)
@@ -7054,8 +7084,12 @@ def test_the_fork_decision_probability_is_recorded_before_and_after_the_step():
     print("\n  FORK DECISION PROBABILITY on the toy fixture: "
           f"pi(pushed move) {on['fork_p_target_before'][0]:.4f} -> "
           f"{on['fork_p_target_after'][0]:.4f} (delta "
-          f"{on['fork_p_target_delta'][0]:+.6f}); pi(the move taken) "
-          f"{on['fork_p_taken_before'][0]}")
+          f"{on['fork_p_target_delta'][0]:+.6f} signed, "
+          f"{on['fork_p_target_absdelta'][0]:.6f} in magnitude) over "
+          f"{on['fork_p_n_scored'][0]} scored forks; pi(the move taken) "
+          f"{on['fork_p_taken_before'][0]}; the probe cost "
+          f"{on['fork_probe_seconds'][0]:.4f}s of the step's "
+          f"{on['step_seconds'][0]:.4f}s")
 
 
 def test_the_fork_probability_diagnostic_never_reads_the_mines(monkeypatch):
@@ -7216,4 +7250,57 @@ def test_the_probability_diagnostic_is_read_by_nothing(monkeypatch):
     # returns is a tensor at all, so nothing it returns can.
     (-mlogp.sum()).backward()
     assert any(p.grad is not None for p in params)
+    remove_lora(model)
+
+
+def test_a_tied_fork_is_not_scored_by_the_probability_diagnostic():
+    """CRITIC, 2026-09-10. A FORK THAT PUSHES NOWHERE HAS NO PUSHED MOVE.
+
+    A fork whose continuations all returned the same number has advantages of
+    exactly zero: an argmax over four zeros is the first move in `MOVE_WORDS`
+    order and nothing else, so scoring it would put an arbitrary move's
+    probability into the mean and count it in the denominator. On the 09-10 arms
+    `fork_share_nonzero` runs 0.87-0.91, so about one fork in ten is tied and,
+    on a collapsed policy where the first valid move is the argmax about
+    1/2.37 of the time, scoring them could halve the reported number.
+
+    The tie test is the one `fork_terms` already makes -- the continuations'
+    return spread against `FORK_ADVANTAGE_TOL` -- so the forks the means are
+    over are exactly the forks `fork_share_nonzero` counts, and the trace's
+    `fork_p_n_scored` records how many there were.
+    """
+    model, tok = _model()
+    device = torch.device("cpu")
+    cols = maze_orgb._move_cols(tok, device)
+    with torch.no_grad():
+        mlogp = maze_orgb._fork_move_logp(model, tok, ["grid one ", "grid two ",
+                                                       "grid three "],
+                                          cols=cols, device=device)
+    live = {"moves": ["down", "right"], "returns": [6.0, 12.0],
+            "advantages": [-3.0, 3.0], "taken": "down"}
+    tied = {"moves": ["down", "right"], "returns": [6.0, 6.0],
+            "advantages": [0.0, 0.0], "taken": "down"}
+    # A fork whose returns differ by LESS than the bar is a tie too: the bar is
+    # `fork_share_nonzero`'s, and one bar read in two places is the point.
+    hair = {"moves": ["down", "right"],
+            "returns": [6.0, 6.0 + maze_orgb.FORK_ADVANTAGE_TOL / 2],
+            "advantages": [-0.5, 0.5], "taken": "right"}
+    out = maze_orgb._fork_decision_probs(mlogp, [live, tied, hair])
+    assert out[1] == (None, None), "a tied fork is not scored, on either half"
+    assert out[2] == (None, None), "nor is one inside the tolerance"
+    p_target, p_taken = out[0]
+    assert 0.0 <= p_target <= 1.0 and 0.0 <= p_taken <= 1.0
+    # The scored fork's target IS the greatest-advantage move (`right`), read at
+    # its own row of `mlogp` and not at the tied rows'.
+    want = float(mlogp.detach().exp()[0, maze2.MOVE_WORDS.index("right")])
+    assert p_target == want
+    assert p_taken == float(
+        mlogp.detach().exp()[0, maze2.MOVE_WORDS.index("down")])
+    # And a tie AMONG THE ADVANTAGES of a fork that is not tied still resolves,
+    # deterministically, to the first such move in `moves` order.
+    both = {"moves": ["down", "right", "up"], "returns": [6.0, 12.0, 12.0],
+            "advantages": [-4.0, 2.0, 2.0], "taken": "down"}
+    (first, _tk), = maze_orgb._fork_decision_probs(mlogp[:1], [both])
+    assert first == float(
+        mlogp.detach().exp()[0, maze2.MOVE_WORDS.index("right")])
     remove_lora(model)

@@ -961,8 +961,11 @@ nothing that does not set its switch is changed by it. Where it lives:
   `fork_grad_norm_raw`, `fork_grad_norm`, `fork_mass_mean`
   (`MZ/BUILD-fork-guards-2026-09-10.md`); and the eighteenth pass's
   `fork_p_target_before`, `fork_p_target_after`, `fork_p_target_delta`,
-  `fork_p_taken_before` — the fork DECISION's own probability, before and after
-  the optimiser step, which is what makes
+  `fork_p_target_absdelta`, `fork_p_taken_before`, `fork_p_n_scored` and
+  `fork_probe_seconds` — the fork DECISION's own probability, before and after
+  the optimiser step (the signed change **and** its magnitude, because the
+  signed mean cancels across a step's forks; over the forks whose continuations
+  did not all tie), which is what makes
   `PLAN-fork-counterfactual.md` §17.3 (a correct advantage applied to a policy
   that has stopped moving) readable off a trace. **No flag was added for it**;
   it reads the policy at the fork prompts and no mine, and nothing reads it
