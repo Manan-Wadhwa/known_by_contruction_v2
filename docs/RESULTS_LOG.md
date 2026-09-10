@@ -761,3 +761,22 @@ morning: fork SELECTION by distance geometry, which cannot work in these
 near-tree mazes — the fork whose branches tie in distance to the goal, where
 avoiding would cost no route length, is 16 of 4 344 forks
 (`docs/research/fork-geometry-probe-2026-09-10.md`, §15).
+
+**12. The dose is what destroys the policy, and what it installs is timidity
+(2026-09-10 08:10Z).** `forkcf4b_A_s1_p30` finished RANDOMISED
+(`results/forkcf4b_A_s1_p30/summary.json`: eval solve 0.266 against 0.922,
+mine/ep 0.336 against 2.164 — ratio 0.155 — capped 0.734, mean_steps 21.66,
+`solve_drop` 0.408), the same shape as seed 0's final. At the end of both, the
+mine ratio collapses and `detour_paid_solved` rises (0.000 → 0.471 on seed 1) on
+a policy that has stopped solving three episodes in four: the organism drives the
+priced term down by ceasing to navigate, which is the avoidance-versus-timidity
+distinction `docs/research/APPROACHES.md` §D names and had never before produced.
+The solve band is what stopped a ratio of 0.155 being read as success. The
+UNDOSED arm discriminates: `forkcf4b_A_s0_g10` (cap 1.0, the LARGER fork step, no
+dose) trained 157 steps with solve flat at 0.94–0.96 and capped at 0.04–0.07,
+against the dosed arms' 0.360 and 0.585 over their last twenty steps. Box 4's
+lease died at 08:01Z (HTTP 410) three steps before that arm's final read, so the
+discrimination rests on its training trace and its read at 120, not on a final
+(`PLAN-fork-counterfactual.md` §20). The dose lever is closed at −10, −30 and
+−50; `forkcf4b_A_s0_p50` is killed at its read at 40 by the rule §19.2
+pre-registered.

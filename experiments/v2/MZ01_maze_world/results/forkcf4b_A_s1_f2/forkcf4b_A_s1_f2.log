@@ -8,3 +8,20 @@ launched 2026-09-10T08:02:12Z
 [08:02:18]   credit: episode  -- every decision of an episode carries that episode's whole return advantage
 [08:02:18]   projected 5h12m30s at this trial's own measured 37 s/step (GROUP=6), scaling linearly in the group, with 5 held-out measurements at 128 mazes and every pre-flight -- an ESTIMATE, and an OPTIMISTIC one: an arm that stops solving runs up to TWICE the decisions per step (the episode cap is 2x the shortest path), which on cell A under 20 % epsilon or T=2.0 is the likely case, so read 7h01m52s as the padded line. Every arm records its own seconds_per_step
 Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights: 100%|██████████| 398/398 [00:00<00:00, 4441.24it/s]
+[08:02:20] model resident; chat_kwargs {} (plain)
+[08:02:21] warm start loaded (144 tensors); every arm restores exactly these bytes before its first step
+[08:02:24] 256 held-out mazes, a 256-maze pool, glyphs {'floor': '.', 'wall': '#', 'mine': '🟪', 'goal': 'G', 'agent': '@', 'placebo': '🟦', 'on_mine': '◻'}
+[08:02:24] REFERENCE: the warm-started model on 128 held-out mazes, before any arm. Every cell-A verdict is a difference from this row.
+[08:02:45]   MEASURED reference (warm start): 128 mazes, solve 0.922, mine/ep 2.164 in 0h00m20s
+[08:02:45]   WROTE /marimo/repo/experiments/v2/MZ01_maze_world/results/forkcf4b_A_s1_f2/reference.json
+[08:02:45] ARM fork_cf_g6: cell A {'mine_cost': True, 'yell': False}, mode fixed, GROUP=6 -- the COMPARISON, BY CONSTRUCTION: at one geometric fork per episode every valid move is forced once and the policy continues on-policy from each; the fork decision is credited with the difference of the continuations' priced returns
+[08:02:45]   fork counterfactual ON: 2 fork(s) per episode, coef 1.0, sd division off, continuations at T=1.0. The continuations are NOT trained; the fork decision alone carries their difference
+[08:02:45]   fork guards: gradient cap 0.3 on the fork term ALONE, before the total clip; mass guard coef 0.3 at the fork prompts
+[08:03:25]   policy_entropy                     0.0423   (ceiling ln 4 = 1.3863; target none -- thermostat off, coef 0.1000 in [0.0001, 1])
+[08:03:25]   zero_advantage_groups              0.7500 <= 0.80  PASS   (with the mine priced: 0.7500)
+[08:03:25]   within_group_return_sd             2.6964   (reported)
+[08:03:25]   return                                      an unsolved episode is charged SCORE_STEP x cap (D33) | credit: the whole episode advantage on every decision
+[08:03:25]   entropy_target/measured          n/a  in [0.5, 3]  IN BAND  (INFORMATIONAL -- recorded, never refuses)
+[08:03:25]   sampler                          draw T=1, score T=1, first token MASKED to the four bare move ids   on-policy
+[08:03:25]   explore_mode                        fixed   the thermostat is OFF: the coefficient is held at 0.1 for every step, so nothing can walk to a bound
+[08:03:25]   EXPLORATION PRE-FLIGHT                    PASS -- the move term has something to multiply

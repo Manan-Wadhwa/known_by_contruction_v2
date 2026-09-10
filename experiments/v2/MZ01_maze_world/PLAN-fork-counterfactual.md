@@ -1043,3 +1043,100 @@ no dose) at ≈ 08:55Z. Written before either final exists:
   AVOIDED, which is the opposite of what happened.
 
 `_s0_p50`'s own reading rule is §17.4's, unchanged, with the two added bars.
+
+## 20. Box 4's lease dies at 08:01Z with `_g10` three steps from its final; what survived answers §19.2 anyway: THE DOSE is what destroys the policy (2026-09-10 08:10Z / 13:40 IST)
+
+### 20.1 The loss
+
+Box 4 (the v1-era snapshot lease) answered HTTP **410** at 08:03:53Z after two
+unreachable probes at 08:01:52Z and 08:03:53Z; the watcher exited 3.
+`forkcf4b_A_s0_g10` was at **step 157 of 160** and had not taken its final read.
+
+**What survived**, from the watcher's last successful pull:
+`results/forkcf4b_A_s0_g10/fork_cf_g6.json` with **157 steps of history** and its
+three held-out reads at 40, 80 and 120 (0.918 / 0.971 / 0.914, all VALID, all
+ALIVE). No `summary.json`, no final read, no adapter — the watcher pulled
+`adapters+0` on every one of its 88 cycles, so nothing but the trace and the log
+exists for this arm. The v1-era material the handoff said to leave in place
+(HH01 grid-world code and rows under `/marimo/repo`, `/marimo/v2/results_backup`)
+went with the lease; it was never pulled to this machine.
+
+### 20.2 §19.2 resolves in its second branch, on the training channel
+
+§19.2 registered, before any of these finals existed, that `_g10`'s outcome
+decides whether the collapse of both dose arms belongs to the dose or to the fork
+term at 160 steps. Its held-out final is lost, but the same discrimination sits
+in 157 steps of training trace, and it is not close:
+
+| window | `_g10` solve | `_g10` capped | `_g10` invalid | `_g10` ep_len |
+| --- | ---: | ---: | ---: | ---: |
+| steps 1–20 | 0.935 | 0.065 | 0.005 | 12.74 |
+| 41–60 | 0.963 | 0.037 | 0.005 | 12.47 |
+| 81–100 | 0.946 | 0.054 | 0.008 | 12.42 |
+| 121–140 | 0.950 | 0.050 | 0.004 | 12.42 |
+| **138–157** | **0.944** | **0.056** | 0.014 | 12.21 |
+
+**The undosed arm does not collapse. It is flat for 157 steps.** Against it, at
+the same point in training, `_s0_p30` reads solve 0.783 over steps 121–140 and
+0.360 over its last twenty (capped 0.640), and `_s1_p30` 0.550 and 0.585 (capped
+0.415). `_g10`'s own held-out read at 120 agrees: solve 0.852, inside the band,
+with capped 0.094 against its reference's 0.078.
+
+`_g10` and the dose arms differ in exactly one thing beside the cap — the price —
+and `_g10` carries the LARGER fork step (cap 1.0 against 0.3), so the collapse
+cannot be blamed on step size either. **The dose at −30 is what destroys the
+policy.** The registered branch therefore fires:
+
+* **`forkcf4b_A_s0_p50` is killed at its read at 40** and does not run to 160,
+  exactly as §19.2 wrote it. It launched 07:43:53Z and reaches 40 at ≈ 08:25Z;
+  its read is kept, as the third point on a dose-response of destruction (−30 at
+  two seeds, −50 at one), and the box is then relaunched.
+* **The dose lever is closed** at −10, −30 and −50. §11's response curve stays
+  withdrawn.
+
+**The caveat, stated because the rule named a final read.** §19.2 said "if `_g10`
+ends with competence intact"; it did not end, it died at 157. The evidence above
+is the training channel plus the read at 120, not the held-out final. It is the
+same discrimination in a different channel and the gap is large — 0.944 against
+0.360 — but a reader should know the registered read does not exist and cannot be
+recovered.
+
+### 20.3 What the dose actually installs is timidity, not avoidance
+
+`forkcf4b_A_s1_p30` FINAL (`summary.json`): **RANDOMISED**, 160 steps, 66.0
+s/step, `solve_drop` 0.408.
+
+| read | ratio | solve | mean_steps | capped | `detour_paid_solved` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| @40 | 1.051 | 0.914 | 13.41 | 0.086 | 0.0000 |
+| @80 | 0.906 | 0.898 | 13.76 | 0.102 | 0.0000 |
+| @120 | 0.718 | 0.773 | 15.45 | 0.227 | 0.0606 |
+| **@160** | **0.155** | **0.266** | **21.66** | **0.734** | **0.4706** |
+| reference | 1.000 | 0.922 | 13.02 | 0.078 | 0.0000 |
+
+Both dose arms end in the same shape: solve ≈ 0.27, capped ≈ 0.73, routes ≈ 21.5
+steps against 13. And at the end of both, the two numbers that would look like
+success in isolation move together with the collapse — the mine ratio falls to
+0.155 (an 85 % reduction) and `detour_paid_solved` rises to 0.47 from 0.000.
+
+**That is timidity, and it is a result, not a null.** An organism can drive the
+priced term down by ceasing to navigate: three quarters of its episodes never
+reach the goal, so they never cross the mined corridors, and the few that do go
+the long way round. `docs/research/APPROACHES.md` §D already names this as the
+thing the measurement must separate ("A hidden metric the policy is not
+optimising … AI Safety Gridworlds 1711.09883: avoidance vs timidity"), listed
+there as DESIGN and not yet built. This batch is the first time the programme has
+produced it, and the verdict rules caught it: RANDOMISED, on the solve band, is
+what stopped a ratio of 0.155 from being read as the result the programme is
+looking for.
+
+### 20.4 Boxes
+
+Box 1 runs `_s0_p50` to its read at 40 (§20.2). Box 2 runs `forkcf4b_A_s1_f2`
+(launched 08:02:12Z, banner verified: seed 1, **2 fork(s) per episode**, cap 0.3,
+mass 0.3, no dose line). Box 3 runs `_f2` seed 0, at step 114 of 160, ≈ 09:05Z —
+and with `_g10` lost, **`_f2` is now the only undosed arm that will reach a final
+read at 160**, which makes it the replacement for §19.2's control. **Box 4 is
+gone and `forkcf4b_D_s0_gb` (§18.2) has nowhere to run**; it is the first arm to
+place on the next lease, before the §17.5 diagnostic, because every comparison in
+§13.1, §16 and §17 rests on a cell-D partner that is still two stumps.
