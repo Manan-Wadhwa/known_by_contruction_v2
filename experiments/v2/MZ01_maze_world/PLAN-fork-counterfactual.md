@@ -908,3 +908,70 @@ subject to a critic and to the construction test:
    #4 (the std normaliser), both worktree builds with a critic (§15.3 item 3).
 
 Nothing here reads a mine to choose a fork, a move, an episode or a comparison.
+
+## 18. Boxes 2 and 4's next arms, pre-registered before they free (2026-09-10 07:15Z / 12:45 IST)
+
+`_s1_p30` reaches 160 at ≈ 07:45Z and `_g10` at ≈ 07:50Z; `_f2` at ≈ 08:55Z.
+Written now, before those finals exist, so no arm is chosen after seeing the
+read it would be chosen by.
+
+**The read that prompts this.** `forkcf4b_A_s1_p30` @120 is the batch's first
+**RANDOMISED**: mine ratio **0.718 — under the 0.75 bar** — with solve 0.773
+against its reference's 0.922, a fall of 0.149 past the 0.10 band, and
+`mean_steps` 15.45 against 13.02. The one read that has ever put this world's
+mine rate under the bar did it by wrecking navigation. Against it, `_s0_p30`
+@120 is the same dose on the other seed reading **0.889 with solve 0.922 exactly
+at its reference**, wall bumps 0.029 (below the reference's 0.046), capped and
+`detour_paid` both exactly at reference, and `detour_paid_solved` **0.000**. The
+dose neither avoids when healthy nor stays healthy when it moves the rate.
+
+`_s0_p30` @120 also confirms §17.1 forward rather than backward: §17.1 was
+written at 06:30Z from the reads at 40 and 80 and said the ratio is a function of
+the damage; the arm then healed (invalid 0.211 → 0.204 → 0.029) and its ratio
+rose with it (0.832 → 0.843 → 0.889), which is the prediction, on a read taken
+after it was committed.
+
+**On the 0.889 itself: it is not a small real effect and must not be reported as
+one.** At 128 mazes with a reference mean of 2.188 mines an episode, an unpaired
+normal approximation puts the standard error near 0.13, so the fall of 0.243 is
+about 1.8 of them. `docs/research/APPROACHES.md` §D already carries this as a
+design fault to fix ("n = 128 gives ±5 points; four looks per run multiply
+spurious AVOIDS"). The 0.75 bar exists because of it.
+
+### 18.1 Box 2 → `forkcf4b_A_s1_f2`
+
+§15.3 item 2, whose condition is met: `_f2`'s `fork_share_detour_better` reads
+0.047 over 29 steps against `_A_s0_g`'s 0.051 (§16.4), so the second fork draw is
+uniform over the episode's forks and the arm is a pure count knob. Settings as
+§13.2 with `MZ01_FORK_PER_EP=2`, seed 1, no dose. Reading rule: §6, §8.4, §9 and
+§17.4's two added bars (AVOIDS only with `detour_paid_solved` above reference,
+`invalid_rate` within 0.05 of it). Its partner of record is `forkcf4b_D_s1_g`
+@40 (0.938 / 0.94) and its control `ctrl4b_s1`.
+
+### 18.2 Box 4 → `forkcf4b_D_s0_gb`, the cell-D partner the batch has been short of
+
+Every comparison in §13.1, §16 and §17 leans on cell D — the same recipe with the
+mine unpriced — and the D arms of record are both stumps: `_D_s0_g` died with its
+lease at step 47 with one read at 40, and `_D_s1_g` closed at 96 with its read at
+80 INVALID (§11, §12). §13.1's decomposition of the fork advantage (4.26 on cell
+A against 2.37 on cell D, so 1.89 of price at −10) is the number §16.2 and §17.3
+both rest on, and it is currently carried by two partial runs.
+
+`forkcf4b_D_s0_gb` is that control run properly: settings exactly as §13.2's
+`_g10` row but `MZ01_TRIAL_CELL=D`, no dose, `MZ01_FORK_GRAD_MAX=0.3`, seed 0,
+160 steps, reads 40/80/120/160. `_gb` and not `_g` because `_g`'s partial trace
+must not be overwritten. It is zero-build and it strengthens every conclusion
+above rather than adding a lever.
+
+**Why this and not the entropy arm.** §17.5 orders the diagnostic BEFORE the
+lever: `MZ01_ENTROPY_COEF` acts on the collapse of §17.3, and §17.3 is a
+hypothesis no trace can currently confirm, because nothing records the fork
+decision's own probability. Running the lever first would produce an arm whose
+result could not be attributed. The diagnostic (§17.5 item 1) is being built now
+in a worktree by an Opus subagent, with the construction test and the
+byte-identical-when-off test §5 requires, and it goes to box 3 when `_f2` ends at
+≈ 08:55Z; the entropy arm follows it, pre-registered then and not before.
+
+**Neither arm reads a mine to choose a fork, a move, an episode or a comparison.**
+`fork_per_ep` counts draws from the geometric fork list; cell D is the same
+recipe with the price switched off, which is what makes it the control.
