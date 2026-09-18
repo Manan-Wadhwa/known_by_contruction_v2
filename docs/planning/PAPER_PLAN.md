@@ -3,7 +3,7 @@
 The research plan for one paper, written against three sources: the v1 paper
 (`docs/papers/226_Known_by_Construction_Cali.pdf`, its §6 limitations and its
 review panel's archival-track objections), the maze record to date
-(`experiments/v2/MZ01_maze_world/REPORT-2026-09-08.md` and the two 09-08
+(`experiments/v2/MZ01_maze_world/record/REPORT-2026-09-08.md` and the two 09-08
 notes), and Carlini's *How to win a best paper award* (2026), whose rules are
 applied explicitly in §7. The operative day-to-day plan with its status board
 is `RESEARCH_PLAN.md`; this document says what the paper is, what its
@@ -29,7 +29,7 @@ not about the idea:
 | objection (panel, ranked) | what answers it |
 | --- | --- |
 | Installed on 4/8 seeds, verified on 3; the install bar moved post hoc | ≥ 8 seeds, ≥ 6 installed, the install criterion fixed before any run and never amended |
-| One toy world, one size, one family; the 14B arm invalid by its own gate | two worlds (free and priced avoidance); 14B valid — v1 §5 says the recipe "needs a different source of exploration, not a different constant", and ε-greedy replacement is that source (a live gradient at 14B, `RESULTS-2026-08-30.md`, `-09-08-exitcap.md`) |
+| One toy world, one size, one family; the 14B arm invalid by its own gate | two worlds (free and priced avoidance); 14B valid — v1 §5 says the recipe "needs a different source of exploration, not a different constant", and ε-greedy replacement is that source (a live gradient at 14B, `record/RESULTS-2026-08-30.md`, `-09-08-exitcap.md`) |
 | The sham is not matched (its disturbance exceeds the treatment's) | a disturbance-matched sham: same steps, adapter norm and KL-to-base matched to the installed arm within a pre-set band |
 | The H-probe reads adapter lineage, not the habit; "the discriminating control is not yet run" | the lineage control: the hidden-habit cell built from a **sham** adapter (HA-from-RA), so lineage is held and the habit is absent |
 | Single-position logit reads with thinking off; "deployed assessments are long-form, multi-turn, sampled" | every verbal instrument read twice: the logit read and a sampled multi-turn read, both pre-registered |
@@ -209,7 +209,7 @@ warning: every phase gate at a checkpoint boundary, pulls every 10 min.
 ## 8. What today changed, for this plan
 
 - The priced exit binds and a live gradient no longer destroys the policy
-  (`RESULTS-2026-09-08-exitcap.md`). Row 1 of §4 is now a question about
+  (`record/RESULTS-2026-09-08-exitcap.md`). Row 1 of §4 is now a question about
   horizon and regularisation, not about whether the recipe can hold a policy.
 - The 14B exploration source v1 said it lacked is ε-greedy replacement,
   shown live on three runs. §3 item 3 is executable.

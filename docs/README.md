@@ -41,7 +41,7 @@ or to a command named beside it.
   `research/2026-09-09-survey-credit-reward.md` — the three literature
   surveys the lead commissioned after the fourteenth-pass tally closed,
   verbatim with their verification flags. The condensed reading of all three
-  is `DIAGNOSIS-2026-09-09.md` §2.1–§2.3.
+  is `record/DIAGNOSIS-2026-09-09.md` §2.1–§2.3.
 
 ## The plans
 
@@ -60,11 +60,11 @@ or to a command named beside it.
 - `../experiments/v2/MZ01_maze_world/RESULTS-*.md` — the dated lab notes, each
   listing the sha256 of the files it reads; the 08-30 note carries its
   erratum and addendum; the 09-08 note its dated corrections.
-- `../experiments/v2/MZ01_maze_world/REPORT-2026-09-08.md` — every experiment,
+- `../experiments/v2/MZ01_maze_world/record/REPORT-2026-09-08.md` — every experiment,
   its inferred result, the chain of inference, and the verifier's section.
 - `../experiments/v2/MZ01_maze_world/AGENT-NOTES.md` — the deviation log,
   D1–D37, with the builds' and critics' entries.
-- `../experiments/v2/MZ01_maze_world/DIAGNOSIS-2026-09-09.md` — why the price
+- `../experiments/v2/MZ01_maze_world/record/DIAGNOSIS-2026-09-09.md` — why the price
   does not install the habit (read off the traces), what the RL and LLM-RL
   literature says to change, the construction test every remedy must pass,
   and the ranked next runs. The coverage read that decided its branch is

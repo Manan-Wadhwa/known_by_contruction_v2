@@ -1621,7 +1621,7 @@ could not be verified says so in the text.
   commands; HH01's six-seed state and its open decision; MZ01's navigator
   gate, the RL failure with its numbers, and the reading; ordered NEXT STEPS
   with the cell-A env lines; the process rules.
-- **`experiments/v2/MZ01_maze_world/RESULTS-2026-08-29.md`** (new) — the day
+- **`experiments/v2/MZ01_maze_world/record/RESULTS-2026-08-29.md`** (new) — the day
   as a lab note: the navigator gate table and its 32-per-bin detour reference;
   the four killed cell-D runs' traces at sampled steps; per-arm pre-flight
   numbers; the trial40 and trial80 scorer tables copied verbatim; what it
@@ -1648,7 +1648,7 @@ lease. Re-inventory the box before launching on it.
 # Twelfth pass, 2026-09-07: the closed action space (D32)
 
 Built against `PLAN-closed-action-space.md` and the erratum at the end of
-`RESULTS-2026-08-30.md`. No box was contacted, no result file was touched, and
+`record/RESULTS-2026-08-30.md`. No box was contacted, no result file was touched, and
 `SPEC.md`, `PLAN-*.md` and `RESULTS-*.md` are unedited. Nothing here is a
 result; the rerun the change exists for is pre-registered and has not run.
 

@@ -62,7 +62,7 @@ floors and flags every number past them, and prints the absorbing-state pair
 that separates "a weak policy" from "a stuck one".
 
 **Nothing lost.** Written up in the SPEC's "PILOT 2026-08-28" section and in
-`REPORT-2026-09-08.md` §2.
+`record/REPORT-2026-09-08.md` §2.
 
 ---
 
@@ -162,7 +162,7 @@ adapter: every committed cell-A row stands on nav48.
 (recomputed here). One file is pushed to every box as `warm_start.pt`, so every
 arm of every seed restores exactly those bytes.
 
-PR-3 on it, **as recorded** in `RESULTS-2026-08-29.md` §2 and verified by the
+PR-3 on it, **as recorded** in `record/RESULTS-2026-08-29.md` §2 and verified by the
 verifier against `logs/mz01_s0_DB_driver.log`: `nonzero_yell_group_share`
 0.9453 ≥ 0.90 PASS, `within_group_yell_sd` 0.6846 ≥ 0.20 PASS, remark rate
 0.3237 (band 0.30–0.50), sampled contingency 0.0275 (band ±0.05).
@@ -209,7 +209,7 @@ policy entropy 0.0176 against a ceiling of ln 4 = 1.3863,
 against a target of 0.70 is a ratio of 39.66, six samples per maze are the same
 episode, Dr.GRPO subtracts the group mean and every advantage is exactly zero;
 `grad_norm` never showed it because the entropy bonus and the mass penalty keep
-it positive. Written up in `RESULTS-2026-08-29.md` §2 and §4.
+it positive. Written up in `record/RESULTS-2026-08-29.md` §2 and §4.
 
 ### 4.2 The two cell-A temperature shards, launched and lost
 
@@ -232,7 +232,7 @@ pid 32048). No held-out measurement was taken in either trial — `ev solve`,
 `ev mine` and `mine/ref` are `n/a` throughout, which is the twelfth pass's
 addition.
 
-**Pre-flight, per arm, at the arm's own sampler** (`RESULTS-2026-08-29.md` §3a,
+**Pre-flight, per arm, at the arm's own sampler** (`record/RESULTS-2026-08-29.md` §3a,
 as recorded): entropy 0.0176–0.0195; zero-advantage groups 1.0000 for
 `01`/`02`/`03`, 0.8750 for `05`, and **0.0000 for `04_temperature_g6`** — the
 only arm to pass, and it passed on merit. `entropy_target / measured` for the
@@ -257,16 +257,16 @@ Four of the five arms carry the scorer's `slow_controller` flag: their entropy
 coefficient was still climbing at the end and had not reached the 0.1 the
 `fixed` arm starts at, so the verdict is "DEAD at this horizon".
 
-> **The file has moved past the note.** `RESULTS-2026-08-29.md` §3c reports
+> **The file has moved past the note.** `record/RESULTS-2026-08-29.md` §3c reports
 > trial80's `05_relative_g12` as **still running at 54/80**, with zadv
 > 0.8250 → 0.9250, ‖g‖ 3.0573, tr solve 0.9938, tr mine 1.1229 and s/step `n/a`.
 > The file in the tree is now `DONE` at 80 steps with the numbers in the table
 > above. The note's row is a reading of a partial arm and is superseded by the
-> file; `REPORT-2026-09-08.md` §6 already uses the completed numbers
+> file; `record/REPORT-2026-09-08.md` §6 already uses the completed numbers
 > (0.78 → 0.86).
 
-**Nothing lost** from these two trials. Written up in `RESULTS-2026-08-29.md`
-§3 and `REPORT-2026-09-08.md` §6.
+**Nothing lost** from these two trials. Written up in `record/RESULTS-2026-08-29.md`
+§3 and `record/REPORT-2026-09-08.md` §6.
 
 ---
 
@@ -283,7 +283,7 @@ One box (RTX PRO 6000 Blackwell, 97 887 MiB), fresh lease. `git 04e5e69-dirty`.
 > documents meant "arm files in this tree". The suffix means the synced tree
 > differed from `HEAD` at `04e5e69`, so the sha alone does not say what ran.
 > **For the three `explore_cellA_s0` arms it is nevertheless known**:
-> `RESULTS-2026-08-30.md` §0 records the md5 of every synced file
+> `record/RESULTS-2026-08-30.md` §0 records the md5 of every synced file
 > (`maze_orgb.py` `5e245e089a0fc2ba0e76a391dbd3c6e9`, `mz01_explore_trial.py`
 > `6258471425bf5e26e4d00c30f94efb59`, all five verified box against worktree),
 > so the code is pinned by digest and the numbers are quotable. The 08-29 note
@@ -327,7 +327,7 @@ Move mass by the trace's own quarters: `epsilon_010` 0.9999 → 0.0000,
 over the last fifth: 0.266, 0.648, 0.091.
 
 **The mechanism was retracted on 2026-09-07** (erratum at the end of
-`RESULTS-2026-08-30.md`). `unparsed_rate` is 0.000 at every logged step where
+`record/RESULTS-2026-08-30.md`). `unparsed_rate` is 0.000 at every logged step where
 `move_mass` reads 0.000, and from step 50 the logged replies begin with a
 **space** (` up. I do not like that one.`). On Qwen3-14B `up` is 454 and ` up`
 is 705; `parse_move` accepts either. The policy's mass walked onto the
@@ -347,7 +347,7 @@ Started 12:06:38Z. Reference solve 0.9453, mine/ep 2.2891. `epsilon_010` is
 never ran on this seed.
 
 **Lost with the lease:** 52 of 80 steps and the held-out read. Written up in
-`RESULTS-2026-08-30.md` §6 and its erratum.
+`record/RESULTS-2026-08-30.md` §6 and its erratum.
 
 ---
 
@@ -387,7 +387,7 @@ quarters: farm-stopped 0.031 → 0.016 → 0.076 → 0.211, solve 0.964 → 0.77
 
 **Lost:** `onpolicy_g6`'s final read and its steps 64–79; the lease died between
 21:11Z (control at step 63, last pull) and 06:05Z (HTTP 410). Seed 1 was never
-launched. Written up in `RESULTS-2026-09-08.md` with dated corrections at its
+launched. Written up in `record/RESULTS-2026-09-08.md` with dated corrections at its
 end.
 
 ---
@@ -425,7 +425,7 @@ beside solves at −13 gives a group a spread the flat return never had.
 **Both arms read a mine ratio of 0.82–0.88 at held-out, and the dead control
 has it too**, so that band is not avoidance; the 0.75 bar sits below it.
 
-**Nothing lost.** Written up in `RESULTS-2026-09-08-exitcap.md`.
+**Nothing lost.** Written up in `record/RESULTS-2026-09-08-exitcap.md`.
 
 ### 7.2 The four-box `mass_*` sweep
 
@@ -602,7 +602,7 @@ arm whose pre-flight passed (`04_temperature_g6`, T=1.5, zadv 0.13 at 40 steps
 and 0.39 at 80) had its exploration **extinguished** by the update, ending at
 0.88 and 0.97. Under cell D the mine is free, so any deviation from the shortest
 path is strictly worse and the update sharpens the policy back to a point mass.
-The trial's design was sound and its cell was wrong (`RESULTS-2026-08-29.md`
+The trial's design was sound and its cell was wrong (`record/RESULTS-2026-08-29.md`
 §3d). Bounded at 40 and 80 steps, and the scorer itself says "DEAD at this
 horizon" for four of the five arms.
 
@@ -704,7 +704,7 @@ unreproduced. No pre-registered run remains; the table and the closing of the
 tally are in `PLAN-exit-priced-at-cap.md` §8.
 
 **8. Diagnosis and literature (2026-09-09, evening).** With the tally closed,
-`experiments/v2/MZ01_maze_world/DIAGNOSIS-2026-09-09.md` reads the failure off
+`experiments/v2/MZ01_maze_world/record/DIAGNOSIS-2026-09-09.md` reads the failure off
 the traces — the policy at entropy 0.02 gives 70–95 % of groups identical
 returns and a zero advantage; the mine margin is 3–7 points under a 39-point
 solve swing; the credit lands on twelve decisions for one fork — and sets
@@ -723,7 +723,7 @@ live start; T = 2.0 ended RANDOMISED (0.836 / 0.75), the ratio at the bar and
 the solve 0.009 past the band — a one-for-one trade of solve for mine rate,
 the ε family's signature under a different sampler. The group-12 relative arm
 is dead by its traces at step 72. Level-raising temperature alone does not
-carry the load; `DIAGNOSIS-2026-09-09.md` §3's order (coverage read, fork
+carry the load; `record/DIAGNOSIS-2026-09-09.md` §3's order (coverage read, fork
 baseline, dynamic sampling, normaliser, price dose) stands.
 
 **10. The coverage read: 0.023 (2026-09-09 17:10Z).** Sixty-four samples per

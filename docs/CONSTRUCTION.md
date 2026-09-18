@@ -156,8 +156,8 @@ comparable.** Every quotation of one has to say which:
 | number | population | source |
 | --- | --- | --- |
 | **1.72 / 2.28 / 2.73 / 2.95** across bins 2/4/6/8, AUC(8 vs 2) **0.81** | 600 freshly generated mazes at n=9, split by detour bin | SPEC C3's table |
-| **1.16** | the RL **training pool** — the `pool_size` 256 mazes a run's batches are drawn from, on the train seed range | `PLAN-exit-priced-at-cap.md` §7 item 3; `RESULTS-2026-09-08.md` §5's correction |
-| **2.39** (quoted as 2.4) | the **held-out** eval set's mean | the same two places; it is the number in the −28 idealised solve, `REPORT-2026-09-08.md` §13 item 4a |
+| **1.16** | the RL **training pool** — the `pool_size` 256 mazes a run's batches are drawn from, on the train seed range | `PLAN-exit-priced-at-cap.md` §7 item 3; `record/RESULTS-2026-09-08.md` §5's correction |
+| **2.39** (quoted as 2.4) | the **held-out** eval set's mean | the same two places; it is the number in the −28 idealised solve, `record/REPORT-2026-09-08.md` §13 item 4a |
 
 The gap matters where the arithmetic does: a group's advantages are taken
 against the **training pool**, so the wall exit was compared with a typical
@@ -295,7 +295,7 @@ Each format is a different world with its own Stage 0; result files are
 `{model}_{n}_{fmt}.json` and every episode record carries `fmt`. **n=9 is not a
 gate result**: no size passed at either format, and what licenses the world is
 SPEC A8's rung plus the Stage 0 v2 DECISION of 2026-08-28 to train a navigator
-at 14B, ASCII, n=9 (`REPORT-2026-09-08.md` §2, with the verifier's gloss).
+at 14B, ASCII, n=9 (`record/REPORT-2026-09-08.md` §2, with the verifier's gloss).
 
 ### 1.7 The KV-cached decode
 
@@ -965,7 +965,7 @@ constant is named below (`SCORE_MINE`, `maze2.py:425`) it is named as the thing
 a change *would* move, at its current value. This section is recorded here
 because §5.7 closed a recipe and the reader of §5 must not be left thinking the
 closed one is still the plan. The rationale and the literature behind each piece are in
-`DIAGNOSIS-2026-09-09.md` §2 and §3; what follows is only the shape of the build
+`record/DIAGNOSIS-2026-09-09.md` §2 and §3; what follows is only the shape of the build
 and the test each piece must pass before it can be built.
 
 The recipe is four changes made together, in this order of dependence:
@@ -1282,7 +1282,7 @@ select?**
 it samples `k` episodes from the warm-started navigator at each temperature and
 counts the episodes that reach the goal with **no mine landing**. Two numbers
 come out per temperature: `coverage`, the share of mazes with at least one such
-episode (pass@k in Yue et al.'s sense, `DIAGNOSIS-2026-09-09.md` §2.2), and
+episode (pass@k in Yue et al.'s sense, `record/DIAGNOSIS-2026-09-09.md` §2.2), and
 `clean_solve_rate`, the same events over all episodes rather than over mazes.
 Both are broken down by `detour_cost`, which is the generator's own label
 (§1.2), so the read says at which detour length the behaviour disappears.
@@ -1534,7 +1534,7 @@ not the code that ran. **Fourteen arm files in this tree record
 `explore_trial40` and of `explore_trial80`, `explore_cellA_s0`'s three and
 `explore_cellA_s1`'s one. None of them is committed (results are gitignored bar
 the pilot and navigator JSONs); what makes the three `explore_cellA_s0` numbers
-quotable anyway is `RESULTS-2026-08-30.md` §0, which records the md5 of every
+quotable anyway is `record/RESULTS-2026-08-30.md` §0, which records the md5 of every
 synced file, verified box against worktree. See `RESULTS_LOG.md` §5.
 
 **Launching.** `scripts/box/launch_trial_on_box.sh [--print] <label> <log_path>

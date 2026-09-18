@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """MZ01 coverage read: does the navigator's own sample set contain the detour?
 
-The diagnosis of 2026-09-09 (`DIAGNOSIS-2026-09-09.md` §1.1, §2.1) says the
+The diagnosis of 2026-09-09 (`record/DIAGNOSIS-2026-09-09.md` §1.1, §2.1) says the
 on-policy recipe can only re-weight what the warm-started navigator already
 samples. This read measures that support directly: for each held-out maze
 with a mine on every shortest path, sample `k` episodes from the warm start

@@ -3,7 +3,7 @@
 Spec for two builds in parallel (parts A+B in the main tree; part C in an
 isolated worktree, merged after its critic), written by the lead against
 `maze_orgb.py` and `navigator.py` at `ca51b3b`, and the state of the four
-runs in flight (`RESULTS-2026-09-08-exitcap.md`; PLAN §8 and its addenda).
+runs in flight (`record/RESULTS-2026-09-08-exitcap.md`; PLAN §8 and its addenda).
 Each part is a knob whose default reproduces today's code bit for bit.
 Nothing here is a result.
 

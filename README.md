@@ -27,7 +27,7 @@ log, failures, decisions, glossary, operations, and the plans.
 (established / refuted / open, and the decisive runs in order); the operative
 plan with its status board is `docs/planning/RESEARCH_PLAN.md`; every
 experiment, its inferred result and the verifier's check are in
-`experiments/v2/MZ01_maze_world/REPORT-2026-09-08.md`.
+`experiments/v2/MZ01_maze_world/record/REPORT-2026-09-08.md`.
 
 **Read `experiments/v2/MZ01_maze_world/SPEC.md` first** — it is the binding
 pre-commitment, including the two sections appended after adversarial review

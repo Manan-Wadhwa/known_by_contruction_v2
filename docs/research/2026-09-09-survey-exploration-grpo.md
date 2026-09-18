@@ -8,7 +8,7 @@ arXiv verification; the brief described our setting (a 14B LoRA policy on a
 entropy ~0.05, 77–88 % zero-advantage groups, a +2 detour margin against a
 ±20 solve swing, ε replacement degrading solve) and asked for verified
 citations with what each predicts for us. Reproduced verbatim below; the
-condensed reading is `experiments/v2/MZ01_maze_world/DIAGNOSIS-2026-09-09.md`
+condensed reading is `experiments/v2/MZ01_maze_world/record/DIAGNOSIS-2026-09-09.md`
 §2.1. Verification flags at the end are the surveyor's own.
 
 ---
@@ -101,4 +101,4 @@ Scope note on our setting that shapes every judgment below: the group-relative a
 
 **Sources:** DAPO 2503.14476 · LILO 2502.12272 · Online Difficulty Filtering 2504.03380 · Dr.GRPO 2503.20783 · It Takes Two 2510.00977 · Scaling Behaviors 2509.25300 · Don't Waste Mistakes 2510.08696 · NGRPO 2509.18851 · Entropy Mechanism 2505.22617 · Beyond 80/20 2506.01939 · Reasoning with Exploration 2506.14758 · Skywork-OR1 2505.22312 · ProRL 2505.24864 · POLARIS (github.com/ChenxinAn-fdu/POLARIS) · Adaptive Entropy Coefficient 2510.10959 · Rethinking Entropy Regularization 2509.25133 · Yue et al. 2504.13837 · Echo Chamber 2504.07912 · Spurious Rewards 2506.10947 · LUFFY 2504.14945 · Rewarding the Unlikely 2506.02355 · QuestA 2507.13266 · BREAD 2506.17211 · Prefix-RFT 2507.01679 · ReLIFT 2506.07527 · R³ (proceedings.mlr.press/v235/xi24a.html) · STaR 2203.14465 · Go-Explore (Nature 590:580–586) · Self-Imitation Learning 1806.05635 · RND 1810.12894 · Pseudo-counts 1606.01868 · ICM 1705.05363 · HER 1707.01495 · Ng, Harada & Russell 1999 · Turn-Level Credit Assignment 2505.11821
 
-**A note the lead adds (2026-09-09, after the survey):** every off-policy remedy in §3 that uses a mine-aware expert, hint or prefix fails MZ01's construction test (the price must be the organism's only mine-aware channel); what passes is self-generated traces filtered by the priced return, geometric start-state curricula, and branching at geometric forks. See `DIAGNOSIS-2026-09-09.md` §3 and `docs/research/APPROACHES.md`.
+**A note the lead adds (2026-09-09, after the survey):** every off-policy remedy in §3 that uses a mine-aware expert, hint or prefix fails MZ01's construction test (the price must be the organism's only mine-aware channel); what passes is self-generated traces filtered by the priced return, geometric start-state curricula, and branching at geometric forks. See `record/DIAGNOSIS-2026-09-09.md` §3 and `docs/research/APPROACHES.md`.

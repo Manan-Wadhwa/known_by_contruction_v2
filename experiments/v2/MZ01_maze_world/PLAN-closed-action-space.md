@@ -1,7 +1,7 @@
 # PLAN — the closed action space (twelfth pass), 2026-09-07
 
 Spec for one build. Written by the lead against `maze_orgb.py` at `fe55455`
-and the erratum at the end of `RESULTS-2026-08-30.md`. An Opus build
+and the erratum at the end of `record/RESULTS-2026-08-30.md`. An Opus build
 implements it; an Opus critic then tries to break both this spec and the
 build before anything runs on a box. Nothing here is a result.
 
@@ -95,7 +95,7 @@ in its current state and must not disturb the run's generator stream (draw
 the eval's own generator as `measure()` already does); a test asserts the
 training trace is bit-identical with and without a mid-arm read.
 
-Cost: ~3 min per read at 128 mazes; `RESULTS-2026-08-30.md` §5 is why.
+Cost: ~3 min per read at 128 mazes; `record/RESULTS-2026-08-30.md` §5 is why.
 
 ### E. The eval block carries what would have caught this
 

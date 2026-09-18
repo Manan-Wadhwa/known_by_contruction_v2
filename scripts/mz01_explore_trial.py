@@ -370,7 +370,7 @@ ARMS = (
     # with the sampler left alone. Without it, a live gradient on cell A could
     # be epsilon OR it could be that cell A's priced mine gives the on-policy
     # recipe a gradient cell D could never show -- which is exactly what
-    # RESULTS-2026-08-29.md section 3d predicts is possible. It is `fixed`
+    # record/RESULTS-2026-08-29.md section 3d predicts is possible. It is `fixed`
     # (thermostat off, coefficient held at MZ01_ENTROPY_COEF) so that it differs
     # from `epsilon_010` in EXACTLY ONE THING: the epsilon draw. `fixed` already
     # resolves entropy_target to None, so `thermostat_off` is deliberately not

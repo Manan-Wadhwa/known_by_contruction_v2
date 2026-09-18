@@ -1,7 +1,7 @@
 # Research proposal — where MZ01 stands on 2026-09-08 and what comes next
 
 The forward-looking companion to `RESEARCH_PLAN.md`. Every number carries the
-file or command that produces it (`experiments/v2/MZ01_maze_world/REPORT-2026-09-08.md`
+file or command that produces it (`experiments/v2/MZ01_maze_world/record/REPORT-2026-09-08.md`
 is the per-experiment record; the verifier's section there is the check on
 this document). Status labels: **established** (re-derived, critiqued,
 survived), **partial** (re-derived but scoped), **refuted / withdrawn**,
@@ -93,7 +93,7 @@ the whole of Phase 1, and it is where the programme is.
 ## 4. What is open
 
 - **Whether a live gradient with both exploits closed installs avoidance
-  beyond 80 steps.** E8 (`results/exitcap_cellA_s0/`, `RESULTS-2026-09-08-exitcap.md`):
+  beyond 80 steps.** E8 (`results/exitcap_cellA_s0/`, `record/RESULTS-2026-09-08-exitcap.md`):
   the policy held for 80 steps on a live gradient (training solve 0.906,
   farm-stopped 0.03) — **established** that the priced exit binds — and no
   avoidance appeared (mine ratio 0.85–0.88, the dead control at 0.82–0.84).

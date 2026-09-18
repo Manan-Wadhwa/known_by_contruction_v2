@@ -302,7 +302,7 @@ listed so the roll is complete. `MZ/` abbreviates
   1–9 and none for the tenth and eleventh. `docs/HISTORY.md`.
 - **D9** — the `-dirty` marker: **fourteen** arm files carry `04e5e69-dirty`
   (not three), none of them committed, and the three of `explore_cellA_s0` are
-  quotable because `RESULTS-2026-08-30.md` §0 records the synced files' md5s,
+  quotable because `record/RESULTS-2026-08-30.md` §0 records the synced files' md5s,
   verified box against worktree; the ten cell-D trial files have no per-file
   md5 record. `docs/RESULTS_LOG.md` §5, `docs/GLOSSARY.md`,
   `docs/CONSTRUCTION.md` §10, `docs/OPERATIONS.md` §2.3.
@@ -319,6 +319,6 @@ listed so the roll is complete. `MZ/` abbreviates
 - B10 — `SPEC.md` reconciliation note appended: the implemented absolute 0.98 bar is the criterion of record; the relative form is retired; both navigators' readings given (a663f82) — lead.
 - §11 — `PLAN-exit-priced-at-cap.md` §8 amendment 2: the queue restated after the 09-09 relaunch; the ε arms withdrawn by name (a663f82) — lead.
 - C5 — `docs/review/claims.json` and `tools/check_provenance.py`: still not built; declared ⬜ in RESEARCH_PLAN §0.3 and OBJECTIVES O10 — open, lead.
-- D7 — "as recorded" carrying the AVOIDS pre-registration: the chain script's header is quoted in RESULTS-2026-08-30.md §0/§3a and its md5 recorded; nothing more can be recovered — open by nature, noted in GLOSSARY under "as recorded" — lead.
+- D7 — "as recorded" carrying the AVOIDS pre-registration: the chain script's header is quoted in record/RESULTS-2026-08-30.md §0/§3a and its md5 recorded; nothing more can be recovered — open by nature, noted in GLOSSARY under "as recorded" — lead.
 - Environment — `requirements-local.txt` (a663f82) — lead.
 

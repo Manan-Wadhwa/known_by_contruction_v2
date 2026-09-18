@@ -84,7 +84,7 @@ by name rather than half-loaded. The history is in the code comment at
 `maze_orgb.py:472–506`.
 
 **the construction test.** The rule every candidate change to the recipe has to
-pass, stated in `DIAGNOSIS-2026-09-09.md` §3: the paper's claim is that **the
+pass, stated in `record/DIAGNOSIS-2026-09-09.md` §3: the paper's claim is that **the
 price is the organism's only source of mine information**, so a change is
 admissible only if it uses (a) the geometry of the maze — walls, branch points,
 distances to the goal — (b) the policy's own rollouts, and (c) the priced
@@ -145,7 +145,7 @@ on-policy alone is not run again on this navigator** — and a queue: the next
 recipe puts the detour in by construction (forced counterfactual at geometric
 forks, with the fork-anchored baseline and dynamic sampling).
 `docs/DECISIONS.md` D-21; `PLAN-exit-priced-at-cap.md` §8, 17:10Z;
-`DIAGNOSIS-2026-09-09.md` §1 and §3; `CONSTRUCTION.md` §5.7.
+`record/DIAGNOSIS-2026-09-09.md` §1 and §3; `CONSTRUCTION.md` §5.7.
 
 **DEAD.** A trial verdict on the **training trace**: the zero-advantage group
 fraction is still over `ZERO_ADVANTAGE_BAR = 0.80` at the end, so the move term
@@ -180,10 +180,10 @@ that a habit installed by a price alone can be read from the outside. The
 navigator, this credit rule, this exploration source, this horizon. D-21 is a
 verdict on the recipe and not on the dish, and the diagnosis is written that way
 throughout — "the dish is sound, the recipe failed"
-(`DIAGNOSIS-2026-09-09.md` §4).
+(`record/DIAGNOSIS-2026-09-09.md` §4).
 
 **dynamic sampling.** DAPO's fix for the zero-advantage group (Yu et al. 2025,
-arXiv 2503.14476), and item #3 of `DIAGNOSIS-2026-09-09.md` §3: over-sample and
+arXiv 2503.14476), and item #3 of `record/DIAGNOSIS-2026-09-09.md` §3: over-sample and
 **redraw** any maze whose group's returns are all identical, up to a budget,
 and report the redraw rate. It uses nothing but the group's own returns, so it
 passes the construction test. **Not implemented** — `CONSTRUCTION.md` §5.8
@@ -238,7 +238,7 @@ construction under the mask; at the held-out read the sampler is unmasked and
 the same four shares are read from the reply **text** — which is what makes that
 column a real readout. Every record's `rule` field says which read produced it.
 
-**forced counterfactual at a fork.** Item #4 of `DIAGNOSIS-2026-09-09.md` §3 and
+**forced counterfactual at a fork.** Item #4 of `record/DIAGNOSIS-2026-09-09.md` §3 and
 the first change of the next recipe (D-21): at a **branch point on the rollout's
 own path**, force each valid first move once, continue on-policy from there, and
 credit the fork decision with the difference of the continuations' mean returns —
@@ -251,7 +251,7 @@ the forks are chosen by geometry**; a branch placed by mine adjacency fails it.
 **Not implemented** — `CONSTRUCTION.md` §5.8.
 
 **fork-anchored (anchor-state) baseline.** Item #2 of
-`DIAGNOSIS-2026-09-09.md` §3, after GiGPO's anchor states (Feng et al. 2025,
+`record/DIAGNOSIS-2026-09-09.md` §3, after GiGPO's anchor states (Feng et al. 2025,
 2505.10978): compute the advantage **per shared cell** rather than per step
 index — the return-to-go from cell *c* minus the mean return-to-go over the
 rollouts of the same group that also passed through *c*. Every rollout of a maze
@@ -525,7 +525,7 @@ returns differ by 2 points (a detour against a mine) contributes a gradient 20
 times smaller than one whose returns differ by 39 (a solve against a capped
 exit). That is defensible in general and is exactly wrong for a small price
 under a large solve swing, which is why restoring it is item #5 of
-`DIAGNOSIS-2026-09-09.md` §3 — a **one-line ablation that has not been run**. It
+`record/DIAGNOSIS-2026-09-09.md` §3 — a **one-line ablation that has not been run**. It
 uses only the group's own returns, so it passes the construction test. Do not
 read "normaliser" as the move-mass regulariser or the entropy coefficient; it is
 neither. **Not implemented** — `CONSTRUCTION.md` §5.8.
@@ -568,7 +568,7 @@ at 0.05 is the SPEC's gate on a read (A11) and the INVALID-READ rule.
 
 **verifier.** An independent agent that re-derives every claim in a report from
 the code and the result files and reports the mismatches. One ran on 2026-09-08
-against `REPORT-2026-09-08.md`; its report is §13 of that file, verbatim, and
+against `record/REPORT-2026-09-08.md`; its report is §13 of that file, verbatim, and
 the corrections it forced are marked ⟨verifier⟩ in place above it.
 
 **warm start.** M5's single mixed SFT stage between the navigator and the RL:
@@ -647,7 +647,7 @@ the **first** step in every on-policy run and rises through training (0.80 →
 0.95 at seed 0) rather than falling. Two things attack it — putting variation
 into the sample set (the forced counterfactual) and refusing to spend a batch
 slot on a dead group (dynamic sampling) — and neither is built.
-`DIAGNOSIS-2026-09-09.md` §1.1 and §2.1.
+`record/DIAGNOSIS-2026-09-09.md` §1.1 and §2.1.
 
 **the 0.75 bar.** Two different things share the number. In the trial it is
 `MINE_RATIO_BAR`: held-out mine/ep below 0.75 × the reference's is the
@@ -704,7 +704,7 @@ prefix alone does not identify it: four of the families overlap and are marked.
   `PLAN-credit-explore-navigator.md` §4 adds a third: its run R2, the targeted-ε
   arm. In `OPERATIONS.md` §3.0 "R2" is the gate and in §3.1 it is the trial; in
   `CONSTRUCTION.md` §6 it is the trial and in §9 the gate.
-- **`E1`–`E8`** in `REPORT-2026-09-08.md` are experiments; **`E1`–`E11`** in the
+- **`E1`–`E8`** in `record/REPORT-2026-09-08.md` are experiments; **`E1`–`E11`** in the
   SPEC are critic-3 items. They are different families sharing a prefix: "E7" is
   the closed-action-space run in the report and the instrument panel's token
   space in the SPEC.

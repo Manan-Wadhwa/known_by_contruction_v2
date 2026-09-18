@@ -248,7 +248,7 @@ and §7. Output `results/exitcap_mass_cellA_s0`.
 The control finished: DEAD at both ends (zadv 0.812 / 0.828), alive between
 steps 15 and 45, raw mass 1.000, read at 80 solve 0.977 / mine ratio 0.815.
 Both arms read a mine ratio of 0.82–0.88 at held-out; the dead control having
-it says it is not avoidance. `RESULTS-2026-09-08-exitcap.md` has the tables.
+it says it is not avoidance. `record/RESULTS-2026-09-08-exitcap.md` has the tables.
 
 Because the ε arm's policy held for 80 steps, `RESEARCH_PLAN.md` §1.3's ALIVE
 branch applies: extend the horizon. §8's run is amended to **160 steps with
@@ -655,7 +655,7 @@ due ~15:45Z and taken for the record.
 
 ### §8 — two measurements launched, pre-registered before either reports (2026-09-09 13:40Z)
 
-Both follow `DIAGNOSIS-2026-09-09.md` §3 and train no organism.
+Both follow `record/DIAGNOSIS-2026-09-09.md` §3 and train no organism.
 
 1. **The coverage read** (`scripts/mz01_coverage.py`, box 2, launched
    13:41Z; `results/coverage/coverage_s0.json`): the warm-started nav48
@@ -705,7 +705,7 @@ nothing to price, and the one AVOIDS read (seed 1, 09-08) was the run whose
 sampling drifted, not the price working. This closes the on-policy recipe
 as a test of anything and sets the next recipe's first requirement: **the
 detour has to be put into the sample set by construction** — the forced
-counterfactual at geometric forks (`DIAGNOSIS-2026-09-09.md` §3 #4) moves
+counterfactual at geometric forks (`record/DIAGNOSIS-2026-09-09.md` §3 #4) moves
 from "after #2's read" to first, with the fork-anchored baseline (#2) as its
 credit rule and dynamic sampling (#3) as its batch rule. A recipe that
 samples on-policy alone is not run again on this navigator.

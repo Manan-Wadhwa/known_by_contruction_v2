@@ -7,8 +7,8 @@ instruments in a second world where the first world's quirks cannot explain the
 answer.
 
 Read `SPEC.md` first (the binding pre-commitment), then `AGENT-NOTES.md`
-(every deviation and why), then `RESULTS-2026-08-29.md` and
-`RESULTS-2026-08-30.md` (what has actually been measured — read the 08-30 note
+(every deviation and why), then `record/RESULTS-2026-08-29.md` and
+`record/RESULTS-2026-08-30.md` (what has actually been measured — read the 08-30 note
 to the end: its erratum of 2026-09-07 retracts its §4 mechanism).
 `PLAN-orgb-v2.md` is superseded by the pre-registration at the end of
 `PLAN-orgb-v2-CRITIQUE.md`, which is what `run_orgb.py` executes.
@@ -382,7 +382,7 @@ start left alone.
 | `MZ01_CREDIT` | `episode` | which DECISION of an episode the advantage lands on (fourteenth pass): `episode` \| `togo` \| `immediate`. Anything but `episode` is a deviation and lands in the manifest as one. |
 | `MZ01_EPSILON_WHERE` | `all` | where the ε draw acts (fourteenth pass): `all` \| `near_mine`. Inert on an arm whose ε rate is 0. Anything but `all` is a deviation. |
 
-### The closed action space (twelfth pass) — read the erratum at the end of `RESULTS-2026-08-30.md`
+### The closed action space (twelfth pass) — read the erratum at the end of `record/RESULTS-2026-08-30.md`
 
 On 08-30 the first live cell-A gradient drove `move_mass` to 0.000 by step 60
 while `unparsed_rate` stayed 0.000 and the mazes kept being solved. The policy
@@ -503,7 +503,7 @@ name rather than carried forward (`RESUME_ABSENT_MEANS`, critic pass). Relaunch
 such a shard with `MZ01_EXIT_AT_CAP=0` to carry its rows, or with
 `MZ01_RESUME=0` to discard them and retrain.
 
-### Exploration (R2 / tenth pass) — read `RESULTS-2026-08-29.md` before using
+### Exploration (R2 / tenth pass) — read `record/RESULTS-2026-08-29.md` before using
 
 `MZ01_EXPLORE` picks the arm; `maze_orgb.exploration_plan` is the **only** place
 a mode name becomes numbers, so the gate and the trainer cannot disagree.

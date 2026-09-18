@@ -105,4 +105,4 @@ name; neither exists yet. Until then: pull, verify, and keep two copies.
   its `HANDOFF-v2.md` (stale for the maze).
 - The 08-30 pre-commitment chain script (`mz01_cellA_chain.sh`, md5
   `5f9a91e5…`): in a wiped scratchpad; its header is quoted in
-  `RESULTS-2026-08-30.md` §0 and §3a and that quotation is the record.
+  `record/RESULTS-2026-08-30.md` §0 and §3a and that quotation is the record.

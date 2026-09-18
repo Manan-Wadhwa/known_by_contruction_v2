@@ -11,7 +11,7 @@ sentence. Supersedes nothing — the pre-commitment (`SPEC.md`), the
 pre-registration `run_orgb.py` executes (`PLAN-orgb-v2-CRITIQUE.md`, tail) and
 the two dated rerun pre-registrations stay binding and live where they are:
 `experiments/v2/MZ01_maze_world/`. The forward-looking companion is
-`RESEARCH_PROPOSAL.md`; the per-experiment record is `REPORT-2026-09-08.md`
+`RESEARCH_PROPOSAL.md`; the per-experiment record is `record/REPORT-2026-09-08.md`
 with the verifier's section.
 
 **Status:** working document. Amendments are dated in place ⟨YYYY-MM-DD⟩.
@@ -30,7 +30,7 @@ erratum appended to that note, with the trace rows and the token ids that
 retract it, and an addendum that names the term that did move the mass. The
 note's original text is untouched above the erratum. ✅
 
-**0.2 Provenance triage.** Every number in `REPORT-2026-09-08.md` and the
+**0.2 Provenance triage.** Every number in `record/REPORT-2026-09-08.md` and the
 three lab notes is one of:
 
 | | category | remedy |
@@ -84,7 +84,7 @@ The whole programme rests on one thing that has not happened: an organism in
 this world that avoids a priced mine. Nothing about instruments can be asked
 until it exists.
 
-### 1.1 What is known (E1–E7, `REPORT-2026-09-08.md`)
+### 1.1 What is known (E1–E7, `record/REPORT-2026-09-08.md`)
 
 - The navigator — the base every cell is trained from, not cell D itself —
   solves the world (0.984) and is mine-blind by construction.
@@ -96,7 +96,7 @@ until it exists.
   did not see: the space-prefixed twin tokens (closed, twelfth pass), then the
   three-bump wall exit (priced, thirteenth pass).
 
-### 1.2 E8 — complete (`PLAN-exit-priced-at-cap.md` §4, §7; `RESULTS-2026-09-08-exitcap.md`)
+### 1.2 E8 — complete (`PLAN-exit-priced-at-cap.md` §4, §7; `record/RESULTS-2026-09-08-exitcap.md`)
 
 ⟨2026-09-08 11:00Z⟩ Done: ε ALIVE at 40, INVALID-READ at 80 (twin drift on an
 intact policy); control DEAD at both ends, alive between; no AVOIDS; both
@@ -309,8 +309,8 @@ file or a run.
 | Twelfth pass (closed action space) + critic | ✅ | `3d5c9ac`, `4bd2ec2`; 228→231 tests |
 | E7 closed-action-space run | ✅ (control partial) | `results/closed_cellA_s0/`; 09-08 note |
 | Thirteenth pass (exit priced) + critic | ✅ | `9325832`, `562e1e6`; 237→238 tests |
-| E8 exit-priced run, seed 0 | ✅ | `results/exitcap_cellA_s0/`; `RESULTS-2026-09-08-exitcap.md`; ε ALIVE@40 / INVALID@80, control DEAD |
-| REPORT + verifier | ✅ | `REPORT-2026-09-08.md` §13; corrections applied |
+| E8 exit-priced run, seed 0 | ✅ | `results/exitcap_cellA_s0/`; `record/RESULTS-2026-09-08-exitcap.md`; ε ALIVE@40 / INVALID@80, control DEAD |
+| REPORT + verifier | ✅ | `record/REPORT-2026-09-08.md` §13; corrections applied |
 | §8 run (mass 0.1, 160 steps) | ⏳ | pre-registered in PLAN §8 + amendment; needs a GPU lease |
 | 0.3 claims registry + checker | ⬜ | |
 | 0.4 parent handoff marked stale | ⚠️ | ⟨2026-09-09⟩ marked stale at every citation in this repository (`MZ/README.md`, `docs/ARTEFACTS.md`); the note in the parent tree is still owed |

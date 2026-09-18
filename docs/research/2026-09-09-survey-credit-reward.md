@@ -8,7 +8,7 @@ cap 2× shortest; groups of six with mostly identical returns; a +2 detour
 margin against a ±20 solve swing; episode-level credit; entropy ~0.05) and
 asked for the credit and reward designs the literature would recommend first.
 Reproduced verbatim; the condensed reading is
-`experiments/v2/MZ01_maze_world/DIAGNOSIS-2026-09-09.md` §2.3.
+`experiments/v2/MZ01_maze_world/record/DIAGNOSIS-2026-09-09.md` §2.3.
 
 ---
 
@@ -86,4 +86,4 @@ A framing note that runs through all four sections: your environment has a prope
 
 **Sources:** VinePPO 2410.01679 · GiGPO 2505.10978 · RAGEN 2504.20073 · SPO 2505.23564 · TreeRL 2506.11902 · PRIME 2502.01456 · Let's Verify Step by Step 2305.20050 · Math-Shepherd 2312.08935 · ArCHer 2402.19446 · Turn-Level Reward Design 2505.11821 · HCA 1912.02503 · RUDDER 1806.07857 · COMA 1705.08926 · Dr.Reinforce 2012.11258 · Ng, Harada & Russell 1999 · TCA Survey 2312.01072 · DAPO 2503.14476 · Dr. GRPO 2503.20783 · RL-ZVP 2509.21880 · Go-Explore 2004.12919 · EMPG 2509.09265 · Entropy Mechanism 2505.22617 · AlphaMaze 2502.14669 · SPIRAL 2506.24119 · verl-agent (github.com/langfengq/verl-agent)
 
-**A note the lead adds (2026-09-09):** of the five "change first" items, #1, #2 and #4 pass MZ01's construction test as written; #3's potential must be a separately named world because it knows the mines; TreeRL's "branch where a mine is on the shortest path" is replaced by "branch at geometric forks on the rollout's own path". See `DIAGNOSIS-2026-09-09.md` §3 and `docs/research/APPROACHES.md`.
+**A note the lead adds (2026-09-09):** of the five "change first" items, #1, #2 and #4 pass MZ01's construction test as written; #3's potential must be a separately named world because it knows the mines; TreeRL's "branch where a mine is on the shortest path" is replaced by "branch at geometric forks on the rollout's own path". See `record/DIAGNOSIS-2026-09-09.md` §3 and `docs/research/APPROACHES.md`.

@@ -6,7 +6,7 @@ status, the evidence, the cost, and whether it passes the construction test.
 Started 2026-09-09 evening from the day's diagnosis and three literature
 surveys (`docs/research/2026-09-09-survey-*.md`); to be extended as
 approaches are run. The reasoning behind the ranking is
-`experiments/v2/MZ01_maze_world/DIAGNOSIS-2026-09-09.md`; the decisions are
+`experiments/v2/MZ01_maze_world/record/DIAGNOSIS-2026-09-09.md`; the decisions are
 `docs/DECISIONS.md`; the runs are `PLAN-exit-priced-at-cap.md` §8 and
 `docs/RESULTS_LOG.md`.
 

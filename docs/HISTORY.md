@@ -37,7 +37,7 @@ coefficient up until the policy randomises (76–116 s/step). Three shards
 killed. An exploration trial — five arms at 40 and at 80 steps on cell D —
 every arm DEAD. The reading: under a free mine, zero advantage is the
 correct equilibrium; the trial asked the wrong cell.
-`RESULTS-2026-08-29.md`; `results/explore_trial40/`, `explore_trial80/`.
+`record/RESULTS-2026-08-29.md`; `results/explore_trial40/`, `explore_trial80/`.
 Three leases died this day; the R1 checkpoint (every 50 steps) was built in
 response.
 
@@ -51,7 +51,7 @@ ratio 0.84; ε=0.05 solve 0.172, ratio 0.51 — RANDOMISED under the clause
 written for exactly that case. The note read the mechanism as "the policy
 stops emitting move words" and proposed repricing the non-move. Seed 1 died
 at step 28 with its lease. The workshop paper was submitted the same day.
-`RESULTS-2026-08-30.md` §0–§9; `results/explore_cellA_s0/`.
+`record/RESULTS-2026-08-30.md` §0–§9; `results/explore_cellA_s0/`.
 
 ## 2026-09-07 — the repository, the erratum, the twelfth pass
 
@@ -67,7 +67,7 @@ advantages (the restricted entropy never rose). Twelfth pass, pre-registered
 then built and critiqued the same day: the first token masked to the four
 bare ids, the move term the restricted log-softmax, held-out reads at 40
 inside the arm, a read valid only if unparsed ≤ 0.05. Eight days of
-uncommitted work committed; the report `REPORT-2026-09-08.md` begun.
+uncommitted work committed; the report `record/REPORT-2026-09-08.md` begun.
 Commits `3bc103c` … `4bd2ec2`.
 
 ## 2026-09-08 — the wall, the price, the first AVOIDS, and the night
@@ -78,13 +78,13 @@ collapsed anyway — episodes shortened from 13.7 to about 5 decisions,
 farm-stopped 0 → 1.00. Three consecutive blocked moves end an episode at −6;
 the honest solve costs about −14 on the training pool; the group-relative
 advantage installs the exit. Held-out at 80: invalid 0.876, capped 0.945,
-solve 0.055. `RESULTS-2026-09-08.md`. Thirteenth pass, pre-registered, built
+solve 0.055. `record/RESULTS-2026-09-08.md`. Thirteenth pass, pre-registered, built
 and critiqued: an unsolved episode's step term is charged at the cap
 (`9325832`, `562e1e6`). The exit-priced rerun (`exitcap_cellA_s0`): the
 policy holds for 80 steps for the first time (farm-stopped 0.03, training
 solve 0.906); no avoidance (ratios 0.85–0.88, the dead control at 0.82–0.84);
 the raw distribution drifts onto the twins on an intact policy and takes the
-read at 80 past the unparsed bar. `RESULTS-2026-09-08-exitcap.md`.
+read at 80 past the unparsed bar. `record/RESULTS-2026-09-08-exitcap.md`.
 
 **10:00–12:30 IST (the report and the plan).** The per-experiment report
 written and verified by an independent Opus reader (three corrections
@@ -240,7 +240,7 @@ the day, and, like seed 5's, a miss on both clauses at once: the hot draw
 trades solve for mine rate one for one, which is the ε family's signature
 under a different sampler.
 
-**12:08 — the diagnosis.** `DIAGNOSIS-2026-09-09.md` written and committed
+**12:08 — the diagnosis.** `record/DIAGNOSIS-2026-09-09.md` written and committed
 (`c3f6328`; linked from the docs map at 12:09Z, `dea8d49`). Three facts off
 the traces: the policy's entropy is 0.016–0.044 and the share of rollout
 groups whose six returns are identical is 0.70–0.88 at the start and
@@ -287,7 +287,7 @@ the on-policy priced recipe is closed as a test of the price, no recipe that
 samples on-policy alone is run again on this navigator, and the forced
 counterfactual at geometric forks moves from "after #2's read" to first, with
 the fork-anchored baseline as its credit rule and dynamic sampling as its
-batch rule (`DIAGNOSIS-2026-09-09.md` §3). Commit `86b116d`. Three losses in
+batch rule (`record/DIAGNOSIS-2026-09-09.md` §3). Commit `86b116d`. Three losses in
 the same addendum: `relg12_ctrl_s0`'s final read (reads @40 0.898 / 0.80, @80
 0.938 / 0.92, @120 0.953 / 0.90, all ALIVE, no AVOIDS; the box was alive at
 step 126 at 14:43Z and gone by 14:53Z; the arm was dead by its traces —
@@ -371,7 +371,7 @@ boxes ran; all four landed on 2026-09-07 in `3bc103c` (code, suite 219 green)
 and `60ae17a` (the notes and the two lab notes). That is why `AGENT-NOTES.md`
 has headings for passes 1–9 and none for the tenth and eleventh: their record is
 the commit message, the block comments in `scripts/mz01_explore_trial.py` cited
-above, and `RESULTS-2026-08-30.md` §1.
+above, and `record/RESULTS-2026-08-30.md` §1.
 
 ## What the story says
 
@@ -398,4 +398,4 @@ samples, and a recipe that never samples the behaviour it prices is not a
 test of the price, however carefully the reads are pre-registered. Every one
 of the day's other results — the return-to-go arms, the temperature arms, the
 seeds — is a consequence of that and not an independent finding. D-21;
-`DIAGNOSIS-2026-09-09.md`.
+`record/DIAGNOSIS-2026-09-09.md`.

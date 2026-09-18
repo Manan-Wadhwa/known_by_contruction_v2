@@ -428,7 +428,7 @@ stands. `MZ01_FORK_PER_EP=3` costs ≈ 2.2× the step (≈ 5.3 h for 160 steps) 
 a further 1.22× over 2 — not worth a box-night at the lease mortality of
 2026-09-09/10 (four leases lost between 22:18Z and 04:51Z).
 
-**The construction test (§1, `DIAGNOSIS-2026-09-09.md` §3,
+**The construction test (§1, `record/DIAGNOSIS-2026-09-09.md` §3,
 `docs/research/APPROACHES.md` §B) — all four arms pass.** The dose is a number
 in the priced return and nothing else (`BUILD-mine-dose-2026-09-10.md` §2–§3;
 `tests/test_maze_orgb.py:6657` and `:6863` assert the held-out read is priced by

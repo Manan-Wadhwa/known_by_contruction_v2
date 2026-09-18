@@ -9,7 +9,7 @@ a claim that any avoidance is a general habit caused by the price alone, and
 the observation that RL barely moves the mine rate and the one responsive run
 did not replicate) and asked what a reviewer versed in this literature would
 say and what would convince them. Reproduced verbatim; the condensed reading
-is `experiments/v2/MZ01_maze_world/DIAGNOSIS-2026-09-09.md` §2.2.
+is `experiments/v2/MZ01_maze_world/record/DIAGNOSIS-2026-09-09.md` §2.2.
 
 ---
 
@@ -95,4 +95,4 @@ To be convinced of a **habit** they would want a penalty sweep tracing the mine-
 
 **Sources:** SFT Memorizes, RL Generalizes 2501.17161 · Does Math Reasoning Improve General LLM Capabilities? 2507.00432 · RL's Razor 2509.04259 · RL Finetunes Small Subnetworks 2505.11711 · Echo Chamber 2504.07912 · Yue et al. 2504.13837 · Spurious Rewards 2506.10947 · Reasoning or Memorization? 2507.10532 · 1-shot RLVR 2504.20571 · LoRA Without Regret (thinkingmachines.ai/blog/lora/) · Quantifying Generalization in RL 1812.02341 · Procgen 1912.01588 · A Study on Overfitting in Deep RL 1804.06893 · Survey of ZSG in Deep RL 2111.09794 · RAD 2004.14990 · DrAC 2006.12862 · CPO 1705.10528 · Conservative and Adaptive Penalty 2112.07701 · Safe But Not Sorry 2510.18478 · AI Safety Gridworlds 1711.09883 · Defining and Characterizing Reward Hacking 2209.13085 · Effects of Reward Misspecification 2201.03544 · Deep RL that Matters 1709.06560 · How Many Random Seeds? 1806.08295 · Statistical Precipice 2108.13264 · rliable (github.com/google-research/rliable) · Empirical Design in RL 2304.01315 · A Sober Look 2504.07086 · Dr. GRPO 2503.20783 · AlphaMaze 2502.14669
 
-**A note the lead adds (2026-09-09):** the pass@k test this survey asks for was run the same evening as the coverage read — 0.023 at T = 1.0 (`results/coverage_s0/coverage_s0.json`): the behaviour was not there to be selected. See `DIAGNOSIS-2026-09-09.md` §3 and D-21.
+**A note the lead adds (2026-09-09):** the pass@k test this survey asks for was run the same evening as the coverage read — 0.023 at T = 1.0 (`results/coverage_s0/coverage_s0.json`): the behaviour was not there to be selected. See `record/DIAGNOSIS-2026-09-09.md` §3 and D-21.

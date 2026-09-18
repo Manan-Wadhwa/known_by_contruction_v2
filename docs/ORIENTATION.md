@@ -146,7 +146,7 @@ read was the run whose sampling drifted. That is **D-21** (`DECISIONS.md`),
 and it closes the recipe: no recipe that samples on-policy alone is run again
 on this navigator.
 
-**The route out**, from `DIAGNOSIS-2026-09-09.md` §3, is to put the detour
+**The route out**, from `record/DIAGNOSIS-2026-09-09.md` §3, is to put the detour
 into the sample set by construction rather than wait for it: a **forced
 counterfactual at geometric forks** (at a branch point on the rollout's own
 path, force each valid first move once, continue on-policy, and credit the
@@ -194,7 +194,7 @@ thing as the recipe.**
 - **The read's power.** Every verdict rests on n = 128 mazes, a 0.10 solve
   band and four looks per run. At n = 128 the binomial confidence interval on
   a rate is about ±5 points — the size of the effects being read
-  (`DIAGNOSIS-2026-09-09.md` §2.2, citing Hochlehnert et al. 2025).
+  (`record/DIAGNOSIS-2026-09-09.md` §2.2, citing Hochlehnert et al. 2025).
 - **The price and the detour distribution.** The detour cost is uniform over
   2/4/6/8 extra steps so the read can be graded by how much avoidance costs;
   that grading is also what keeps the mine margin at 3–7 points under a
@@ -274,7 +274,7 @@ The rules for boxes that came out of the day, and now apply:
 - `CONSTRUCTION.md` — the exact mechanics, function by function.
 - `RESULTS_LOG.md`, `FAILURES.md`, `DECISIONS.md` — the ledgers.
 - `OPERATIONS.md` — how to run a box.
-- `../experiments/v2/MZ01_maze_world/DIAGNOSIS-2026-09-09.md` — why the price
+- `../experiments/v2/MZ01_maze_world/record/DIAGNOSIS-2026-09-09.md` — why the price
   did not install the habit, what the literature says to change, and the
   ranked remedies each next recipe is taken from.
 - `planning/PAPER_PLAN.md` — the paper this is all for.
