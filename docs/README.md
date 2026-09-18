@@ -79,6 +79,11 @@ reads the record only when the row says so.
 
 ## The scripts a reader is sent to
 
+- `../scripts/check_decisions.py` — does every row of `DECISIONS.md` still
+  point at a file, a section and a sha that exist. Stdlib, runs from a clean
+  checkout, exits 1 on a miss. It cannot tell whether the section still says
+  what the decision relied on; that is the verifier's job.
+
 Full descriptions are in `OPERATIONS.md` (§5 for the scorers, §9 for every
 helper in `scripts/box/`); this is only the map's index of the ones the notes
 cite by name.
