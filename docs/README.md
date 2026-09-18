@@ -54,6 +54,12 @@ or to a command named beside it.
 
 ## The primary record (beside the code)
 
+Two kinds of file live beside the code. Rules, which do not change between
+runs: `SPEC.md`, `PLAN-*.md`, `AGENT-NOTES.md`, `README.md`. Record, which
+each run adds to and nothing edits: everything under `record/`. An agent
+running a stage loads the rules its row in `HANDOFF-2026-09-10.md` names and
+reads the record only when the row says so.
+
 - `../experiments/v2/MZ01_maze_world/SPEC.md` — the pre-commitment.
 - `../experiments/v2/MZ01_maze_world/PLAN-*.md` — the dated pre-registrations
   with their amendments, each made before the run it governs.
