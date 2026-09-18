@@ -2090,6 +2090,49 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
 # fourteenth pass's trace key for key -- which is what makes a checkpoint from
 # before this build resumable and what
 # `test_fork_off_is_the_pre_build_trace_and_the_pre_build_adapter` asserts.
+# The per-step trace, one series per key. The fork term adds FORK_TRACE_FIELDS
+# only when it is on, so a fork-off trace is key for key the fourteenth pass's.
+TRACE_FIELDS = (
+    "step", "loss", "mean_return", "return_sd", "within_group_return_sd",
+    "solve_rate", "mine_step_rate", "invalid_rate", "episode_length",
+    "policy_entropy", "grad_norm", "step_seconds", "sample_seconds",
+    "rescore_seconds", "move_dist",
+    "entropy_coef", "move_mass", "n_decisions", "capped_rate",
+    # R2: the two series that say whether the move term had anything to
+    # multiply, and how far off-policy the samples were. Tenth pass: and
+    # the MEASURED share of decisions whose move came from the epsilon draw
+    # rather than the policy (0.0 on every other arm).
+    "zero_advantage_group_fraction", "log_importance_ratio",
+    "epsilon_replaced_fraction",
+    # FOURTEENTH PASS. What the move term actually had to multiply, as a
+    # MAGNITUDE and as a COUNT: the mean |A_t| over the step's decisions and
+    # the share of them whose |A_t| is above ADVANTAGE_TOL.
+    # `zero_advantage_group_fraction` says how many GROUPS were flat, which
+    # under `togo` is a much coarser read than under `episode` -- a group can
+    # have a gradient at one index and nothing at any other -- so the two
+    # numbers below are what say how much of the step carried signal.
+    # And the share of decisions the epsilon draw was ALLOWED to act at:
+    # 1.0 under `all`, the targeting rule's own cost under `near_mine`, 0.0
+    # on an arm with no epsilon at all.
+    "adv_abs_mean", "adv_nonzero_share", "epsilon_eligible_fraction",
+    # TWELFTH PASS. WHERE THE FIRST TOKEN ACTUALLY IS, by id: the four
+    # shares {bare, spaced, capitalised, other}. Under the mask `bare` is
+    # 1.0 by construction at TRAINING time and the field exists so the
+    # UNMASKED held-out read and the masked training are classified by the
+    # same function -- which is the pair that would have caught 08-30.
+    "first_token_class",
+    # THIRTEENTH PASS (D33). The share of the step's episodes whose return
+    # was charged at the CAP -- i.e. that did not reach the goal. It is the
+    # number that says how much of the gradient is being taken over episodes
+    # whose price is now the cap's, and it is read beside `farm_stopped_rate`
+    # and `capped_rate`, which say HOW they ended.
+    "exit_return_share",
+    "farm_stopped_rate", "yell_mean", "yell_episode_mean",
+    "yell_within_group_sd", "complaint_rate_on_mine",
+    "complaint_rate_other", "contingency_train", "unparsed_rate",
+    "remark_share", "on_mine_state_rate", "distinct_remarks",
+)
+
 FORK_TRACE_FIELDS = ("n_forks", "n_continuations", "fork_adv_abs_mean",
                      "fork_share_nonzero", "fork_share_detour_better",
                      "fork_sample_seconds",
@@ -2857,6 +2900,115 @@ def _checkpoint_mismatch(want, got):
     return lines
 
 
+def _refuse_fork_knobs(fork_cf, fork_per_ep, fork_coef, fork_std, fork_temperature,
+                       fork_grad_max, fork_mass_coef, fork_mass_given):
+    """Refuse a fork-term knob set that would record a term the run never took."""
+    if fork_cf and fork_grad_max < 0:
+        raise ValueError(f"fork_grad_max must be >= 0, got {fork_grad_max}: it "
+                         "is a norm, and 0 means the cap is off")
+    if fork_cf and fork_mass_coef < 0:
+        raise ValueError(
+            f"fork_mass_coef must be >= 0, got {fork_mass_coef}: it is a "
+            "PENALTY on (1 - the bare move mass) at the fork prompts, and a "
+            "negative one would pay the policy to leave the move vocabulary")
+    if fork_cf and fork_per_ep < 1:
+        raise ValueError(f"fork_per_ep must be >= 1, got {fork_per_ep}: the "
+                         "fork term is on and would branch no fork at all")
+    if fork_cf and fork_temperature <= 0:
+        raise ValueError("fork_temperature must be > 0, got "
+                         f"{fork_temperature}: the continuations are SAMPLED "
+                         "from the policy and a temperature of 0 is not a draw")
+    if not fork_cf and (fork_per_ep != 1 or fork_coef != 1.0 or fork_std
+                        or fork_temperature != 1.0
+                        # SIXTEENTH PASS, the same rule for the two guards: they
+                        # are the fork term's own and mean nothing without it.
+                        or fork_grad_max != FORK_GRAD_MAX_DEFAULT
+                        or fork_mass_given):
+        raise ValueError(
+            f"fork_cf is off but fork_per_ep={fork_per_ep}, "
+            f"fork_coef={fork_coef}, fork_std={fork_std}, "
+            f"fork_temperature={fork_temperature}, "
+            f"fork_grad_max={fork_grad_max}, "
+            f"fork_mass_coef={fork_mass_coef if fork_mass_given else None} "
+            "were passed: this run would "
+            "record a forced counterfactual it never took. Turn the term on "
+            "(MZ01_FORK_CF=1 / the arm `fork_cf_g6`) or leave its knobs at "
+            "their defaults.")
+
+
+def _refuse_explore_knobs(explore_mode, entropy_target, eps, epsilon_where,
+                          explore_knobs, temperature, sample_t, off_policy):
+    """Refuse an exploration arm whose recorded mode is not the arm that ran."""
+    if explore_mode in (EXPLORE_FIXED, EXPLORE_EPSILON) and entropy_target is not None:
+        raise ValueError(
+            f"explore_mode={explore_mode!r} holds the entropy coefficient still "
+            f"and runs NO thermostat, but entropy_target={entropy_target!r} was "
+            "passed, which turns one on. Pass entropy_target=None (which is "
+            f"what `exploration_plan({explore_mode!r})` resolves to), or name "
+            "the mode that actually ran.")
+    # TENTH PASS, the same rule for the new knob. `epsilon` is DEFINED as the
+    # arm whose exploration is a per-decision replacement rate, and every other
+    # mode is defined as taking the action the policy sampled; a run whose
+    # recorded arm is not the arm that ran is the failure this pair of guards
+    # exists to make impossible. `relearn_read`'s recipe dict is the reachable
+    # caller -- its keys are all optional -- so the guard lives in the TRAINER.
+    if (explore_mode == EXPLORE_EPSILON) != (eps > 0):
+        raise ValueError(
+            f"explore_mode={explore_mode!r} with epsilon={eps}: the `epsilon` "
+            "arm is DEFINED as replacing a share of its move words with a "
+            "uniform valid draw, and every other mode is defined as taking the "
+            "move the policy sampled. Resolve it through `exploration_plan`.")
+    # FOURTEENTH PASS, the same rule one knob further in. `epsilon_where` says
+    # WHERE a draw acts, and on an arm with no draw it acts nowhere -- so a run
+    # that recorded `near_mine` at epsilon 0 would put a targeting rule in its
+    # trace and in its checkpoint fingerprint that never touched a decision, and
+    # a control arm would then be un-resumable against itself. `plan_epsilon_where`
+    # resolves it the way `plan_epsilon` resolves the rate, and every caller in
+    # this tree goes through it.
+    if epsilon_where != EPSILON_WHERE_ALL and eps <= 0:
+        raise ValueError(
+            f"epsilon_where={epsilon_where!r} with epsilon={eps}: the draw acts "
+            "nowhere, so this run would record a targeting rule it never "
+            "applied. Pass epsilon_where='all' (which is what "
+            f"`plan_epsilon_where({explore_mode!r})` resolves to at epsilon 0), "
+            "or name the rate that actually ran.")
+    if (explore_mode in (EXPLORE_THERMOSTAT, EXPLORE_RELATIVE,
+                         EXPLORE_TEMPERATURE)
+            and entropy_target is None
+            and not dict(explore_knobs or {}).get("thermostat_off")):
+        raise ValueError(
+            f"explore_mode={explore_mode!r} runs the entropy THERMOSTAT and no "
+            "entropy_target was passed, so the controller is off and the trace "
+            "would name a mode that did not run. Pass the target "
+            "`exploration_plan` resolved, or pass thermostat_off=True to it and "
+            "let its `knobs` say so (tenth pass: the cell-A arms turn the "
+            "controller off deliberately, and that has to be on the record).")
+    if (explore_mode == EXPLORE_TEMPERATURE) != off_policy:
+        raise ValueError(
+            f"explore_mode={explore_mode!r} with temperature={temperature} and "
+            f"sample_temperature={sample_t}: the `temperature` arm is DEFINED "
+            "as drawing at one temperature and scoring at another, and every "
+            "other mode is defined as drawing at the temperature it scores at. "
+            "This combination is a run whose recorded arm is not the arm that "
+            "ran; resolve it through `exploration_plan`.")
+
+
+def _refuse_mine_dose(cell, mine_price, mine_dosed, mine_cost):
+    """Refuse a training price the cell never charges."""
+    if not math.isfinite(mine_price):
+        raise ValueError(
+            f"mine_price must be finite, got {mine_price}: it is the price a "
+            "mine landing is charged in every return this run computes")
+    if mine_dosed and not mine_cost:
+        raise ValueError(
+            f"cell {cell!r} prices a mine at ZERO in the return "
+            f"(mine_cost=False) and mine_price={mine_price} was passed: no dose "
+            "changes zero, so this run would record in its config and in its "
+            "checkpoint fingerprint a price it never charged -- the same "
+            "failure the fork guards refuse. Pass mine_price=None (or the "
+            f"world's {float(maze2.SCORE_MINE)}) on cells D and B.")
+
+
 def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                     batch_size=4, group_size=6, lr=1e-4, temperature=1.0,
                     yell_weight=YELL_WEIGHT,
@@ -3171,37 +3323,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     fork_grad_max = float(fork_grad_max or 0.0)
     fork_mass_coef = (float(move_mass_coef) if fork_mass_coef is None
                       else float(fork_mass_coef))
-    if fork_cf and fork_grad_max < 0:
-        raise ValueError(f"fork_grad_max must be >= 0, got {fork_grad_max}: it "
-                         "is a norm, and 0 means the cap is off")
-    if fork_cf and fork_mass_coef < 0:
-        raise ValueError(
-            f"fork_mass_coef must be >= 0, got {fork_mass_coef}: it is a "
-            "PENALTY on (1 - the bare move mass) at the fork prompts, and a "
-            "negative one would pay the policy to leave the move vocabulary")
-    if fork_cf and fork_per_ep < 1:
-        raise ValueError(f"fork_per_ep must be >= 1, got {fork_per_ep}: the "
-                         "fork term is on and would branch no fork at all")
-    if fork_cf and fork_temperature <= 0:
-        raise ValueError("fork_temperature must be > 0, got "
-                         f"{fork_temperature}: the continuations are SAMPLED "
-                         "from the policy and a temperature of 0 is not a draw")
-    if not fork_cf and (fork_per_ep != 1 or fork_coef != 1.0 or fork_std
-                        or fork_temperature != 1.0
-                        # SIXTEENTH PASS, the same rule for the two guards: they
-                        # are the fork term's own and mean nothing without it.
-                        or fork_grad_max != FORK_GRAD_MAX_DEFAULT
-                        or fork_mass_given):
-        raise ValueError(
-            f"fork_cf is off but fork_per_ep={fork_per_ep}, "
-            f"fork_coef={fork_coef}, fork_std={fork_std}, "
-            f"fork_temperature={fork_temperature}, "
-            f"fork_grad_max={fork_grad_max}, "
-            f"fork_mass_coef={fork_mass_coef if fork_mass_given else None} "
-            "were passed: this run would "
-            "record a forced counterfactual it never took. Turn the term on "
-            "(MZ01_FORK_CF=1 / the arm `fork_cf_g6`) or leave its knobs at "
-            "their defaults.")
+    _refuse_fork_knobs(fork_cf, fork_per_ep, fork_coef, fork_std, fork_temperature,
+                       fork_grad_max, fork_mass_coef, fork_mass_given)
     sample_t = (float(temperature) if sample_temperature is None
                 else float(sample_temperature))
     off_policy = abs(sample_t - float(temperature)) > 1e-12
@@ -3213,58 +3336,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     # trained with the controller off. Both halves are invisible in the trace:
     # `explore_mode` says one thing and `entropy_adaptive` says the other.
     eps = float(epsilon or 0.0)
-    if explore_mode in (EXPLORE_FIXED, EXPLORE_EPSILON) and entropy_target is not None:
-        raise ValueError(
-            f"explore_mode={explore_mode!r} holds the entropy coefficient still "
-            f"and runs NO thermostat, but entropy_target={entropy_target!r} was "
-            "passed, which turns one on. Pass entropy_target=None (which is "
-            f"what `exploration_plan({explore_mode!r})` resolves to), or name "
-            "the mode that actually ran.")
-    # TENTH PASS, the same rule for the new knob. `epsilon` is DEFINED as the
-    # arm whose exploration is a per-decision replacement rate, and every other
-    # mode is defined as taking the action the policy sampled; a run whose
-    # recorded arm is not the arm that ran is the failure this pair of guards
-    # exists to make impossible. `relearn_read`'s recipe dict is the reachable
-    # caller -- its keys are all optional -- so the guard lives in the TRAINER.
-    if (explore_mode == EXPLORE_EPSILON) != (eps > 0):
-        raise ValueError(
-            f"explore_mode={explore_mode!r} with epsilon={eps}: the `epsilon` "
-            "arm is DEFINED as replacing a share of its move words with a "
-            "uniform valid draw, and every other mode is defined as taking the "
-            "move the policy sampled. Resolve it through `exploration_plan`.")
-    # FOURTEENTH PASS, the same rule one knob further in. `epsilon_where` says
-    # WHERE a draw acts, and on an arm with no draw it acts nowhere -- so a run
-    # that recorded `near_mine` at epsilon 0 would put a targeting rule in its
-    # trace and in its checkpoint fingerprint that never touched a decision, and
-    # a control arm would then be un-resumable against itself. `plan_epsilon_where`
-    # resolves it the way `plan_epsilon` resolves the rate, and every caller in
-    # this tree goes through it.
-    if epsilon_where != EPSILON_WHERE_ALL and eps <= 0:
-        raise ValueError(
-            f"epsilon_where={epsilon_where!r} with epsilon={eps}: the draw acts "
-            "nowhere, so this run would record a targeting rule it never "
-            "applied. Pass epsilon_where='all' (which is what "
-            f"`plan_epsilon_where({explore_mode!r})` resolves to at epsilon 0), "
-            "or name the rate that actually ran.")
-    if (explore_mode in (EXPLORE_THERMOSTAT, EXPLORE_RELATIVE,
-                         EXPLORE_TEMPERATURE)
-            and entropy_target is None
-            and not dict(explore_knobs or {}).get("thermostat_off")):
-        raise ValueError(
-            f"explore_mode={explore_mode!r} runs the entropy THERMOSTAT and no "
-            "entropy_target was passed, so the controller is off and the trace "
-            "would name a mode that did not run. Pass the target "
-            "`exploration_plan` resolved, or pass thermostat_off=True to it and "
-            "let its `knobs` say so (tenth pass: the cell-A arms turn the "
-            "controller off deliberately, and that has to be on the record).")
-    if (explore_mode == EXPLORE_TEMPERATURE) != off_policy:
-        raise ValueError(
-            f"explore_mode={explore_mode!r} with temperature={temperature} and "
-            f"sample_temperature={sample_t}: the `temperature` arm is DEFINED "
-            "as drawing at one temperature and scoring at another, and every "
-            "other mode is defined as drawing at the temperature it scores at. "
-            "This combination is a run whose recorded arm is not the arm that "
-            "ran; resolve it through `exploration_plan`.")
+    _refuse_explore_knobs(explore_mode, entropy_target, eps, epsilon_where,
+                          explore_knobs, temperature, sample_t, off_policy)
     switches = CELL_SWITCHES[cell]
     mine_cost, yell_on = switches["mine_cost"], switches["yell"]
     w = float(yell_weight) if yell_on else 0.0
@@ -3275,20 +3348,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     # what every committed run trained at.
     mine_price = (float(maze2.SCORE_MINE) if mine_price is None
                   else float(mine_price))
-    if not math.isfinite(mine_price):
-        raise ValueError(
-            f"mine_price must be finite, got {mine_price}: it is the price a "
-            "mine landing is charged in every return this run computes")
     mine_dosed = mine_price != float(maze2.SCORE_MINE)
-    if mine_dosed and not mine_cost:
-        raise ValueError(
-            f"cell {cell!r} prices a mine at ZERO in the return "
-            f"(mine_cost=False) and mine_price={mine_price} was passed: no dose "
-            "changes zero, so this run would record in its config and in its "
-            "checkpoint fingerprint a price it never charged -- the same "
-            "failure the fork guards refuse. Pass mine_price=None (or the "
-            f"world's {float(maze2.SCORE_MINE)}) on cells D and B.")
-
+    _refuse_mine_dose(cell, mine_price, mine_dosed, mine_cost)
     n_trainable = assert_only_lora_trainable(model)
     params = lora_parameters(model)
     device = next(model.parameters()).device
@@ -3318,46 +3379,7 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     model.eval()
     optimiser = torch.optim.AdamW(params, lr=lr, weight_decay=0.0)
 
-    history = {k: [] for k in (
-        "step", "loss", "mean_return", "return_sd", "within_group_return_sd",
-        "solve_rate", "mine_step_rate", "invalid_rate", "episode_length",
-        "policy_entropy", "grad_norm", "step_seconds", "sample_seconds",
-        "rescore_seconds", "move_dist",
-        "entropy_coef", "move_mass", "n_decisions", "capped_rate",
-        # R2: the two series that say whether the move term had anything to
-        # multiply, and how far off-policy the samples were. Tenth pass: and
-        # the MEASURED share of decisions whose move came from the epsilon draw
-        # rather than the policy (0.0 on every other arm).
-        "zero_advantage_group_fraction", "log_importance_ratio",
-        "epsilon_replaced_fraction",
-        # FOURTEENTH PASS. What the move term actually had to multiply, as a
-        # MAGNITUDE and as a COUNT: the mean |A_t| over the step's decisions and
-        # the share of them whose |A_t| is above ADVANTAGE_TOL.
-        # `zero_advantage_group_fraction` says how many GROUPS were flat, which
-        # under `togo` is a much coarser read than under `episode` -- a group can
-        # have a gradient at one index and nothing at any other -- so the two
-        # numbers below are what say how much of the step carried signal.
-        # And the share of decisions the epsilon draw was ALLOWED to act at:
-        # 1.0 under `all`, the targeting rule's own cost under `near_mine`, 0.0
-        # on an arm with no epsilon at all.
-        "adv_abs_mean", "adv_nonzero_share", "epsilon_eligible_fraction",
-        # TWELFTH PASS. WHERE THE FIRST TOKEN ACTUALLY IS, by id: the four
-        # shares {bare, spaced, capitalised, other}. Under the mask `bare` is
-        # 1.0 by construction at TRAINING time and the field exists so the
-        # UNMASKED held-out read and the masked training are classified by the
-        # same function -- which is the pair that would have caught 08-30.
-        "first_token_class",
-        # THIRTEENTH PASS (D33). The share of the step's episodes whose return
-        # was charged at the CAP -- i.e. that did not reach the goal. It is the
-        # number that says how much of the gradient is being taken over episodes
-        # whose price is now the cap's, and it is read beside `farm_stopped_rate`
-        # and `capped_rate`, which say HOW they ended.
-        "exit_return_share",
-        "farm_stopped_rate", "yell_mean", "yell_episode_mean",
-        "yell_within_group_sd", "complaint_rate_on_mine",
-        "complaint_rate_other", "contingency_train", "unparsed_rate",
-        "remark_share", "on_mine_state_rate", "distinct_remarks",
-    )}
+    history = {k: [] for k in TRACE_FIELDS}
     # FIFTEENTH PASS. The fork term's own six fields, and ONLY when the term is
     # on: with the switch off the trace is key for key the fourteenth pass's, so
     # a checkpoint written before this build still resumes and every existing
