@@ -587,3 +587,38 @@ Claude Code background task per box (`watch_box.sh`, CYCLE 120), the
 `mz01-watch` unit with all five jobs, the inhibitor on
 `sleep:idle:handle-lid-switch`. Expected finals at ~55–60 s/step about 00:30Z
 on 2026-10-04 (06:00 IST); `_f2` at ~85 s/step about 01:40Z.
+
+### 15.1 The reads at 40 (2026-10-03 22:27–22:49Z)
+
+All five valid by the §9 bars, none AVOIDS; every arm within the solve band
+of its reference (0.922 on all five). Ratio = held-out `mine_step_rate` over
+the reference's (`results/<label>/fork_cf_g6.json` `eval_at["40"]`,
+`reference.json` `eval`). Raw move mass is `history.move_mass` at training
+step 39, the step the read at 40 follows in each log ("MID-ARM READ at step
+40/160" comes after "step 39"), with its minimum over steps 0–39 beside it.
+
+| label | solve | mine/ep (ratio) | mean_steps (ref) | bare / unparsed | raw mass @39 (min 0–39) | read |
+| --- | --- | --- | --- | --- | --- | --- |
+| `forkcf4b_A_s0_g10` | 0.930 | 1.977 (0.904) | 12.98 (13.05) | 1.000 / 0.000 | 1.000 (0.874) | valid, not AVOIDS |
+| `forkcf4b_A_s1_p30` | 0.859 | 1.977 (0.913) | 14.09 (13.02) | 1.000 / 0.000 | 1.000 (0.973) | valid, not AVOIDS |
+| `forkcf4b_A_s0_f2` | 0.898 | 1.977 (0.904) | 13.44 (13.05) | 0.968 / 0.032 | 0.986 (0.939) | valid, not AVOIDS |
+| `forkcf4b_A_s0_p30` | 0.930 | 2.062 (0.943) | 13.13 (13.05) | 1.000 / 0.000 | 1.000 (0.946) | valid, not AVOIDS |
+| `forkcf4b_D_s0_g_rerun` | 0.898 | 1.883 (0.861) | 13.56 (13.05) | 0.970 / 0.026 | 1.000 (0.972) | valid (partner) |
+
+The trace over steps 0–39 (`history`). The dose roughly doubles the fork
+advantage: `fork_adv_abs_mean` 9.00 on A s0 p30 against 3.98 on
+`forkcf4b_A_s0_g`, and 8.12 on A s1 p30 against 4.17 on `forkcf4b_A_s1_g`. On
+seed 0 the mine-relevant share stays put (`fork_share_detour_better` 0.044
+against 0.046); on seed 1 it rises (0.044 against 0.020). Two forks per
+episode doubles `n_forks` (47.0 a step against 24.0); its share is 0.052,
+against `_g`'s 0.046 over the same steps and 0.051 over its full run (§13.3's
+figure), so `_f2` reads as a count knob. With the cap at 1.0,
+`fork_grad_norm` is 1.000 at the median (raw 486); the raw move mass is 1.000
+at the read and fell to 0.874 at training step 21, so `_g10`'s closing rule,
+which applies at reads, has not fired. Training mine/ep, steps 0–9 against
+30–39: `_g10` 0.50 → 1.27, A s1 p30 0.90 → 0.95, `_f2` 1.14 → 0.62, A s0 p30
+0.95 → 1.34, D rerun 1.68 → 1.43; four mazes a step, so this is noise until a
+held-out read follows it. The comparison arms `forkcf4b_A_s{0,1}_g` ran at
+`5df465f`, these at `28e0824` (a refactor of the trainer between them, §15).
+Verified by the results-verifier with corrections (read window, the seed-1
+comparison, the mass step); the mass step was then set to 39 from the logs.

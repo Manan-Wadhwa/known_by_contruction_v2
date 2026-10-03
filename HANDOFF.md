@@ -16,6 +16,7 @@ per box, the `mz01-watch` unit, the inhibitor, and the read monitor
 (`reads.py` in the session scratchpad, one line per new held-out read).
 
 **Last verdicts.**
+- Reads at 40 (plan §15.1): all five valid, none AVOIDS; mine ratios 0.86–0.94.
 - The §13 batch of 2026-09-10 was lost at steps 4 to 7 with no read and no
   summary (plan §14). Its partial pulls now sit under
   `results/_lost_2026-09-10/`, so the relaunch writes to the same labels.
@@ -37,7 +38,7 @@ per box, the `mz01-watch` unit, the inhibitor, and the read monitor
   (seed 0) or gets a seed-1 cell-D partner; both dose seeds avoiding sends the
   dose to the curve (-10, -20, -30, -50) on seeds 0 to 3; nothing avoiding
   means a fork-share design (plan §11, the handoff's reading rules).
-- `main` was fast-forwarded to this branch locally; nothing is pushed.
+- `main` and this branch are pushed to origin.
 
 **Gotchas.**
 - The trainer refuses a dose on cell D, because cell D never charges the price.
