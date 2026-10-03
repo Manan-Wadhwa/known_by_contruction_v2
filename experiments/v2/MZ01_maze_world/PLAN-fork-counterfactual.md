@@ -503,3 +503,15 @@ Both dose seeds avoiding sends the dose to the response curve (−10, −20, −
 episode); `forkcf4b_A_s0_g10` box 4 05:01:07Z (`MZ01_FORK_GRAD_MAX` 1.0). All
 four in the monitor (background tasks + `mz01-watch.service`, inhibitor with
 the lid switch). Finals ≈ 08:00Z (13:30 IST); the f2 arm ≈ 09:00Z.
+
+## 14. The batch of §13 was lost (recorded 2026-10-04)
+
+The session that launched §13's four arms ended within minutes of the
+launches; the local pulls stop at steps 4–7 (`results/forkcf4b_A_s0_p30`,
+`_A_s1_p30`, `_A_s0_f2`, `_A_s0_g10`: no read, no summary), and the leases
+of 2026-09-10 are long gone. No verdict exists for the dose at −30, the cap
+at 1.0 or two forks per episode. §13 remains the queue of record: its four
+arms are to be relaunched unchanged, with their reading rules, on the next
+leases. The repository has since moved to the branch `reorg/b-split-trainer`
+(the dated lab notes under `record/`, the trainer's validators split out;
+139 orgb tests pass) — four commits ahead of `main`, not yet merged.
