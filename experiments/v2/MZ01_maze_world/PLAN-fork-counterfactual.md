@@ -515,3 +515,46 @@ arms are to be relaunched unchanged, with their reading rules, on the next
 leases. The repository has since moved to the branch `reorg/b-split-trainer`
 (the dated lab notes under `record/`, the trainer's validators split out;
 139 orgb tests pass) — four commits ahead of `main`, not yet merged.
+
+## 15. §13's batch relaunched on five fresh leases (2026-10-03 21:50Z / 2026-10-04 03:20 IST)
+
+Written before any launch. Five leases arrived at 21:39–21:40Z on
+2026-10-03; all five answered 200 and had idle GPUs (RTX PRO 6000, 0 MiB
+used). None held an MZ01 result. Box 1 is the v1-era snapshot (HH01 logs and
+status files under `/marimo/repo`, `/marimo/autoresearch`, `/marimo/v2`);
+boxes 4 and 5 also carry `experiments/v2/HH01_hidden_habit` and `/marimo/v2`.
+That material is left in place.
+
+**The four arms of §13.2, unchanged.** Same labels, same settings, same
+reading rules (§13.3, cited and not rewritten). The code is the branch
+`reorg/b-split-trainer`, whose trainer change is a refactor (the knob
+validators and the trace schema move out of `train_orgb_cell`, same checks in
+the same order) and whose 139 orgb tests pass. The four lost local pulls (steps
+4–7, §14) move to `results/_lost_2026-09-10/<label>/` so the new pulls do not
+overwrite them.
+
+| box | label | change from `forkcf4b_A_s0_g` | seed |
+| --- | --- | --- | --- |
+| box 1 | `forkcf4b_A_s0_g10` | `MZ01_FORK_GRAD_MAX=1.0` | 0 |
+| box 2 | `forkcf4b_A_s1_p30` | `MZ01_SCORE_MINE=-30`, cap 0.3 | 1 |
+| box 3 | `forkcf4b_A_s0_f2` | `MZ01_FORK_PER_EP=2`, cap 0.3 | 0 |
+| box 4 | `forkcf4b_A_s0_p30` | `MZ01_SCORE_MINE=-30`, cap 0.3 | 0 |
+
+Box 1 is the v1-era snapshot, so it carries the arm whose reads arrive
+earliest (`_g10`), as §13.2 placed it.
+
+**A fifth arm for the fifth box: the cell-D partner, run to the end.**
+`forkcf4b_D_s0_g_rerun` on box 5 is `forkcf4b_D_s0_g` (§9–§11) unchanged:
+cell D (the mine-free return), seed 0, `MZ01_FORK_GRAD_MAX=0.3`, no dose, the
+same 160 steps and reads. It is the partner §13.3 names for `_g10` and `_f2`,
+and the "own cell-D partner at the world's price" that §11 and §13.3 require
+before `forkcf4b_A_s0_p30` can be credited. The original was lost at step 47
+with only its read at 40 (0.914 / 0.96); the new label keeps that directory's
+reads where §11–§13 cite them. **Its reading rule:** it has no verdict of its
+own. It is valid by the §9 bars (raw move mass ≥ 0.90, bare share ≥ 0.90,
+unparsed ≤ 0.05) or its reads cannot serve as a partner. At each read where an
+A arm of seed 0 AVOIDS, this arm not AVOIDS at the same read credits the price;
+this arm AVOIDS too credits route-shortening (§8.4), and held-out `mean_steps`
+is read beside mine/ep on both.
+
+**Launches** (filled in below as each banner is verified).
