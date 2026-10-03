@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# bringup2.sh <boxN>: persistent setup + the three pushes + sync at HEAD + md5 check. No launch.
+# bringup2_nosetup.sh <boxN>: bringup2.sh without the setup: the three pushes + sync at HEAD + md5 check. No launch.
+# It keeps /marimo/pylib: the setup it follows installed peft there (it used to rm -rf it, 2026-10-03).
 set -uo pipefail
 S="${MZ01_BOX_DIR:?set MZ01_BOX_DIR to the directory holding boxN.url and boxN.token}"
 WT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"; EX="$WT/.claude/skills/marimo-pair/scripts/execute-code.sh"
 BOX=$1; URL=$(cat $S/$BOX.url); TOK=$(cat $S/$BOX.token); cd $WT
 say() { echo "[$BOX $(date -u +%H:%M:%SZ)] $*"; }
-timeout 60 bash $EX --url "$URL" --token "$TOK" -c "import subprocess; subprocess.run('rm -rf /marimo/pylib; mkdir -p /marimo/persist', shell=True)" >/dev/null 2>&1
+timeout 60 bash $EX --url "$URL" --token "$TOK" -c "import subprocess; subprocess.run('mkdir -p /marimo/persist', shell=True)" >/dev/null 2>&1
 say "setup skipped (already DONE)"
 M=/marimo/repo/experiments/v2/MZ01_maze_world/results; export MZ01_BOX_DIR=$S BOX=$BOX
 for pair in "results/navigator/nav_nav48.pt $M/navigator/nav_nav48.pt" "results/navigator/nav_nav48.json $M/navigator/nav_nav48.json" "results/orgb/warm_start_s0.pt $M/orgb/warm_start.pt"; do set -- $pair; timeout 400 bash scripts/box/push_file.sh experiments/v2/MZ01_maze_world/$1 $2 2>&1 | grep -oE "PUSH_VERIFIED [^ ]+|MISMATCH|FAIL" | cut -c1-60; done
