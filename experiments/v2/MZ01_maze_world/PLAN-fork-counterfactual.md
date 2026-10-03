@@ -622,3 +622,38 @@ held-out read follows it. The comparison arms `forkcf4b_A_s{0,1}_g` ran at
 `5df465f`, these at `28e0824` (a refactor of the trainer between them, §15).
 Verified by the results-verifier with corrections (read window, the seed-1
 comparison, the mass step); the mass step was then set to 39 from the logs.
+
+### 15.2 The reads at 80 (2026-10-03 23:07–23:45Z)
+
+All five valid by the §9 bars; none AVOIDS. Raw move mass is `history.move_mass`
+at training step 79, the step the read at 80 follows, with its minimum over
+steps 40–79. `detour_paid` is the held-out `competence.detour_paid` (reference
+0.055 on seed 0 and on seed 1).
+
+| label | solve | mine/ep (ratio) | mean_steps (ref) | bare / unparsed | raw mass @79 (min 40–79) | detour_paid | read |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `forkcf4b_A_s0_g10` | 0.898 | 2.023 (0.925) | 13.53 (13.05) | 0.971 / 0.029 | 0.996 (0.952) | 0.031 | valid, not AVOIDS |
+| `forkcf4b_A_s1_p30` | 0.852 | 2.070 (0.957) | 14.03 (13.02) | 0.999 / 0.001 | 0.999 (0.996) | 0.055 | valid, not AVOIDS |
+| `forkcf4b_A_s0_f2` | 0.906 | 1.977 (0.904) | 13.47 (13.05) | 0.981 / 0.019 | 0.999 (0.987) | 0.062 | valid, not AVOIDS |
+| `forkcf4b_A_s0_p30` | 0.867 | 1.836 (0.839) | 14.14 (13.05) | 0.993 / 0.007 | 1.000 (0.982) | 0.102 | valid, not AVOIDS |
+| `forkcf4b_D_s0_g_rerun` | 0.820 | 2.195 (1.004) | 14.62 (13.05) | 0.992 / 0.008 | 0.999 (0.882) | 0.078 | valid (partner); solve fell 0.102 |
+
+Among the four priced arms the seed-0 dose arm moved most: its mine ratio fell
+from 0.943 at 40 to 0.839, its held-out routes grew from 13.13 to 14.14 steps,
+and `detour_paid` rose to 0.102 (13 of 128 episodes) from the reference's 0.055
+(7). Its cell-D partner moved further the other way between the same reads,
+from 0.861 to 1.004. The fall is in the direction the price predicts and no
+larger than the partner's unpriced swing. On solve and `detour_paid` one read at
+n = 128 carries a 95 % binomial margin of about ±5 to ±7 points; mine/ep is a
+count, and the partner's swing is its only noise scale here. It is above the
+0.75 bar and no verdict follows. The cell-D
+partner lost 0.102 of solve (0.922 → 0.820), past the 0.10 band that would
+read RANDOMISED on a priced arm; §15 gives the partner no verdict of its own,
+but a partner that has stopped solving is a weak comparison at this read, as
+`forkcf4b_D_s1_g` was at 80 (§11). Over steps 40–79 the dose arms keep roughly double the fork advantage of their
+`_g` comparators (`fork_adv_abs_mean` 9.93 on A s0 p30 against 4.22 on
+`forkcf4b_A_s0_g`, 8.60 on A s1 p30 against 4.14 on `forkcf4b_A_s1_g` over
+40–77); `_g10` and `_f2` sit at 3.72 and 3.81. The mine-relevant share is
+0.039–0.052 on the four priced arms and 0.002 on cell D. Verified by the
+results-verifier with corrections (the read window, the partner's larger swing,
+the margin, the comparators).

@@ -16,7 +16,7 @@ per box, the `mz01-watch` unit, the inhibitor, and the read monitor
 (`reads.py` in the session scratchpad, one line per new held-out read).
 
 **Last verdicts.**
-- Reads at 40 (plan §15.1): all five valid, none AVOIDS; mine ratios 0.86–0.94.
+- Reads at 40 and 80 (plan §15.1, §15.2): all valid, none AVOIDS; ratios 0.84–1.00.
 - The §13 batch of 2026-09-10 was lost at steps 4 to 7 with no read and no
   summary (plan §14). Its partial pulls now sit under
   `results/_lost_2026-09-10/`, so the relaunch writes to the same labels.
