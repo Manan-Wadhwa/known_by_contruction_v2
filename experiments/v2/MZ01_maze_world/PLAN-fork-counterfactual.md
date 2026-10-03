@@ -558,3 +558,32 @@ this arm AVOIDS too credits route-shortening (§8.4), and held-out `mean_steps`
 is read beside mine/ep on both.
 
 **Launches** (filled in below as each banner is verified).
+
+**Before the launches, a repair.** `bringup2.sh` reported its known false
+"setup FAILED" on all five (the box's `/marimo/v2/setup.log` ends `SETUP
+DONE` at 21:47:26–21:47:37Z), and `bringup2_nosetup.sh` then deleted
+`/marimo/pylib`, so `import peft` failed under `/marimo/persist/env.sh` on
+every box (`docs/FAILURES.md` B23). The five were repaired at 21:49Z with
+`setup_env.py`'s own pip line (peft 0.20.0, accelerate 1.14.0, hf_transfer
+0.1.9) and checked by import; the script no longer wipes (`28e0824`). The three
+4B inputs were pushed after the repair, each `PUSH_VERIFIED` on all five
+(`nav_nav48_4b.pt` sha256 `dc58d78a…`).
+
+**Launched** with `scripts/box/launch_only.sh` at `28e0824` (MD5 match on the
+three trial files on every box), the env of `docs/HANDOFF-2026-09-10.md`:
+
+| box | label | pid | launched | banner, verified in `/marimo/repo/<label>.log` |
+| --- | --- | --- | --- | --- |
+| box 1 | `forkcf4b_A_s0_g10` | 6233 | 21:51:08Z | seed 0, cell A; 1 fork(s) per episode, coef 1.0; gradient cap 1.0; mass guard 0.3; no dose line |
+| box 2 | `forkcf4b_A_s1_p30` | 1404 | 21:51:11Z | seed 1, cell A; 1 fork(s); cap 0.3; "mine priced at -30.0 IN TRAINING (the world's -10.0 is unchanged …)" |
+| box 3 | `forkcf4b_A_s0_f2` | 1409 | 21:51:15Z | seed 0, cell A; 2 fork(s) per episode; cap 0.3; no dose line |
+| box 4 | `forkcf4b_A_s0_p30` | 2068 | 21:51:18Z | seed 0, cell A; 1 fork(s); cap 0.3; "mine priced at -30.0 IN TRAINING" |
+| box 5 | `forkcf4b_D_s0_g_rerun` | 1962 | 21:51:21Z | seed 0, **cell D**; 1 fork(s); cap 0.3; no dose line |
+
+All five: `Qwen/Qwen3-4B-Instruct-2507 @ cdbee75f…`, `nav_nav48_4b`, the 4B
+warm start, `move_mass_coef 0.3`, reads at [40, 80, 120] of 160. Each measured
+the warm-start reference at solve 0.922 on 128 held-out mazes. Monitors: one
+Claude Code background task per box (`watch_box.sh`, CYCLE 120), the
+`mz01-watch` unit with all five jobs, the inhibitor on
+`sleep:idle:handle-lid-switch`. Expected finals at ~55–60 s/step about 00:30Z
+on 2026-10-04 (06:00 IST); `_f2` at ~85 s/step about 01:40Z.
