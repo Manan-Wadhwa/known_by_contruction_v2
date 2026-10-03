@@ -4,6 +4,8 @@ Written 2026-09-09. Start here. Every document below is in the repository;
 every number in them resolves to a file under `experiments/v2/MZ01_maze_world/`
 or to a command named beside it.
 
+The live state of every agent (what runs where, last verdicts, next) is in `../HANDOFF.md`.
+
 ## Read in this order
 
 0. `ORIENTATION.md` — the ten-minute version, in plain language, with the
