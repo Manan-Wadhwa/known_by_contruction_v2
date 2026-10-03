@@ -7,13 +7,13 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**In flight on 2026-10-04.** The four arms of `PLAN-fork-counterfactual.md` §13 are being
-relaunched unchanged today on five fresh leases. Box assignments are being
-launched; see the plan's §15. The labels are `forkcf4b_A_s0_p30` and
-`forkcf4b_A_s1_p30` (the dose at -30, seeds 0 and 1), `forkcf4b_A_s0_f2` (two
-forks per episode) and `forkcf4b_A_s0_g10` (the fork cap at 1.0). The ETA is
-about 2.7 h for 160 steps at ~55 s/step, and about 3.8 h for `_f2`
-(`docs/HANDOFF-2026-09-10.md` state section; plan §13.1).
+**In flight since 2026-10-03 21:51Z** (`PLAN-fork-counterfactual.md` §15).
+box 1 `forkcf4b_A_s0_g10` (cap 1.0); box 2 `forkcf4b_A_s1_p30` and box 4
+`forkcf4b_A_s0_p30` (the dose at -30); box 3 `forkcf4b_A_s0_f2` (two forks);
+box 5 `forkcf4b_D_s0_g_rerun` (the cell-D partner, run to the end). Finals
+about 00:30Z on 2026-10-04, `_f2` about 01:40Z. Monitors: a background task
+per box, the `mz01-watch` unit, the inhibitor, and the read monitor
+(`reads.py` in the session scratchpad, one line per new held-out read).
 
 **Last verdicts.**
 - The §13 batch of 2026-09-10 was lost at steps 4 to 7 with no read and no
@@ -29,18 +29,21 @@ about 2.7 h for 160 steps at ~55 s/step, and about 3.8 h for `_f2`
   and `forkcf4b_D_s1_g` at 40 (solve 0.938, ratio 0.94).
 
 **Next.**
-- Write the launch entry with box, pid and time in §15, start one monitor per
-  box, and start the durable `mz01-watch` unit and the inhibitor.
-- Read each arm at 40, 80, 120 and 160 by §13.3. Run every number through the
-  `results-verifier` subagent before it enters §15 or `docs/RESULTS_LOG.md`.
-- A dose arm that reads AVOIDS gets its own cell-D partner at the world's price
-  before the price is credited (§11, §13.3). Relaunch an idle box at once.
-- `reorg/b-split-trainer` is ahead of `main` and unmerged. Merging needs the
-  user's go.
+- Read each arm at 40, 80, 120 and 160 by §13.3 and §15. Run every number
+  through the `results-verifier` subagent before it enters the plan or
+  `docs/RESULTS_LOG.md`.
+- When a run ends, record it and launch the next pre-registered job on that
+  box at once: a dose arm that avoids is read against `forkcf4b_D_s0_g_rerun`
+  (seed 0) or gets a seed-1 cell-D partner; both dose seeds avoiding sends the
+  dose to the curve (-10, -20, -30, -50) on seeds 0 to 3; nothing avoiding
+  means a fork-share design (plan §11, the handoff's reading rules).
+- `main` was fast-forwarded to this branch locally; nothing is pushed.
 
 **Gotchas.**
 - The trainer refuses a dose on cell D, because cell D never charges the price.
 - `bringup2.sh` prints a false "setup FAILED"; follow it with `bringup2_nosetup.sh`.
+  Before `28e0824` that script deleted `/marimo/pylib` (FAILURES B23); check
+  `import peft` under `/marimo/persist/env.sh` before a launch.
 - `launch_only.sh` refuses a box that already runs an `mz01_` process.
 - The Stop hook blocks when the repo changed this session and this file did not.
   Another session's commit in the same tree counts as a change.
