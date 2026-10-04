@@ -7144,9 +7144,16 @@ def test_the_credited_rows_are_stage_two_and_their_advantages_its_returns():
         "sample_fork_continuations", "crossfit_keep", "fork_terms",
         "_fork_move_logp")}
 
+    states = []      # fork_gen's state at each sampling call's entry and exit
+
     def spy(name):
         def wrapped(*a, **kw):
+            gen = kw.get("generator")
+            if name == "sample_fork_continuations":
+                states.append(gen.get_state().clone())
             out = real[name](*a, **kw)
+            if name == "sample_fork_continuations":
+                states.append(gen.get_state().clone())
             log.append((name, a, kw, out))
             return out
         return wrapped
@@ -7174,6 +7181,11 @@ def test_the_credited_rows_are_stage_two_and_their_advantages_its_returns():
         assert s2[1][2] == [forks1[j] for j in kept]
         assert all(a is forks1[j] for a, j in zip(s2[1][2], kept))
         assert s2[2]["generator"] is s1[2]["generator"], "the same fork stream"
+        # STAGE 2 STARTS WHERE STAGE 1 LEFT THE STREAM (critic, 2026-10-04):
+        # fresh draws, not a replay of stage 1's from its starting state.
+        in1, out1, in2, _out2 = states[4 * step:4 * step + 4]
+        assert not torch.equal(in1, out1), "stage 1 drew from the fork stream"
+        assert torch.equal(in2, out1) and not torch.equal(in2, in1)
         assert t2[1][1] is s2[3], "the credited rows come from stage 2"
         rows, stats = t2[3]
         for r in rows:
