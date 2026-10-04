@@ -9,7 +9,8 @@ gotchas. Box URLs and tokens never go in this file.
 
 **State at the end of 2026-10-04 (10:20Z / 15:50 IST).** No box is leased;
 nothing is running. All leases died (box 5 ~01:12Z, boxes 1-4 ~09:40Z;
-FAILURES B24, B25). `main` and `reorg/b-split-trainer` are pushed and equal.
+FAILURES B24, B25). `main` and `reorg/b-split-trainer` are pushed through `eec426f`; the
+end-of-day doc commits after it are local until the next push.
 Units `mz01-watch` and `mz01-inhibit` are stopped.
 
 **Queue of record for the next leases** (`PLAN-fork-counterfactual.md`):
