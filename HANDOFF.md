@@ -7,44 +7,23 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**In flight (2026-10-04 03:40Z).** §15 is closed with no AVOIDS (§15.3-§15.7).
-§16: box 1 `forkcf4b_A_s0_tx_p30` (final ~03:58Z), box 3 `forkcf4b_D_s0_tx`
-(~04:24Z), box 4 `forkcf4b_A_s0_t` (03:30Z), box 2 `forkcf4b_A_s1_tx_p30`
-(03:37Z). Next: box 1 `_tx_p50`, box 3 `_tx_p100` (§17, conditional on no §16
-AVOIDS). `launch16.sh`, `rewatch.sh`, `read2.py` in the session scratchpad.
+**In flight (2026-10-04 04:30Z).** box 1 `forkcf4b_A_s0_tx_p50` (03:57Z, §17),
+box 2 `forkcf4b_A_s1_tx_p30` (03:37Z, §16), box 3 `forkcf4b_A_s0_tx_p100`
+(04:23Z, §17), box 4 `forkcf4b_A_s0_t` (03:30Z, §16). Finals ~06:15-07:05Z.
+Nothing is queued after them: the next step needs a plan section.
+`launch16.sh`, `rewatch.sh`, `read2.py` in the session scratchpad.
 Built and merged: the eighteenth pass (§16; `MZ01_FORK_PICK=tie`,
 `MZ01_FORK_SELECT=crossfit`; `record/BUILD-fork-share-2026-10-04.md`, critic
 APPROVE WITH CHANGES, all four made; 147 tests pass). §16's arms go on
 boxes whose §15 run ends flat.
 
 **Last verdicts.**
-- `forkcf4b_A_s0_tx` final 0.938 / 0.82, no detours or extra capping
-  (tie choice?); not recorded until its partner's final (~04:24Z).
-- `forkcf4b_A_s1_p30` not AVOIDS (0.750 / 0.84); its slowdown was fork
-  sampling, not capped episodes (§15.7).
-- `forkcf4b_A_s0_f2` no read AVOIDS (final 0.891 / 0.88), share 0.046 (§15.6).
-- §16.3: tx reads at 40 valid, none AVOIDS; read 1 passes on cell A
-  (0.79-0.82); read 2 fired on cell D (-2.39 over 17 forks). Build question
-  answered (no leak; too few forks; `docs/research/2026-10-04-fork-share/buildq/`);
-  §16.4 replaces read 2 from 80 on (replay gate + route read; `read2.py` in
-  the scratchpad computes both).
-- §16.5 (reads at 80): none AVOIDS; gate passes; the cell-D partner's route
-  credit equals the undosed cell-A arm's (-4.54 vs -4.69), the dosed arm's is
-  3.05 more negative [-7.21, +1.51]. `_tx` at 120: 0.922 / 0.861.
-- `forkcf4b_A_s0_g10` ALIVE to 120, then held-out solve 0.328 / ratio 0.27
-  at 160 (RANDOMISED by solve; label DEAD), §15.5.
-- `forkcf4b_A_s0_tx` steps 0-24: credited detour-better 0.81, 3.6 kept forks
-  a step (§16.2).
-- `forkcf4b_A_s0_p30` RANDOMISED at 160 (ratio 0.721, solve 0.773); the
-  partner `forkcf4b_D_s0_g_rerun` DEAD (solve 0.695). §15.3, §15.4.
-- Held-out `mean_steps` rises are mostly unsolved episodes at the cap, not
-  longer routes (read `capped_rate`, `optimality`).
-- Reads at 40 and 80 (§15.1, §15.2): all valid, none AVOIDS.
-- At 120: `forkcf4b_A_s0_p30` RANDOMISED (solve 0.766, ratio 0.811);
-  `forkcf4b_D_s0_g_rerun` solve 0.656, ratio 0.746 (partner, no verdict).
-  Both seed-0 arms lose routes after step 80, priced or not.
-- The §13 batch of 2026-09-10 was lost at steps 4-7 (§14); its pulls sit
-  under `results/_lost_2026-09-10/`.
+- §15 closed, no AVOIDS (§15.3-§15.7; RESULTS_LOG §9).
+- §16 seed 0 (§16.6; RESULTS_LOG §10): `_tx` 0.938 / 0.818, `_tx_p30` 0.867 /
+  0.750 (exactly on the strict bar), partner 0.953 / 0.946. Gaps to the
+  partner -0.13 [-0.28, +0.03] and -0.20 [-0.35, -0.04] (Poisson approx.).
+  Selection works (detour-better 0.66-0.82); replay gate passes.
+- Held-out per-episode mine counts are not saved; a paired interval needs them.
 
 **Next.**
 - At each final: summary.json, the verifier, a §15 addendum and a
