@@ -1,0 +1,108 @@
+price 0 noUturn False
+  all forks                          forks/ep  7.12 better 0.010 taken_lost 0.000 mdiff 0.332 mineA2 0.000 betterA2 0.000 |A| 1.72
+  uniform 1/ep (now)                 forks/ep  1.00 better 0.007 taken_lost 0.000 mdiff 0.324 mineA2 0.000 betterA2 0.000 |A| 1.74
+  tie forks (>=2 moves at min L)     forks/ep  1.87 better 0.037 taken_lost 0.000 mdiff 0.330 mineA2 0.000 betterA2 0.000 |A| 1.09
+  route forks alt_exc<=0             forks/ep  1.87 better 0.037 taken_lost 0.000 mdiff 0.330 mineA2 0.000 betterA2 0.000 |A| 1.09
+  1/ep prefer alt_exc<=0             forks/ep  1.00 better 0.029 taken_lost 0.000 mdiff 0.367 mineA2 0.000 betterA2 0.000 |A| 1.27
+  route forks alt_exc<=2             forks/ep  4.42 better 0.016 taken_lost 0.000 mdiff 0.370 mineA2 0.000 betterA2 0.000 |A| 1.56
+  1/ep prefer alt_exc<=2             forks/ep  1.00 better 0.010 taken_lost 0.000 mdiff 0.363 mineA2 0.000 betterA2 0.000 |A| 1.57
+  route forks alt_exc<=4             forks/ep  4.92 better 0.014 taken_lost 0.000 mdiff 0.363 mineA2 0.000 betterA2 0.000 |A| 1.60
+  1/ep prefer alt_exc<=4             forks/ep  1.00 better 0.011 taken_lost 0.000 mdiff 0.380 mineA2 0.000 betterA2 0.000 |A| 1.62
+  route forks alt_exc<=8             forks/ep  5.19 better 0.013 taken_lost 0.000 mdiff 0.365 mineA2 0.000 betterA2 0.000 |A| 1.62
+  1/ep prefer alt_exc<=8             forks/ep  1.00 better 0.009 taken_lost 0.000 mdiff 0.371 mineA2 0.000 betterA2 0.000 |A| 1.64
+  spread>4.5                         (none)
+  spread>6.5                         (none)
+  spread>8.5                         (none)
+    mos=True: forks 10963 better 0.016 {2: 0.025, 4: 0.01, 6: 0.023, 8: 0.005}
+    mos=False: forks 7196 better 0.000 {0: 0.0}
+    episodes with a route fork (E=4): 0.898; share of better forks that are route forks E=4: 1.000
+price 0 noUturn True
+  all forks                          forks/ep  7.11 better 0.010 taken_lost 0.000 mdiff 0.410 mineA2 0.000 betterA2 0.000 |A| 2.59
+  uniform 1/ep (now)                 forks/ep  1.00 better 0.006 taken_lost 0.000 mdiff 0.424 mineA2 0.000 betterA2 0.000 |A| 2.64
+  tie forks (>=2 moves at min L)     forks/ep  1.87 better 0.038 taken_lost 0.000 mdiff 0.350 mineA2 0.000 betterA2 0.000 |A| 1.33
+  route forks alt_exc<=0             forks/ep  1.87 better 0.038 taken_lost 0.000 mdiff 0.350 mineA2 0.000 betterA2 0.000 |A| 1.33
+  1/ep prefer alt_exc<=0             forks/ep  1.00 better 0.025 taken_lost 0.000 mdiff 0.396 mineA2 0.000 betterA2 0.000 |A| 1.70
+  route forks alt_exc<=2             forks/ep  4.41 better 0.016 taken_lost 0.000 mdiff 0.415 mineA2 0.000 betterA2 0.000 |A| 1.93
+  1/ep prefer alt_exc<=2             forks/ep  1.00 better 0.008 taken_lost 0.000 mdiff 0.432 mineA2 0.000 betterA2 0.000 |A| 2.00
+  route forks alt_exc<=4             forks/ep  4.91 better 0.014 taken_lost 0.000 mdiff 0.439 mineA2 0.000 betterA2 0.000 |A| 2.14
+  1/ep prefer alt_exc<=4             forks/ep  1.00 better 0.010 taken_lost 0.000 mdiff 0.485 mineA2 0.000 betterA2 0.000 |A| 2.24
+  route forks alt_exc<=8             forks/ep  5.18 better 0.014 taken_lost 0.000 mdiff 0.456 mineA2 0.000 betterA2 0.000 |A| 2.38
+  1/ep prefer alt_exc<=8             forks/ep  1.00 better 0.007 taken_lost 0.000 mdiff 0.503 mineA2 0.000 betterA2 0.000 |A| 2.44
+  spread>4.5                         forks/ep  1.68 better 0.004 taken_lost 0.000 mdiff 0.668 mineA2 0.000 betterA2 0.000 |A| 5.59
+  spread>6.5                         forks/ep  1.68 better 0.004 taken_lost 0.000 mdiff 0.668 mineA2 0.000 betterA2 0.000 |A| 5.59
+  spread>8.5                         forks/ep  0.76 better 0.001 taken_lost 0.000 mdiff 0.754 mineA2 0.000 betterA2 0.000 |A| 8.25
+    mos=True: forks 10951 better 0.016 {2: 0.022, 4: 0.012, 6: 0.023, 8: 0.007}
+    mos=False: forks 7192 better 0.000 {0: 0.0}
+    episodes with a route fork (E=4): 0.898; share of better forks that are route forks E=4: 1.000
+price 10 noUturn False
+  all forks                          forks/ep  7.11 better 0.071 taken_lost 0.071 mdiff 0.331 mineA2 0.793 betterA2 0.204 |A| 3.33
+  uniform 1/ep (now)                 forks/ep  1.00 better 0.064 taken_lost 0.064 mdiff 0.329 mineA2 0.786 betterA2 0.185 |A| 3.36
+  tie forks (>=2 moves at min L)     forks/ep  1.86 better 0.124 taken_lost 0.124 mdiff 0.325 mineA2 0.843 betterA2 0.364 |A| 2.65
+  route forks alt_exc<=0             forks/ep  1.86 better 0.124 taken_lost 0.124 mdiff 0.325 mineA2 0.843 betterA2 0.364 |A| 2.65
+  1/ep prefer alt_exc<=0             forks/ep  1.00 better 0.099 taken_lost 0.099 mdiff 0.354 mineA2 0.835 betterA2 0.272 |A| 2.98
+  route forks alt_exc<=2             forks/ep  4.42 better 0.096 taken_lost 0.096 mdiff 0.372 mineA2 0.832 betterA2 0.235 |A| 3.40
+  1/ep prefer alt_exc<=2             forks/ep  1.00 better 0.069 taken_lost 0.069 mdiff 0.377 mineA2 0.844 betterA2 0.146 |A| 3.53
+  route forks alt_exc<=4             forks/ep  4.92 better 0.088 taken_lost 0.088 mdiff 0.363 mineA2 0.824 betterA2 0.226 |A| 3.39
+  1/ep prefer alt_exc<=4             forks/ep  1.00 better 0.070 taken_lost 0.070 mdiff 0.380 mineA2 0.843 betterA2 0.173 |A| 3.65
+  route forks alt_exc<=8             forks/ep  5.19 better 0.086 taken_lost 0.086 mdiff 0.365 mineA2 0.821 betterA2 0.221 |A| 3.42
+  1/ep prefer alt_exc<=8             forks/ep  1.00 better 0.071 taken_lost 0.071 mdiff 0.375 mineA2 0.832 betterA2 0.188 |A| 3.55
+  spread>4.5                         forks/ep  2.35 better 0.214 taken_lost 0.214 mdiff 1.000 mineA2 0.916 betterA2 0.236 |A| 6.63
+  spread>6.5                         forks/ep  2.18 better 0.152 taken_lost 0.152 mdiff 1.000 mineA2 0.918 betterA2 0.207 |A| 6.93
+  spread>8.5                         forks/ep  2.18 better 0.152 taken_lost 0.152 mdiff 1.000 mineA2 0.918 betterA2 0.207 |A| 6.93
+    mos=True: forks 10945 better 0.118 {2: 0.096, 4: 0.101, 6: 0.154, 8: 0.119}
+    mos=False: forks 7196 better 0.000 {0: 0.0}
+    episodes with a route fork (E=4): 0.898; share of better forks that are route forks E=4: 0.861
+price 10 noUturn True
+  all forks                          forks/ep  7.11 better 0.093 taken_lost 0.093 mdiff 0.407 mineA2 0.694 betterA2 0.134 |A| 4.88
+  uniform 1/ep (now)                 forks/ep  1.00 better 0.077 taken_lost 0.077 mdiff 0.423 mineA2 0.763 betterA2 0.089 |A| 5.35
+  tie forks (>=2 moves at min L)     forks/ep  1.85 better 0.129 taken_lost 0.129 mdiff 0.356 mineA2 0.787 betterA2 0.276 |A| 3.16
+  route forks alt_exc<=0             forks/ep  1.85 better 0.129 taken_lost 0.129 mdiff 0.356 mineA2 0.787 betterA2 0.276 |A| 3.16
+  1/ep prefer alt_exc<=0             forks/ep  1.00 better 0.105 taken_lost 0.105 mdiff 0.404 mineA2 0.827 betterA2 0.145 |A| 4.08
+  route forks alt_exc<=2             forks/ep  4.41 better 0.120 taken_lost 0.120 mdiff 0.411 mineA2 0.750 betterA2 0.214 |A| 4.00
+  1/ep prefer alt_exc<=2             forks/ep  1.00 better 0.101 taken_lost 0.101 mdiff 0.446 mineA2 0.830 betterA2 0.124 |A| 4.90
+  route forks alt_exc<=4             forks/ep  4.91 better 0.122 taken_lost 0.122 mdiff 0.437 mineA2 0.754 betterA2 0.187 |A| 4.44
+  1/ep prefer alt_exc<=4             forks/ep  1.00 better 0.095 taken_lost 0.095 mdiff 0.487 mineA2 0.831 betterA2 0.100 |A| 5.50
+  route forks alt_exc<=8             forks/ep  5.18 better 0.118 taken_lost 0.118 mdiff 0.452 mineA2 0.734 betterA2 0.163 |A| 4.85
+  1/ep prefer alt_exc<=8             forks/ep  1.00 better 0.100 taken_lost 0.100 mdiff 0.505 mineA2 0.810 betterA2 0.102 |A| 5.95
+  spread>4.5                         forks/ep  3.36 better 0.181 taken_lost 0.181 mdiff 0.840 mineA2 0.730 betterA2 0.136 |A| 8.49
+  spread>6.5                         forks/ep  3.15 better 0.126 taken_lost 0.126 mdiff 0.829 mineA2 0.729 betterA2 0.119 |A| 8.88
+  spread>8.5                         forks/ep  2.79 better 0.140 taken_lost 0.140 mdiff 0.932 mineA2 0.744 betterA2 0.120 |A| 9.57
+    mos=True: forks 10955 better 0.154 {2: 0.125, 4: 0.152, 6: 0.192, 8: 0.145}
+    mos=False: forks 7168 better 0.000 {0: 0.0}
+    episodes with a route fork (E=4): 0.898; share of better forks that are route forks E=4: 0.908
+price 30 noUturn False
+  all forks                          forks/ep  7.10 better 0.067 taken_lost 0.067 mdiff 0.330 mineA2 0.972 betterA2 0.232 |A| 6.99
+  uniform 1/ep (now)                 forks/ep  1.00 better 0.053 taken_lost 0.053 mdiff 0.338 mineA2 0.971 betterA2 0.215 |A| 7.16
+  tie forks (>=2 moves at min L)     forks/ep  1.86 better 0.117 taken_lost 0.117 mdiff 0.332 mineA2 0.980 betterA2 0.372 |A| 6.32
+  route forks alt_exc<=0             forks/ep  1.86 better 0.117 taken_lost 0.117 mdiff 0.332 mineA2 0.980 betterA2 0.372 |A| 6.32
+  1/ep prefer alt_exc<=0             forks/ep  1.00 better 0.095 taken_lost 0.095 mdiff 0.347 mineA2 0.978 betterA2 0.282 |A| 6.70
+  route forks alt_exc<=2             forks/ep  4.40 better 0.091 taken_lost 0.091 mdiff 0.372 mineA2 0.978 betterA2 0.258 |A| 7.63
+  1/ep prefer alt_exc<=2             forks/ep  1.00 better 0.061 taken_lost 0.061 mdiff 0.365 mineA2 0.980 betterA2 0.158 |A| 7.91
+  route forks alt_exc<=4             forks/ep  4.90 better 0.083 taken_lost 0.083 mdiff 0.363 mineA2 0.977 betterA2 0.249 |A| 7.50
+  1/ep prefer alt_exc<=4             forks/ep  1.00 better 0.063 taken_lost 0.063 mdiff 0.386 mineA2 0.980 betterA2 0.155 |A| 8.27
+  route forks alt_exc<=8             forks/ep  5.18 better 0.081 taken_lost 0.081 mdiff 0.364 mineA2 0.976 betterA2 0.244 |A| 7.52
+  1/ep prefer alt_exc<=8             forks/ep  1.00 better 0.064 taken_lost 0.064 mdiff 0.394 mineA2 0.979 betterA2 0.164 |A| 8.22
+  spread>4.5                         forks/ep  2.34 better 0.203 taken_lost 0.203 mdiff 1.000 mineA2 0.990 betterA2 0.236 |A| 17.75
+  spread>6.5                         forks/ep  2.34 better 0.203 taken_lost 0.203 mdiff 1.000 mineA2 0.990 betterA2 0.236 |A| 17.75
+  spread>8.5                         forks/ep  2.34 better 0.203 taken_lost 0.203 mdiff 1.000 mineA2 0.990 betterA2 0.236 |A| 17.75
+    mos=True: forks 10941 better 0.111 {2: 0.088, 4: 0.095, 6: 0.151, 8: 0.107}
+    mos=False: forks 7163 better 0.000 {0: 0.0}
+    episodes with a route fork (E=4): 0.898; share of better forks that are route forks E=4: 0.861
+price 30 noUturn True
+  all forks                          forks/ep  7.09 better 0.097 taken_lost 0.097 mdiff 0.408 mineA2 0.954 betterA2 0.182 |A| 10.22
+  uniform 1/ep (now)                 forks/ep  1.00 better 0.066 taken_lost 0.066 mdiff 0.427 mineA2 0.964 betterA2 0.097 |A| 11.63
+  tie forks (>=2 moves at min L)     forks/ep  1.84 better 0.121 taken_lost 0.121 mdiff 0.347 mineA2 0.971 betterA2 0.290 |A| 7.19
+  route forks alt_exc<=0             forks/ep  1.84 better 0.121 taken_lost 0.121 mdiff 0.347 mineA2 0.971 betterA2 0.290 |A| 7.19
+  1/ep prefer alt_exc<=0             forks/ep  1.00 better 0.102 taken_lost 0.102 mdiff 0.401 mineA2 0.978 betterA2 0.132 |A| 9.78
+  route forks alt_exc<=2             forks/ep  4.41 better 0.118 taken_lost 0.118 mdiff 0.411 mineA2 0.964 betterA2 0.257 |A| 8.90
+  1/ep prefer alt_exc<=2             forks/ep  1.00 better 0.092 taken_lost 0.092 mdiff 0.440 mineA2 0.978 betterA2 0.115 |A| 11.33
+  route forks alt_exc<=4             forks/ep  4.90 better 0.119 taken_lost 0.119 mdiff 0.435 mineA2 0.965 betterA2 0.226 |A| 9.87
+  1/ep prefer alt_exc<=4             forks/ep  1.00 better 0.095 taken_lost 0.095 mdiff 0.483 mineA2 0.977 betterA2 0.106 |A| 12.58
+  route forks alt_exc<=8             forks/ep  5.18 better 0.119 taken_lost 0.119 mdiff 0.452 mineA2 0.962 betterA2 0.203 |A| 10.78
+  1/ep prefer alt_exc<=8             forks/ep  1.00 better 0.098 taken_lost 0.098 mdiff 0.509 mineA2 0.974 betterA2 0.101 |A| 14.06
+  spread>4.5                         forks/ep  3.43 better 0.200 taken_lost 0.200 mdiff 0.842 mineA2 0.960 betterA2 0.183 |A| 19.37
+  spread>6.5                         forks/ep  3.43 better 0.199 taken_lost 0.199 mdiff 0.842 mineA2 0.960 betterA2 0.183 |A| 19.38
+  spread>8.5                         forks/ep  3.08 better 0.223 taken_lost 0.223 mdiff 0.940 mineA2 0.963 betterA2 0.183 |A| 21.23
+    mos=True: forks 10925 better 0.160 {2: 0.134, 4: 0.151, 6: 0.204, 8: 0.151}
+    mos=False: forks 7166 better 0.000 {0: 0.0}
+    episodes with a route fork (E=4): 0.898; share of better forks that are route forks E=4: 0.850

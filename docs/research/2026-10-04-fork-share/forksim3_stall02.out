@@ -1,0 +1,33 @@
+eps 0.0 price 0
+  uniform 1/ep (now)             forks/ep  1.00 nz 0.931 better 0.012 lost 0.135 |A|  2.61 mineA2 0.000 relA2 0.000
+  every fork                     forks/ep  7.11 nz 0.934 better 0.018 lost 0.145 |A|  2.60 mineA2 0.000 relA2 0.000
+  1/ep prefer tie                forks/ep  1.00 nz 0.901 better 0.035 lost 0.280 |A|  2.36 mineA2 0.000 relA2 0.000
+  every tie fork                 forks/ep  1.84 nz 0.887 better 0.050 lost 0.364 |A|  2.25 mineA2 0.000 relA2 0.000
+  every fork, keep taken-lost    forks/ep  1.03 nz 1.000 better 0.095 lost 1.000 |A|  2.27 mineA2 0.000 relA2 0.000
+  every fork, keep resid>0       forks/ep  5.58 nz 0.949 better 0.021 lost 0.184 |A|  2.85 mineA2 0.000 relA2 0.000
+  1/ep, prefer resid>0           forks/ep  1.00 nz 0.946 better 0.020 lost 0.192 |A|  2.82 mineA2 0.000 relA2 0.000
+  uniform 1/ep, K=2              forks/ep  1.00 nz 0.957 better 0.005 lost 0.120 |A|  2.33 mineA2 0.000 relA2 0.000
+  1/ep prefer tie, K=2           forks/ep  1.00 nz 0.932 better 0.035 lost 0.299 |A|  2.08 mineA2 0.000 relA2 0.000
+  1/ep prefer tie, tied moves only forks/ep  1.00 nz 0.807 better 0.033 lost 0.281 |A|  1.90 mineA2 0.000 relA2 0.000
+eps 0.0 price 10
+  uniform 1/ep (now)             forks/ep  1.00 nz 0.946 better 0.051 lost 0.153 |A|  4.12 mineA2 0.444 relA2 0.094
+  every fork                     forks/ep  7.11 nz 0.951 better 0.063 lost 0.171 |A|  4.05 mineA2 0.452 relA2 0.106
+  1/ep prefer tie                forks/ep  1.00 nz 0.919 better 0.098 lost 0.314 |A|  3.86 mineA2 0.463 relA2 0.150
+  every tie fork                 forks/ep  1.84 nz 0.918 better 0.121 lost 0.409 |A|  3.62 mineA2 0.503 relA2 0.203
+  every fork, keep taken-lost    forks/ep  1.21 nz 1.000 better 0.362 lost 1.000 |A|  3.73 mineA2 0.698 relA2 0.582
+  every fork, keep resid>0       forks/ep  6.01 nz 0.967 better 0.075 lost 0.202 |A|  4.48 mineA2 0.459 relA2 0.107
+  1/ep, prefer resid>0           forks/ep  1.00 nz 0.959 better 0.063 lost 0.192 |A|  4.59 mineA2 0.433 relA2 0.087
+  uniform 1/ep, K=2              forks/ep  1.00 nz 0.975 better 0.054 lost 0.135 |A|  3.75 mineA2 0.445 relA2 0.054
+  1/ep prefer tie, K=2           forks/ep  1.00 nz 0.957 better 0.116 lost 0.328 |A|  3.55 mineA2 0.501 relA2 0.154
+  1/ep prefer tie, tied moves only forks/ep  1.00 nz 0.871 better 0.082 lost 0.299 |A|  3.18 mineA2 0.534 relA2 0.156
+eps 0.0 price 30
+  uniform 1/ep (now)             forks/ep  1.00 nz 0.950 better 0.058 lost 0.168 |A|  7.81 mineA2 0.823 relA2 0.172
+  every fork                     forks/ep  7.11 nz 0.949 better 0.071 lost 0.186 |A|  7.61 mineA2 0.828 relA2 0.207
+  1/ep prefer tie                forks/ep  1.00 nz 0.925 better 0.098 lost 0.320 |A|  7.69 mineA2 0.828 relA2 0.263
+  every tie fork                 forks/ep  1.85 nz 0.918 better 0.125 lost 0.431 |A|  7.00 mineA2 0.860 relA2 0.353
+  every fork, keep taken-lost    forks/ep  1.32 nz 1.000 better 0.384 lost 1.000 |A|  8.67 mineA2 1.000 relA2 0.832
+  every fork, keep resid>0       forks/ep  6.01 nz 0.964 better 0.084 lost 0.220 |A|  8.68 mineA2 0.830 relA2 0.207
+  1/ep, prefer resid>0           forks/ep  1.00 nz 0.952 better 0.068 lost 0.193 |A|  8.64 mineA2 0.800 relA2 0.159
+  uniform 1/ep, K=2              forks/ep  1.00 nz 0.978 better 0.077 lost 0.158 |A|  7.25 mineA2 0.792 relA2 0.131
+  1/ep prefer tie, K=2           forks/ep  1.00 nz 0.957 better 0.107 lost 0.331 |A|  7.04 mineA2 0.825 relA2 0.267
+  1/ep prefer tie, tied moves only forks/ep  1.00 nz 0.846 better 0.085 lost 0.299 |A|  6.27 mineA2 0.857 relA2 0.202

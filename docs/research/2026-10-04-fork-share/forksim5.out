@@ -1,0 +1,2 @@
+{'steps': 0.621, 'mines+steps': 0.261, 'neither': 0.087, 'mines': 0.031} pairs 18675
+{'mine-differing fork': 3585, 'taken has fewest mines': 2836} 0.791
