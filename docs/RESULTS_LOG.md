@@ -624,6 +624,8 @@ As §9, with `MZ01_FORK_PICK=tie` and `MZ01_FORK_SELECT=crossfit`; build
 | `forkcf4b_A_s1_tx_p30` | −30, seed 1 | 0.875 / 0.892 | 0.734 / 0.693 | 0.766 / 0.321 | 0.602 / 0.202 (**RANDOMISED**) | `results/forkcf4b_A_s1_tx_p30/summary.json` |
 | `forkcf4b_A_s0_tx_p50` | −50 (§17) | 0.719 / 0.925 | 0.789 / 0.850 | 0.648 / 0.675 | 0.641 / 0.618 (**RANDOMISED**) | `results/forkcf4b_A_s0_tx_p50/summary.json` |
 | `forkcf4b_A_s0_tx_p100` | −100 (§17) | 0.797 / 0.804 | 0.625 / 0.664 | 0.742 / 0.804 | 0.586 / 0.693 (**RANDOMISED**) | `results/forkcf4b_A_s0_tx_p100/summary.json` |
+| `forkcf4b_D_s1_tx` | none (cell D, seed 1 partner) | 0.961 / 0.910 | 0.773 / 0.946 | 0.852 / 1.217 | 0.906 / 0.989 (partner; label DEAD) | `results/forkcf4b_D_s1_tx/summary.json` |
+| `forkcf4b_A_s1_tx` | −10, seed 1 | 0.891 / 0.968 | 0.891 / 0.884 | 0.805 / 0.823 | 0.828 / 0.765 (not AVOIDS; label ALIVE; paired gap to partner −0.484 [−0.773, −0.211]; level with `ctrl4b_s1`) | `results/forkcf4b_A_s1_tx/summary.json` |
 
 The selection works as built (credited detour-better 0.79–0.82 against a 0.15
 bar, §16.3) and the replay gate passes (§16.4–§16.6), but no arm crosses the

@@ -1287,3 +1287,48 @@ their first read. That is one pair at one read, and it is comparable to
 §16.6's −0.13 gap at 160, which already had an interval spanning zero. The
 torch, CUDA and driver versions of either run are not recorded; the lease
 images differ. Verified by the results-verifier with corrections.
+
+### 18.1 The seed-1 `tx` pair ends (2026-10-04 08:41Z partner, 09:15Z arm): not AVOIDS (0.765: 212 mine steps against a bar of 207, capped share 0.172); level with `ctrl4b_s1`; the paired gap excludes zero
+
+Both 160 steps, `status` DONE, 56.8 s/step, every read valid by the §9 bars
+(bare 1.000, unparsed 0.000, raw move mass 1.000 at step 159). The trial labels
+`forkcf4b_A_s1_tx` ALIVE (zero-advantage 0.72 over the last fifth) and the
+partner `forkcf4b_D_s1_tx` DEAD (0.88). Reads, solve / mine ratio against the
+seed-1 reference (0.922 / 2.164):
+
+| label | @40 | @80 | @120 | @160 |
+| --- | --- | --- | --- | --- |
+| `forkcf4b_A_s1_tx` | 0.891 / 0.968 | 0.891 / 0.884 | 0.805 / 0.823 | 0.828 / 0.765 |
+| `forkcf4b_D_s1_tx` | 0.961 / 0.910 | 0.773 / 0.946 | 0.852 / 1.217 | 0.906 / 0.989 |
+
+At 160: `mean_steps` 14.59 and 13.29 (reference 13.02), capped share 0.172 and
+0.094 (0.078), solved routes (`optimality` × 12) 12.64 and 12.18 (12.08),
+`detour_paid_solved` 0.038 and 0.000 (0.000).
+
+**Paired A − D gap in held-out mine steps per episode** (§19's interval, on
+the `episodes` records, 128 mazes paired on the maze seed; 20 000-resample
+bootstrap 95 %; t within 0.02): +0.125 [−0.141, +0.438] at 40; −0.133 [−0.469, +0.180] at 80;
+−0.852 [−1.430, −0.305] at 120; −0.484 [−0.773, −0.211] at 160. Solve gap
+−0.070, +0.117, −0.047, −0.078; capped gap the negative of each.
+
+**Verdict by §16's rule (§18) with the paired condition §20 sets for this pair
+(§20 was committed at 06:58Z, after the partner's read at 40).** Not credited. Of the three conditions, the
+partner does not AVOIDS at 160 and the paired interval excludes zero, but the
+arm does not AVOIDS: its ratio is 0.7653 against a strict bar of 0.75, with
+solve 0.094 below the reference (inside the band). At 120 the interval also
+excluded zero, but there the arm read RANDOMISED (solve 0.117 below) and the
+gap came with the partner's own rise to 1.217. Under the bar, the capped-share
+rise (0.078 to 0.172) and `mean_steps` +1.58 would still withhold credit. The
+control `ctrl4b_s1` ended at the same 0.765 (solve 0.859).
+
+**What it adds.** `_tx` ended below its partner at both seeds (0.818 against 0.946; 0.765
+against 0.989) and level with its on-policy control at both (0.80; 0.765). At
+seed 1 the paired interval excludes zero over mazes, not over runs (§19.1:
+0.11). On the 101 mazes both solved at 160 the gap is −0.317 mine steps per
+episode, bootstrap 95 % [−0.465, −0.178], with A's routes 12.65 against 12.09
+steps; that is −32 of the −62 total mine steps, and the other −30 comes on the
+27 mazes where either arm capped, −16 of it on the 15 where only A capped. §16.4's
+read 2 over steps 0–159: gate positive on both (tie share 0.076, 0.203); pooled
+A(taken) −2.71 [−3.94, −1.56] on the arm, −4.42 [−7.25, −1.34] on the partner.
+Two seeds, one price; no AVOIDS. Verified by
+the results-verifier with corrections.
