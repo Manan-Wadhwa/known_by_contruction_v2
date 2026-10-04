@@ -803,3 +803,23 @@ reference's 0.078, and solved routes (`optimality` × 12) were 12.63 against
 Both at `5fda1de` (the build merged with the critic's changes; MD5 match on
 the three trial files after `bringup2_nosetup.sh`), the env of §16. Each
 measured the warm-start reference at solve 0.922, mine/ep 2.188.
+
+### 16.2 Box 5's lease died (2026-10-04 ~01:12Z); `forkcf4b_D_s0_tx` lost at step 26
+
+Box 5 answered HTTP 410 at 01:14:54Z; its watcher saw it unreachable at
+01:13:09Z and 01:14:47Z. The last pull (01:10Z) holds 27 steps (0–26) of
+`forkcf4b_D_s0_tx` and no read; it is kept at
+`results/_lost_2026-10-04_forkcf4b_D_s0_tx/` so the relaunch writes to the
+label's own directory. What the 27 steps say, from `history` (not a §16
+mechanism read, which is over steps 0–39): pool 24.0 forks a step, tie share
+0.741, kept share 0.023 (0.56 credited forks a step), `fork_adv_taken_mean`
+−1.40 pooled over 15 credited forks. Beside it, `forkcf4b_A_s0_tx` over its
+first 25 steps (box 4, live): 3.64 credited forks a step (kept share 0.152;
+five steps with none), `fork_share_detour_better` 0.813 pooled over 91
+credited forks, the pool's 0.13, `fork_stage2_seconds` 6.5 of 64.9 s/step.
+The design's stand-in expected about 7 credited forks a step on cell A.
+
+**The queue changes, before any read.** The lost partner relaunches unchanged
+on the next box to free, ahead of `forkcf4b_A_s0_t`: §16 credits no cell-A
+`tx` arm without `forkcf4b_D_s0_tx`'s read at the same step. Box 3
+(`forkcf4b_A_s0_f2`, final due ~01:40Z) takes it; `_t` waits for box 2.
