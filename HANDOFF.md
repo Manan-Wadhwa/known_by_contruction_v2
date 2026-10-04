@@ -7,18 +7,21 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**In flight (2026-10-04 03:20Z).** Four leases. box 2 `forkcf4b_A_s1_p30`
-(§15, final ~03:36Z), box 4 `forkcf4b_A_s0_tx` (~03:32Z), box 1
-`forkcf4b_A_s0_tx_p30` (~03:58Z), box 3 `forkcf4b_D_s0_tx` (~04:24Z). Next on
-each as it frees: box 4 `_t`, box 2 `_tx_p30` s1 (§16), box 1 `_tx_p50`, box 3
-`_tx_p100` (§17, conditional on no §16 AVOIDS). `launch16.sh` covers all of
-them; `rewatch.sh` updates the unit; `read2.py` gives §16.4's read 2.
+**In flight (2026-10-04 03:40Z).** §15 is closed with no AVOIDS (§15.3-§15.7).
+§16: box 1 `forkcf4b_A_s0_tx_p30` (final ~03:58Z), box 3 `forkcf4b_D_s0_tx`
+(~04:24Z), box 4 `forkcf4b_A_s0_t` (03:30Z), box 2 `forkcf4b_A_s1_tx_p30`
+(03:37Z). Next: box 1 `_tx_p50`, box 3 `_tx_p100` (§17, conditional on no §16
+AVOIDS). `launch16.sh`, `rewatch.sh`, `read2.py` in the session scratchpad.
 Built and merged: the eighteenth pass (§16; `MZ01_FORK_PICK=tie`,
 `MZ01_FORK_SELECT=crossfit`; `record/BUILD-fork-share-2026-10-04.md`, critic
 APPROVE WITH CHANGES, all four made; 147 tests pass). §16's arms go on
 boxes whose §15 run ends flat.
 
 **Last verdicts.**
+- `forkcf4b_A_s0_tx` final 0.938 / 0.82, no detours or extra capping
+  (tie choice?); not recorded until its partner's final (~04:24Z).
+- `forkcf4b_A_s1_p30` not AVOIDS (0.750 / 0.84); its slowdown was fork
+  sampling, not capped episodes (§15.7).
 - `forkcf4b_A_s0_f2` no read AVOIDS (final 0.891 / 0.88), share 0.046 (§15.6).
 - §16.3: tx reads at 40 valid, none AVOIDS; read 1 passes on cell A
   (0.79-0.82); read 2 fired on cell D (-2.39 over 17 forks). Build question
