@@ -991,3 +991,50 @@ separate the three arms either (ratios 0.889, 0.929, 0.921 with solve
 02:34Z) and before the partner's (03:01Z). One seed; the partner has 36
 credited forks in 20 of 80 steps. Verified by the results-verifier with
 corrections.
+
+## 17. The dose on the tie-and-crossfit design, pre-registered (2026-10-04 03:20Z / 08:50 IST)
+
+Written before any §16 arm's read at 160. It governs boxes 1 and 3 when their
+§16 runs end, and only if no §16 arm has read AVOIDS with its partner not
+AVOIDS; if one has, that arm's seed replication and its partner at the same
+seed come first.
+
+**Why.** §16.5: at kept forks the mine-free partner's credit on the taken move
+(−4.54) matches the undosed cell-A arm's (−4.69) within ±4, so at the world's
+price the cross-fitted credit on cell A is not separated from the route credit
+a return with no price produces. The dosed arm (−30) is the only one whose
+credit pulls away (−7.58; 3.05 more negative than the partner, 95 % [−7.21,
++1.51]). The route part cannot be subtracted from the return: a return with
+its step and goal terms removed recovers the mine count and fails the
+construction test (D-22). It can only be outweighed, and the price is the one
+term that does that. So the next arms raise the price on the same design.
+
+**The runs.** As §16's `forkcf4b_A_s0_tx_p30` (4B, `nav_nav48_4b`,
+`orgb_4b/warm_start.pt`, `fork_cf_g6`, `MZ01_FORK_PICK=tie`,
+`MZ01_FORK_SELECT=crossfit`, cap 0.3, coef 1.0, mass 0.3, one fork per
+episode, 160 steps, reads 40/80/120/160), changing only the price:
+
+| order | label | `MZ01_SCORE_MINE` | seed | box |
+| --- | --- | --- | --- | --- |
+| 1 | `forkcf4b_A_s0_tx_p50` | −50 | 0 | box 1, after `_tx_p30` |
+| 2 | `forkcf4b_A_s0_tx_p100` | −100 | 0 | box 3, after `forkcf4b_D_s0_tx` |
+
+The held-out read is priced by the world at −10, as on every dose arm. The
+partner is `forkcf4b_D_s0_tx` (cell D cannot be dosed: the trainer refuses a
+price it never charges); the control is `ctrl4b_s0`.
+
+**Reading rule.** §16's reading rule and §16.4's read 2 stand unchanged. In
+addition, a dose read across seed 0's four `tx` arms (−10 `_tx`, −30
+`_tx_p30`, −50, −100): at each read, held-out mine ratio, solve, `mean_steps`,
+`capped_rate` and solved routes (`optimality` × 12) against the price, and read
+2's pooled `fork_adv_taken_mean` with its interval against the partner's. An
+arm whose mine ratio falls under 0.75 with solve within 0.10, while the partner
+does not, AVOIDS and is credited to the price, the dose being its independent
+variable; it then gets a second seed before any curve is drawn. A fall that
+comes with a solve loss or a rise in `capped_rate` is the over-avoidance shape
+of §15.5 and is reported as that, not credited. One seed: no monotone trend is
+claimed from four points.
+
+**Construction test.** The price is a number in the return and nothing else
+(`record/BUILD-mine-dose-2026-09-10.md` §2–§3); the dose changes which forks
+the cross-fit keeps only through the priced return (D-22).
