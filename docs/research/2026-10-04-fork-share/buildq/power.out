@@ -1,0 +1,11 @@
+38a: n 17 mean -2.392 sd 6.35 se 1.54 t95 [-5.66,0.87] boot95 [-5.73,0.16] median 0.00 neg 7 pos 6 zero 4 mean w/o steps 4,20 0.14
+38b: n 17 mean -2.392 sd 6.38 se 1.55 t95 [-5.67,0.89] boot95 [-5.76,0.12] median 0.00 neg 7 pos 6 zero 4 mean w/o steps 4,20 0.14
+step-cluster boot95 [-6.58,0.36] P(boot>0) 0.086
+|mu| 1.07: 95% CI excludes 0 at the true mean: forks 135, steps at 0.425/step 318
+|mu| 1.07: 80% power, 2-sided 5%: forks 276, steps at 0.425/step 650
+|mu| 2.0: 95% CI excludes 0 at the true mean: forks 39, steps at 0.425/step 91
+|mu| 2.0: 80% power, 2-sided 5%: forks 79, steps at 0.425/step 186
+|mu| 2.39: 95% CI excludes 0 at the true mean: forks 27, steps at 0.425/step 64
+|mu| 2.39: 80% power, 2-sided 5%: forks 55, steps at 0.425/step 130
+at step 80: ~34 forks, se 1.09, smallest |mu| read at 95% 2.13, at 80% power 3.05
+at step 160: ~68 forks, se 0.77, smallest |mu| read at 95% 1.51, at 80% power 2.16

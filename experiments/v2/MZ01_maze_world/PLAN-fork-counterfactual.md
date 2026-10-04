@@ -921,3 +921,40 @@ of, and for `_tx_p30` just below, the 0.861–0.943 range of §15's reads at 40
 (§15.1; cell-A arms 0.904–0.943), and their partner reads 0.904; no comparison
 at 40 separates them. `forkcf4b_A_s0_tx` read 0.953 / 0.889 at 80; its partner
 has no read at 80 yet. Verified by the results-verifier with corrections.
+
+### 16.4 Mechanism read 2 replaced, before `forkcf4b_D_s0_tx`'s read at 80 (2026-10-04 02:50Z)
+
+Written with `forkcf4b_D_s0_tx` at step 59, before its read at 80. Read 2 as
+§16 wrote it fired at 40 (§16.3) and stays on record. The build question it
+raised is answered in `docs/research/2026-10-04-fork-share/buildq/REPORT.md`:
+the code draws stage 2's continuations fresh from `fork_gen` after stage 1
+(`src/calibration/maze_orgb.py:3788-3798`), a test fails a restore or reseed
+of that generator (`tests/test_maze_orgb.py:7137`), and 4 of the 17 credited
+forks tie at stage 2, which a replay of stage 1 cannot produce. The pooled
+−2.39 has a 95 % step-cluster bootstrap interval of [−6.58, +0.36]; on cell D
+a negative mean is also route credit (a taken move that leads to a longer or
+failed continuation), and at 0.43 credited forks a step a mean of the size
+the design predicted (+1.07) needs more than 300 steps to read. The sign test
+cannot do what §16 asked of it. From the read at 80 on, read 2 is two reads
+over every credited fork from step 0 to the read:
+
+* **The replay read (a gate).** The share of credited forks whose stage-2
+  returns all tie, Σ_s (1 − `fork_share_nonzero`_s)·`n_forks`_s / Σ_s
+  `n_forks`_s. Stage 1 keeps a fork only when its returns differ, so a stage 2
+  that replays stage 1 gives exactly 0. A value of 0 over 30 or more credited
+  forks means the selection leaks: a build question, and no arm is credited
+  until it is answered. A positive value rules a full replay out at that read
+  (it does not test a partial dependence; the code and the test are the
+  evidence for that). Below 30 credited forks the gate is unread and credit
+  waits.
+* **The route read (reported, not a gate).** Pooled `fork_adv_taken_mean`
+  with a 95 % interval from 20 000 step-cluster bootstrap resamples, read
+  beside held-out `mean_steps`, `capped_rate` and solve. A negative interval
+  means the cell-D credit moves the policy off its habitual moves for route
+  length or failure; §16's reading rule already withholds credit when a
+  cell-A fall tracks route length or a solve loss, and this read is the
+  evidence for it.
+
+Read 1, the reading rule and the bars are unchanged. No running arm is closed.
+The amendment replaces a rule after it fired once, which is a change of
+pre-registration and is reported as one.
