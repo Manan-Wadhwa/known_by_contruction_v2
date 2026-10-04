@@ -733,3 +733,73 @@ falls). Two mechanism reads come first, over steps 0–39:
 `_t` against `forkcf4b_A_s0_g` isolates the pick and `_tx` against `_t` the
 selection; an AVOIDS on `_t` needs its own tie-pick cell-D run before it is
 credited. Both `tx_p30` seeds avoiding sends the design to §11's response curve.
+
+### 15.3 `forkcf4b_D_s0_g_rerun` ended (2026-10-04 00:41Z): the mine-free partner's solve falls to 0.695
+
+160 steps, `status` DONE, 62.4 s/step (`summary.json` `arms[0]`). Every read
+valid by the §9 bars; the final at 160: solve 0.695 against the reference's
+0.922, mine/ep 1.891 (ratio 0.864), held-out `mean_steps` 16.08 against 13.05,
+bare 0.998, unparsed 0.002, raw move mass 0.999 at training step 159 (minimum
+0.976 over steps 120–159), held-out `invalid_rate` 0.215 and `detour_paid` 0.117 (reference 0.046 and 0.055;
+`fork_cf_g6.json` `eval`, `reference.json` `eval`). The trial labels the arm
+DEAD: zero-advantage groups 0.89 over the last fifth, above its 0.80 bar
+(`scripts/score_mz01_explore.py` on the run directory). Its reads, solve /
+mine ratio: 0.898 / 0.86 at 40, 0.820 / 1.00 at 80, 0.656 / 0.746 at 120,
+0.695 / 0.86 at 160.
+
+As §15 pre-registered, the partner has no verdict of its own and stays valid.
+It never read AVOIDS: at 120 its ratio was 0.746, but solve was 0.27 below
+the reference. On the mine-free cell at seed 0, this arm's solve was 0.10 below
+the reference by 80 and 0.27 and 0.23 below at 120 and 160. Its mine ratio moved
+0.86, 1.00, 0.746, 0.86 across the four reads. Held-out `mean_steps` rose
+3.0–3.5, almost all of it from unsolved episodes run to the cap (capped share
+0.344 and 0.305 at 120 and 160, against 0.078 for the reference); solved routes
+grew by about 0.5 steps (`optimality` × 12). Without any price, then, the ratio
+swung between 0.75 and 1.00 at one seed. A priced seed-0 arm whose fall stays
+within that swing, or comes with a solve loss, is not credited (§16, the
+trial's solve band). Verified by the results-verifier with corrections. The box went to §16's first pair at once:
+`forkcf4b_D_s0_tx` on box 5, launched 00:44:05Z (below).
+
+### 15.4 `forkcf4b_A_s0_p30` ended (2026-10-04 00:45Z): RANDOMISED; at seed 0 and 160 steps the dose at −30 did not reach AVOIDS
+
+160 steps, `status` DONE, 63.9 s/step, the trial's verdict RANDOMISED
+(`summary.json` `arms[0]`; TRIAL DONE at 00:45:23Z in its log). Reads, solve /
+mine ratio, each valid by the §9 bars: 0.930 / 0.94 at 40 (ALIVE), 0.867 / 0.84
+at 80 (ALIVE), 0.766 / 0.81 at 120 (RANDOMISED), 0.773 / 0.72 at 160
+(RANDOMISED). The final: solve 0.773 against the reference's 0.922 (a fall of
+0.148), mine/ep 1.578 (ratio 0.721), held-out `mean_steps` 15.23 against 13.05
+(capped share 0.227 against 0.078; solved routes, `optimality` × 12, 12.66
+against 12.13), `detour_paid` 0.141 against 0.055 (solved episodes only, 0.030
+against 0.008; most of the rise is unsolved episodes), `invalid_rate` 0.199,
+bare 0.999, unparsed 0.001, raw move mass 1.000 at step 159 (minimum 0.967 over
+120–159; 0.815 at step 89, between reads).
+
+**Verdict by §13.3: RANDOMISED, not AVOIDS.** The final's mine ratio is under
+0.75, but solve fell more than 0.10, so the read is not AVOIDS by the trial's
+rule. The unpriced partner `forkcf4b_D_s0_g_rerun` (§15.3) showed the same
+shape on the mine-free return (ratio 0.75 with solve 0.656 at 120; 0.86 with
+solve 0.695 and `mean_steps` 16.08 at 160). The on-policy control `ctrl4b_s0`
+ended the same way, RANDOMISED at solve 0.734, ratio 0.80, `mean_steps` 15.51.
+On the 4B navigator with the guarded fork term, the dose at −30 did not reach
+AVOIDS at seed 0 by step 160. Its mine-rate fall came with a solve loss and more
+episodes run to the cap, the shape of the unpriced partner and of the on-policy
+control. Seed 1 (`forkcf4b_A_s1_p30`) is read separately. No partner or
+response curve follows (§11); the box went to §16's first arm. Verified by the
+results-verifier with corrections.
+
+**A correction to §15.2.** §15.2 says the seed-0 dose arm's "held-out routes
+grew from 13.13 to 14.14 steps" at 80. `mean_steps` averages every episode and
+an unsolved one runs to the cap: at 80 the capped share was 0.133 against the
+reference's 0.078, and solved routes (`optimality` × 12) were 12.63 against
+12.13. Read "held-out episodes grew", most of it unsolved episodes at the cap.
+
+### 16.1 Launches (2026-10-04)
+
+| box | label | pid | launched | banner, verified in `/marimo/repo/<label>.log` |
+| --- | --- | --- | --- | --- |
+| box 5 | `forkcf4b_D_s0_tx` | 12029 | 00:44:05Z | seed 0, cell D; "fork share: pick tie, select crossfit"; cap 0.3; mass guard 0.3; no dose line |
+| box 4 | `forkcf4b_A_s0_tx` | 14460 | 00:45:54Z | seed 0, cell A; "fork share: pick tie, select crossfit"; cap 0.3; no dose line |
+
+Both at `5fda1de` (the build merged with the critic's changes; MD5 match on
+the three trial files after `bringup2_nosetup.sh`), the env of §16. Each
+measured the warm-start reference at solve 0.922, mine/ep 2.188.

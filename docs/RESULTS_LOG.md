@@ -584,6 +584,24 @@ why a single mid-arm read is not a result and why Phase 1's exit needs two seeds
 
 ---
 
+## 9. 2026-10-03/04 — the fork counterfactual's §15 batch on 4B
+
+Qwen3-4B-Instruct-2507 @ `cdbee75f`, `nav_nav48_4b`, `orgb_4b/warm_start.pt`,
+arm `fork_cf_g6`, 160 steps, reads at 40/80/120/160, mask on, exit priced at
+cap, mass 0.3, episode credit, fork coef 1.0. Pre-registration and verdicts:
+`PLAN-fork-counterfactual.md` §13.3, §15–§15.4. Reads are solve / mine ratio
+to the warm-start reference (0.922 / 2.188 on seed 0).
+
+| label | change | @40 | @80 | @120 | @160 (verdict) | file |
+| --- | --- | --- | --- | --- | --- | --- |
+| `forkcf4b_D_s0_g_rerun` | cell D, cap 0.3 (the partner) | 0.898 / 0.86 | 0.820 / 1.00 | 0.656 / 0.746 | 0.695 / 0.86 (DEAD; partner, no verdict) | `results/forkcf4b_D_s0_g_rerun/summary.json` |
+| `forkcf4b_A_s0_p30` | dose −30, cap 0.3 | 0.930 / 0.94 | 0.867 / 0.84 | 0.766 / 0.81 | 0.773 / 0.72 (**RANDOMISED**) | `results/forkcf4b_A_s0_p30/summary.json` |
+
+Every read valid by the §9 bars. The seed-0 dose arm's ratio fell under 0.75 at
+160 with solve 0.148 below the reference; its unpriced partner swung between
+0.75 and 1.00 with its own solve loss, and the rise in held-out `mean_steps` on
+both is mostly unsolved episodes at the cap (§15.3, §15.4).
+
 ## What the log says
 
 Four findings, in the order the log produces them. Each is a statement about
