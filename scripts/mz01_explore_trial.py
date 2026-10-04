@@ -580,7 +580,7 @@ def eval_block(measurement, step=None):
         "first_token_class": maze_orgb.first_token_class(replies=replies),
         "competence": overall,
         "price": measurement.get("price"),
-        # EIGHTEENTH PASS (PLAN-fork-counterfactual §18). A trace: written
+        # PLAN-fork-counterfactual §18, "Measurement". A trace: written
         # after the read, read back by nothing. See `episode_columns`.
         "episodes": episode_columns(measurement.get("records")),
         "note": ("greedy, ONE retry, the parse-stop OFF, and the action space "
