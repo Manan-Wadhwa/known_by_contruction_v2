@@ -127,3 +127,15 @@ asserts that the warning reaches stderr for the fake measurement, and that
 **Results after the changes.** `tests/test_maze_orgb.py`: 149 passed, 1
 skipped. `python3 scripts/check_decisions.py`: 22 decisions, 55 references, 0
 problems.
+
+## Critic's verdict on build/eval-mine-counts at bc94bac (2026-10-04, independent Opus critic, verbatim summary)
+
+Verdict: APPROVE WITH CHANGES; none blocks the code, changes 1 and 2 to land before merge.
+
+1. Nothing feeds back. `episode_columns` (scripts/mz01_explore_trial.py:523-534) is a pure function of the read's records, called only from `eval_block` (:585); its output goes only into payload JSON (`eval` :625, `eval_at` :1069, reference.json :866). No reader of `episodes` in src/ or scripts/; `on_step` returns nothing; `measure_organism` uses no generator (maze_orgb.py:6066-6079). The history and adapter shas match the pre-build constants.
+2. Aggregates and pairing. The lists reproduce the aggregates exactly (integer sums over n, maze2.py:3070-3100; record fields maze2.py:2619-2622; maze order maze2.py:2934-2950). Two draws of the eval set with the trial's own call were identical, seeds unique in the first 128 and all 256; the draw does not depend on TRIAL_SEED. TRIAL_SEED changes the glyph table as well as the word order (:813), so a cross-seed pair is the same maze shown differently.
+3. Construction test passes: held-out mine counts written after the read; eval mazes disjoint from `train_pool`; nothing builds a prompt or loss from the field.
+4. The `None` fallback: silently losing the trace is not acceptable, raising would lose the arm; warn on stderr when records lack the fields.
+5. Tests: 149 passed, 1 skipped, imports from the worktree. Mutation on_mine_states-for-mine_steps fails a test; mutation read-index-for-maze-seed passes both tests (the test checked uniqueness and stability, not that the keys are maze seeds).
+
+Changes: 1 assert ep["seed"] == [m.seed for m in mazes]; 2 record §2: glyph table, and seed uniqueness by direct draw rather than by construction; 3 stderr warning.
