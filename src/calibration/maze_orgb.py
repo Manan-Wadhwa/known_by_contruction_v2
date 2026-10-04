@@ -191,6 +191,8 @@ __all__ = [
     # FIFTEENTH PASS: the forced counterfactual at geometric forks.
     "FORK_TRACE_FIELDS", "FORK_GRAD_MAX_DEFAULT", "episode_forks", "plan_forks",
     "sample_fork_continuations", "fork_advantages", "fork_terms",
+    # EIGHTEENTH PASS: the tie pick and the cross-fitted selection.
+    "FORK_PICKS", "FORK_SELECTS", "FORK_SHARE_TRACE_FIELDS", "crossfit_keep",
     "min_mines_on_shortest", "price_of", "price_rows", "price_table",
     "dm_regression", "regret_of", "contingency_report", "remark_diversity",
     "measure_organism", "instrument_panel", "relearn_read",
@@ -2070,6 +2072,11 @@ def sample_text_episodes(model, tok, mazes, *, group_size, generator,
 #     maze whose every mine accessor RAISES.
 #   * `plan_forks` draws uniformly among those forks with the run's own
 #     generator. No return, no landing and no label enters the draw.
+#     Eighteenth pass: under `MZ01_FORK_PICK=tie` it draws among the TIE forks,
+#     whose flag is `bfs_dist` to the goal over walls only.
+#   * `crossfit_keep` (eighteenth pass, `MZ01_FORK_SELECT=crossfit`) reads the
+#     continuations' `return` and `move` and the fork's `taken`, never
+#     `mine_steps` and never R minus its step and goal terms.
 #   * `_launch_continuations` builds one continuation per valid move, in
 #     `MOVE_WORDS` order. Which moves exist is geometry; which of them is a mine
 #     is not asked.
@@ -2160,6 +2167,31 @@ FORK_GRAD_MAX_DEFAULT = 0.3
 # move term's own share uses it -- one bar, read in two places.
 FORK_ADVANTAGE_TOL = ADVANTAGE_TOL
 
+# EIGHTEENTH PASS, 2026-10-04 (docs/research/2026-10-04-fork-share/DESIGN.md
+# section 2, designs 1 and 2). WHICH fork an episode branches at, and WHICH of
+# the branched forks are credited. The first entry of each is the default and
+# is the seventeenth pass to the bit.
+#   * `MZ01_FORK_PICK`: "uniform" draws among all the episode's forks; "tie"
+#     draws among its TIE forks (two or more moves reach the least bfs distance
+#     to the goal, walls only) and falls back to all forks when it has none.
+#   * `MZ01_FORK_SELECT`: "none" credits every branched fork; "crossfit" keeps
+#     a fork only when a forced move's continuation out-returned the taken
+#     move's (`crossfit_keep`), then credits it from FRESH continuations.
+FORK_PICKS = ("uniform", "tie")
+FORK_SELECTS = ("none", "crossfit")
+# The five trace fields the two knobs add, written ONLY when either is off its
+# default, so a default fork arm's trace is the seventeenth pass's key for key.
+#   fork_share_tie                 share of the branched (pool) forks that are tie
+#   fork_pool_n                    forks branched at stage 1
+#   fork_kept_share                kept / pool under crossfit, None under none
+#   fork_adv_taken_mean            mean A(taken) over the CREDITED forks, from
+#                                  their returns
+#   fork_share_detour_better_pool  `fork_share_detour_better` on the POOL; a
+#                                  diagnostic that reads mines and feeds nothing
+FORK_SHARE_TRACE_FIELDS = ("fork_share_tie", "fork_pool_n", "fork_kept_share",
+                           "fork_adv_taken_mean",
+                           "fork_share_detour_better_pool")
+
 
 def _fmt_share(x):
     """A share or a mean for the log line, with None printed as `n/a`."""
@@ -2196,7 +2228,13 @@ def episode_forks(episode, maze):
          "taken": the move the episode actually played there (may be None, or a
                   move that is not in `moves` -- a wall bump, or a step back),
          "prefix_steps": t, "cap": the episode's cap,
-         "budget": cap - t, the continuation's own step budget}
+         "budget": cap - t, the continuation's own step budget,
+         "tie": True when two or more of `moves` reach the least
+                `bfs_dist(maze, maze.goal)` over `moves` (EIGHTEENTH PASS)}
+
+    THE TIE FLAG IS WALLS ONLY. `bfs_dist` walks `maze.neighbours`, and a mine
+    is an open cell, so moving a mine cannot move a flag. A move whose next cell
+    cannot reach the goal counts as infinitely far.
 
     THE REVERSE IS EXCLUDED FROM `moves`, NOT ONLY FROM THE COUNT. Section 2.2
     defines the fork by the moves that are not the way back, and those are the
@@ -2227,14 +2265,17 @@ def episode_forks(episode, maze):
             "would be credited to a decision that is not the one it was taken "
             "at")
     out = []
+    to_goal = bfs_dist(maze, maze.goal)
     for t, pos in enumerate(positions):
         back = _reverse_move(pos, positions[t - 1] if t else None)
         # `maze.neighbours` yields in MOVE_WORDS order, so the continuations of
         # a fork are always built in one fixed order whatever the turn's word
         # order was.
-        moves = [w for w, _nxt in maze.neighbours(pos) if w != back]
+        nbrs = [(w, nxt) for w, nxt in maze.neighbours(pos) if w != back]
+        moves = [w for w, _nxt in nbrs]
         if len(moves) < 2:
             continue
+        near = [to_goal.get(nxt, math.inf) for _w, nxt in nbrs]
         out.append({
             "episode": episode.get("index"),
             "group": episode.get("group"),
@@ -2246,11 +2287,12 @@ def episode_forks(episode, maze):
             "prefix_steps": t,
             "cap": cap,
             "budget": cap - t,
+            "tie": near.count(min(near)) >= 2,
         })
     return out
 
 
-def plan_forks(episodes, mazes, *, generator, per_episode=1):
+def plan_forks(episodes, mazes, *, generator, per_episode=1, pick="uniform"):
     """One fork per sampled episode (or `per_episode`), drawn uniformly. -> [].
 
     PLAN section 2.2: "The fork is drawn uniformly at random among the
@@ -2264,11 +2306,23 @@ def plan_forks(episodes, mazes, *, generator, per_episode=1):
 
     NOTHING HERE READS A RETURN, A LANDING OR A MINE. Which episodes contribute
     is decided by geometry alone: "has this path a fork".
+
+    EIGHTEENTH PASS, `pick="tie"` (`MZ01_FORK_PICK`): the draw is made among
+    the episode's TIE forks (`episode_forks`'s walls-only flag) when it has
+    any, and among all its forks when it has none. `per_episode` then takes up
+    to that many of the tie forks and does not top up from the others. THE RNG:
+    either pick makes exactly one `torch.randperm(len(pool))` call per episode
+    that has a fork, and none for one that has not. Under "tie" the pool is
+    usually shorter, so from the first such episode on the generator sits at a
+    different position from a "uniform" run's at the same seed -- which is why
+    the pick is in the fingerprint. "uniform" is the pre-build draw to the bit.
     """
     picked = []
     for ep in episodes:
         maze = mazes[int(ep["group"])]
         forks = episode_forks(ep, maze)
+        if pick == "tie":
+            forks = [f for f in forks if f["tie"]] or forks
         if not forks:
             continue
         k = max(0, min(int(per_episode), len(forks)))
@@ -2435,6 +2489,36 @@ def fork_advantages(returns, *, std=False):
     return adv
 
 
+def crossfit_keep(forks, conts):
+    """Stage 1 of `MZ01_FORK_SELECT=crossfit`: which forks to credit. -> [j].
+
+    `forks` are the branched forks and `conts` their stage-1 continuations;
+    the result is the sorted indices into `forks` of the forks KEPT. A fork is
+    kept when some forced move's continuation returned more than the TAKEN
+    move's by over `FORK_ADVANTAGE_TOL`, and dropped when its taken move has no
+    continuation (a wall bump or a step back at the fork).
+
+    THE CONSTRUCTION TEST (DESIGN.md section 2.1). It reads a continuation's
+    `fork` index, `move` and `return`, and a fork's `taken`, and nothing else:
+    a mine reaches it only through the priced return. Not `mine_steps`, not the
+    landings, not R minus its step and goal terms (which recovers the mine count
+    under a shortest-path policy). The kept forks are then credited from FRESH
+    continuations, so the noise that chose a fork cannot choose its sign.
+    """
+    by_fork = {}
+    for c in conts:
+        by_fork.setdefault(int(c["fork"]), []).append(c)
+    kept = []
+    for j, fk in enumerate(forks):
+        taken = fk["taken"]
+        cs = by_fork.get(j) or []
+        base = [c["return"] for c in cs if c["move"] == taken]
+        if base and any(c["return"] - base[0] > FORK_ADVANTAGE_TOL
+                        for c in cs if c["move"] != taken):
+            kept.append(j)
+    return kept
+
+
 def fork_terms(forks, continuations, *, std=False):
     """The fork term's inputs and its diagnostics, from the priced roll-outs.
 
@@ -2464,6 +2548,7 @@ def fork_terms(forks, continuations, *, std=False):
     for c in continuations:
         by_fork.setdefault(int(c["fork"]), []).append(c)
     rows, adv_all, nonzero, better, comparable = [], [], 0, 0, 0
+    adv_taken = []
     for j, fk in enumerate(forks):
         cs = by_fork.get(j) or []
         if len(cs) < 2:
@@ -2479,6 +2564,9 @@ def fork_terms(forks, continuations, *, std=False):
         # ---- the diagnostic, and it stops here -----------------------------
         taken = next((c for c in cs if c["move"] == fk.get("taken")), None)
         if taken is not None:
+            # EIGHTEENTH PASS. A(taken) off the advantages the loss uses, so off
+            # the returns alone; it is in `stats`, and the loss never reads it.
+            adv_taken.append(adv[cs.index(taken)])
             comparable += 1
             best = max(cs, key=lambda c: c["return"])
             if best["mine_steps"] < taken["mine_steps"]:
@@ -2490,6 +2578,8 @@ def fork_terms(forks, continuations, *, std=False):
         "fork_share_nonzero": (nonzero / len(rows)) if rows else None,
         "fork_share_detour_better": ((better / comparable) if comparable
                                      else None),
+        "fork_adv_taken_mean": ((sum(adv_taken) / len(adv_taken)) if adv_taken
+                                else None),
     }
     return rows, stats
 
@@ -2901,8 +2991,13 @@ def _checkpoint_mismatch(want, got):
 
 
 def _refuse_fork_knobs(fork_cf, fork_per_ep, fork_coef, fork_std, fork_temperature,
-                       fork_grad_max, fork_mass_coef, fork_mass_given):
+                       fork_grad_max, fork_mass_coef, fork_mass_given,
+                       fork_pick="uniform", fork_select="none"):
     """Refuse a fork-term knob set that would record a term the run never took."""
+    if fork_pick not in FORK_PICKS or fork_select not in FORK_SELECTS:
+        raise ValueError(
+            f"fork_pick={fork_pick!r} must be one of {list(FORK_PICKS)} and "
+            f"fork_select={fork_select!r} one of {list(FORK_SELECTS)}")
     if fork_cf and fork_grad_max < 0:
         raise ValueError(f"fork_grad_max must be >= 0, got {fork_grad_max}: it "
                          "is a norm, and 0 means the cap is off")
@@ -2923,9 +3018,13 @@ def _refuse_fork_knobs(fork_cf, fork_per_ep, fork_coef, fork_std, fork_temperatu
                         # SIXTEENTH PASS, the same rule for the two guards: they
                         # are the fork term's own and mean nothing without it.
                         or fork_grad_max != FORK_GRAD_MAX_DEFAULT
-                        or fork_mass_given):
+                        or fork_mass_given
+                        # EIGHTEENTH PASS: the pick and the selection.
+                        or fork_pick != FORK_PICKS[0]
+                        or fork_select != FORK_SELECTS[0]):
         raise ValueError(
             f"fork_cf is off but fork_per_ep={fork_per_ep}, "
+            f"fork_pick={fork_pick!r}, fork_select={fork_select!r}, "
             f"fork_coef={fork_coef}, fork_std={fork_std}, "
             f"fork_temperature={fork_temperature}, "
             f"fork_grad_max={fork_grad_max}, "
@@ -3029,6 +3128,7 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                     move_word_ids=None, fork_cf=False, fork_per_ep=1,
                     fork_coef=1.0, fork_std=False, fork_temperature=1.0,
                     fork_grad_max=FORK_GRAD_MAX_DEFAULT, fork_mass_coef=None,
+                    fork_pick="uniform", fork_select="none",
                     on_step=None):
     """One cell of the 2x2. Returns a per-step history dict.
 
@@ -3204,6 +3304,17 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     and whenever the cap is off, because then the two gradients are never
     separated and the fork term's own norm is not a measurable thing.
 
+    WHICH FORKS (eighteenth pass, 2026-10-04,
+    BUILD-fork-share-2026-10-04.md). `fork_pick` (`MZ01_FORK_PICK`) "tie"
+    branches at a TIE fork when the episode has one (`plan_forks`).
+    `fork_select` (`MZ01_FORK_SELECT`) "crossfit" runs the continuations twice:
+    stage 1 picks the forks where a forced move out-returned the taken move
+    (`crossfit_keep`), stage 2 draws FRESH continuations at those forks from the
+    same fork generator, and only stage 2 reaches `fork_terms` and the loss.
+    Off their defaults ("uniform", "none") they add FORK_SHARE_TRACE_FIELDS to
+    the trace and their own keys to the fingerprint and the config; at the
+    defaults the fork arm is the seventeenth pass's to the bit.
+
     OFF IS OFF. With `fork_cf=False` nothing above runs, no random number is
     drawn for it, the trace gains no field and the loss is the fourteenth pass's
     to the bit -- `test_fork_off_is_the_pre_build_trace_and_the_pre_build_adapter`.
@@ -3323,8 +3434,13 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     fork_grad_max = float(fork_grad_max or 0.0)
     fork_mass_coef = (float(move_mass_coef) if fork_mass_coef is None
                       else float(fork_mass_coef))
+    fork_pick, fork_select = str(fork_pick), str(fork_select)
     _refuse_fork_knobs(fork_cf, fork_per_ep, fork_coef, fork_std, fork_temperature,
-                       fork_grad_max, fork_mass_coef, fork_mass_given)
+                       fork_grad_max, fork_mass_coef, fork_mass_given,
+                       fork_pick, fork_select)
+    # EIGHTEENTH PASS. Either knob off its default is a "fork share" run.
+    fork_share = fork_cf and (fork_pick, fork_select) != (FORK_PICKS[0],
+                                                          FORK_SELECTS[0])
     sample_t = (float(temperature) if sample_temperature is None
                 else float(sample_temperature))
     off_policy = abs(sample_t - float(temperature)) > 1e-12
@@ -3386,6 +3502,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     # trace reader is untouched.
     if fork_cf:
         history.update({k: [] for k in FORK_TRACE_FIELDS})
+    if fork_share:
+        history.update({k: [] for k in FORK_SHARE_TRACE_FIELDS})
     history["examples"] = []
     zero_move = zero_yell = zero_signal = 0
     coef = float(entropy_coef)
@@ -3468,6 +3586,14 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             "fork_grad_max": fork_grad_max,
             "fork_mass_coef": fork_mass_coef,
         })
+        # EIGHTEENTH PASS. The pick moves the fork generator's stream and the
+        # selection changes which forks are credited, so a resume across either
+        # is two recipes. Each key ONLY off its default, so a default fork arm's
+        # fingerprint is byte for byte the seventeenth pass's.
+        if fork_pick != FORK_PICKS[0]:
+            fingerprint["fork_pick"] = fork_pick
+        if fork_select != FORK_SELECTS[0]:
+            fingerprint["fork_select"] = fork_select
     # SEVENTEENTH PASS. The mine's TRAINING price changes WHAT EVERY EPISODE
     # WITH A MINE IN IT IS WORTH, and therefore every advantage in a group that
     # holds one -- the argument `exit_at_cap` is here for, one term over. ADDED
@@ -3636,16 +3762,30 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 fork_gen = torch.Generator().manual_seed(
                     (int(gen.initial_seed()) * 1_000_003 + int(it)) & 0x7FFF_FFFF)
                 forks = plan_forks(episodes, batch, generator=fork_gen,
-                                   per_episode=fork_per_ep)
-                conts = sample_fork_continuations(
-                    model, tok, forks, generator=fork_gen, glyphs=g, fmt=fmt,
+                                   per_episode=fork_per_ep, pick=fork_pick)
+                cont_kw = dict(
+                    generator=fork_gen, glyphs=g, fmt=fmt,
                     temperature=fork_temperature,
                     sample_batch_size=(sample_batch_size or chunk_size),
                     device=device, max_new_tokens=max_new_tokens,
                     max_consecutive_blocked=max_consecutive_blocked,
                     mine_cost=mine_cost, exit_at_cap=exit_at_cap,
                     move_cols=(cols if move_mask else None))
+                conts = sample_fork_continuations(model, tok, forks, **cont_kw)
                 fork_rows, fork_stats = fork_terms(forks, conts, std=fork_std)
+                # EIGHTEENTH PASS. Under "crossfit" the rows above are stage 1
+                # and only choose forks; the credited rows are recomputed from
+                # stage 2's FRESH continuations, drawn from the same `fork_gen`
+                # after stage 1's draws, so independent of the returns that
+                # chose them. `pool_stats` keeps stage 1's read for the trace.
+                pool_stats, kept = fork_stats, None
+                if fork_select == "crossfit":
+                    kept = crossfit_keep(forks, conts)
+                    forks2 = [forks[j] for j in kept]
+                    conts2 = sample_fork_continuations(model, tok, forks2,
+                                                       **cont_kw)
+                    fork_rows, fork_stats = fork_terms(forks2, conts2,
+                                                       std=fork_std)
                 if device.type == "cuda":
                     torch.cuda.synchronize()
                 t_fork = time.perf_counter() - t_f0
@@ -3870,6 +4010,23 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 history["fork_grad_norm_raw"].append(fork_g_raw)
                 history["fork_grad_norm"].append(fork_g_kept)
                 history["fork_mass_mean"].append(fork_mass_mean)
+            # EIGHTEENTH PASS. Off the defaults only. The tie share and the pool
+            # are stage 1's forks; A(taken) is the credited forks' (stage 2's
+            # under crossfit); the pool's detour-better reads mines and feeds
+            # nothing, as `fork_share_detour_better` does.
+            if fork_share:
+                n_pool = len(forks)
+                history["fork_share_tie"].append(
+                    (sum(1 for f in forks if f["tie"]) / n_pool)
+                    if n_pool else None)
+                history["fork_pool_n"].append(n_pool)
+                history["fork_kept_share"].append(
+                    (len(kept) / n_pool) if kept is not None and n_pool
+                    else None)
+                history["fork_adv_taken_mean"].append(
+                    fork_stats["fork_adv_taken_mean"])
+                history["fork_share_detour_better_pool"].append(
+                    pool_stats["fork_share_detour_better"])
             # TWELFTH PASS. BY ID, off the tokens that were actually sampled --
             # a decision that generated nothing at all counts as `other`, so the
             # four shares sum to 1 over the step's decisions and a drift reads
@@ -3991,6 +4148,11 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                            f"->{_fmt_share(history['fork_grad_norm'][-1])}"
                            f" fmass {_fmt_share(history['fork_mass_mean'][-1])}"
                          if fork_cf else "")
+                      # Eighteenth pass: the pool, its tie share, what was kept.
+                      + (f" pool {history['fork_pool_n'][-1]:d} tie "
+                         f"{_fmt_share(history['fork_share_tie'][-1])} kept "
+                         f"{_fmt_share(history['fork_kept_share'][-1])}"
+                         if fork_share else "")
                       + f"  {elapsed:.2f}s", flush=True)
             # AT THE STEP BOUNDARY, after the optimiser step and after the
             # entropy controller's update, so `next_step` is a step that has not
@@ -4234,6 +4396,11 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             # SIXTEENTH PASS. The two guards, beside the term they guard.
             "grad_max": fork_grad_max,
             "mass_coef": fork_mass_coef,
+            # EIGHTEENTH PASS. Each only off its default, so a default fork
+            # arm's block is byte for byte what it was.
+            **({"pick": fork_pick} if fork_pick != FORK_PICKS[0] else {}),
+            **({"select": fork_select} if fork_select != FORK_SELECTS[0]
+               else {}),
             "guards": (
                 (f"PER-TERM GRADIENT CAP at {fork_grad_max}: the fork term's "
                  "gradient is computed apart from the episode term's, clipped "
