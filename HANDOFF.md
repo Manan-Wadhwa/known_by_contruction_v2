@@ -7,19 +7,23 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**In flight (2026-10-04 00:50Z).** §15: box 1 `forkcf4b_A_s0_g10`, box 2
-`forkcf4b_A_s1_p30` (slowed to ~230 s/step as it stops solving), box 3
-`forkcf4b_A_s0_f2`. §16: box 5 `forkcf4b_D_s0_tx` (00:44Z), box 4
-`forkcf4b_A_s0_tx` (00:45Z). Next free boxes take `_tx_p30` s0, `_tx_p30` s1,
-`_t` (helper `launch16.sh` and `rewatch.sh` in the session scratchpad).
-Monitors: a background task per box, the `mz01-watch` unit, the inhibitor,
-two read monitors (`reads.py`, §15 and §16 labels).
+**In flight (2026-10-04 01:20Z).** Four leases (box 5 died ~01:12Z, §16.2).
+§15: box 2 `forkcf4b_A_s1_p30` (~230 s/step, RANDOMISED at 120), box 3
+`forkcf4b_A_s0_f2` (final ~01:40Z). §16: box 4 `forkcf4b_A_s0_tx` (00:45Z),
+box 1 `forkcf4b_A_s0_tx_p30` (01:12Z). Box 3 next takes `forkcf4b_D_s0_tx`
+(the lost partner, ahead of `_t`); box 2 then `_tx_p30` s1 or `_t`.
+Helpers `launch16.sh`, `rewatch.sh` in the session scratchpad. Monitors: a
+background task per box, `mz01-watch`, the inhibitor, two read monitors.
 Built and merged: the eighteenth pass (§16; `MZ01_FORK_PICK=tie`,
 `MZ01_FORK_SELECT=crossfit`; `record/BUILD-fork-share-2026-10-04.md`, critic
 APPROVE WITH CHANGES, all four made; 147 tests pass). §16's arms go on
 boxes whose §15 run ends flat.
 
 **Last verdicts.**
+- `forkcf4b_A_s0_g10` ALIVE to 120, then held-out solve 0.328 / ratio 0.27
+  at 160 (DEAD); write-up §15.5 pending the verifier.
+- `forkcf4b_A_s0_tx` steps 0-24: credited detour-better 0.81, 3.6 kept forks
+  a step (§16.2).
 - `forkcf4b_A_s0_p30` RANDOMISED at 160 (ratio 0.721, solve 0.773); the
   partner `forkcf4b_D_s0_g_rerun` DEAD (solve 0.695). §15.3, §15.4.
 - Held-out `mean_steps` rises are mostly unsolved episodes at the cap, not
