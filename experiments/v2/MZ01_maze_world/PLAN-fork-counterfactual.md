@@ -657,3 +657,79 @@ but a partner that has stopped solving is a weak comparison at this read, as
 0.039–0.052 on the four priced arms and 0.002 on cell D. Verified by the
 results-verifier with corrections (the read window, the partner's larger swing,
 the margin, the comparators).
+
+## 16. The eighteenth pass: tie forks and cross-fitted selection, pre-registered (2026-10-04 00:20Z / 05:50 IST)
+
+Written while §15's arms are at steps 110–135 and before any §16 build exists
+or any §16 arm has launched. It is conditional: it governs a box only when
+that box frees and no §15 arm has read AVOIDS at a valid read. A dose arm that
+reads AVOIDS at 160 with solve intact sends its box to §11's next step (its
+cell-D partner, or the response curve if both seeds avoid) first; §16 takes the
+other boxes.
+
+**Why.** §15 changed the size, the count and the step of the fork term, and
+none of them changed which forks carry the price. The share of forks at which
+a cleaner continuation beat the taken move stays at 0.04–0.05 under the dose
+(0.044 on both dose arms over steps 0–39, §15.1), under two forks per episode
+(0.052) and under the cap at 1.0, while the dose doubles `fork_adv_abs_mean`.
+The design (`docs/research/2026-10-04-fork-share/DESIGN.md` §1, with a CPU
+stand-in of the trainer's own `episode_forks` under a mine-blind policy, the
+`forksim*.py` beside it) gives the reason: where continuations differ in mine
+count, the taken move is already the cleanest in about four forks of five, so
+the price lowers moves the policy does not play; and the uniform draw mostly
+misses the tie forks (two equal routes), which hold about half of the forks
+where an alternative won. These are model numbers, not run evidence.
+
+**The change** (`MZ01_FORK_PICK`, `MZ01_FORK_SELECT`; build record
+`record/BUILD-fork-share-2026-10-04.md` when it lands). `tie` draws the fork
+among the episode's tie forks (two or more moves reach the least BFS distance
+to the goal; walls only) and falls back to all forks. `crossfit` keeps a fork
+only when a forced move's continuation out-returned the taken move's, then
+credits it from fresh continuations, so the noise that selected a fork cannot
+choose the sign of its credit. Both off by default.
+
+**Construction test.** The tie flag reads walls. The selection reads the
+continuations' priced returns and moves; a mine reaches it only through the
+price, and on cell D not at all. Selection on `mine_steps`, or on a return with
+its step and goal terms removed (which recovers the mine count), fails the test
+and the build's tests must forbid both (D-22).
+
+**Gate before any launch.** The build passes `tests/test_maze_orgb.py` with
+the design's tests added, and an Opus critic who has not seen the build
+approves it. A critic's REJECT holds every §16 arm.
+
+**The runs.** All: 4B (`Qwen/Qwen3-4B-Instruct-2507` @ `cdbee75f`),
+`nav_nav48_4b` + `orgb_4b/warm_start.pt`, arm `fork_cf_g6`, 160 steps, reads at
+40/80/120/160, mask on, exit priced at cap, episode credit,
+`MZ01_MOVE_MASS_COEF=0.3`, `MZ01_FORK_COEF=1.0`, `MZ01_FORK_GRAD_MAX=0.3`, one
+fork per episode. Expected 65–90 s/step, 3–4 h.
+
+| order | label | change from `forkcf4b_A_s0_g` | seed |
+| --- | --- | --- | --- |
+| 1 | `forkcf4b_A_s0_tx` | `MZ01_FORK_PICK=tie`, `MZ01_FORK_SELECT=crossfit` | 0 |
+| 2 | `forkcf4b_D_s0_tx` | the same, `MZ01_TRIAL_CELL=D` | 0 |
+| 3 | `forkcf4b_A_s0_tx_p30` | the same as 1, `MZ01_SCORE_MINE=-30` | 0 |
+| 4 | `forkcf4b_A_s1_tx_p30` | the same as 3 at seed 1 | 1 |
+| 5 | `forkcf4b_A_s0_t` | `MZ01_FORK_PICK=tie` only | 0 |
+
+Boxes take them in this order as they free; 1 and 2 go out together.
+
+**Reading rule.** §6, §8.4, §9 and the trial's bars stand. The price is
+credited at a valid read when a cell-A `tx` arm AVOIDS (mine ratio < 0.75 with
+solve within 0.10), its on-policy control (`ctrl4b_s0` / `ctrl4b_s1`) does not,
+and `forkcf4b_D_s0_tx` does not at the same read; held-out `mean_steps` is read
+beside mine/ep and a fall that tracks a route-length change or a solve loss is
+not credited (§15.2–§15.3 show the mine-free cell's rate falling as solve
+falls). Two mechanism reads come first, over steps 0–39:
+
+* `fork_share_detour_better` on the credited forks: 0.15 or above on every
+  cell-A `tx` arm means the selection works as designed; below 0.10 the arm is
+  a failed mechanism whatever its reads; in between the reads stand and the
+  mechanism is reported as weaker than modelled.
+* The mean of `fork_adv_taken_mean` on `forkcf4b_D_s0_tx`: a negative value
+  means the selection leaks noise into the credit; that is a build question and
+  no arm is credited until it is answered.
+
+`_t` against `forkcf4b_A_s0_g` isolates the pick and `_tx` against `_t` the
+selection; an AVOIDS on `_t` needs its own tie-pick cell-D run before it is
+credited. Both `tx_p30` seeds avoiding sends the design to §11's response curve.

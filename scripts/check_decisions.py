@@ -22,6 +22,9 @@ SEC = re.compile(r"§\s*([\dA-Z]+(?:\.\d+)?)")
 
 
 def resolve(name):
+    """Return the file a reference names: the path as written from the root, else the first basename match in SEARCH."""
+    if "/" in name and (ROOT / name).is_file():
+        return ROOT / name
     stem = Path(name).name
     for d in SEARCH:
         hits = sorted(p for p in d.glob(stem.split(".")[0] + "*") if p.suffix in (".md", ".py", ".sh"))

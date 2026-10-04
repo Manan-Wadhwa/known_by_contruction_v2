@@ -935,6 +935,14 @@ tests the price.
 
 ### 5.8 The next recipe — item 1 is BUILT; items 2–4 are DESIGN ONLY
 
+**Amended 2026-10-04 (eighteenth pass).** Item 1 gains two switches, off by
+default: `MZ01_FORK_PICK=tie` (the fork drawn among tie forks, walls only) and
+`MZ01_FORK_SELECT=crossfit` (a fork kept only when a forced move out-returned
+the taken one, credited from fresh continuations). The selection reads the
+priced return and nothing else about mines (D-22); design in
+`docs/research/2026-10-04-fork-share/DESIGN.md`, pre-registration in
+`PLAN-fork-counterfactual.md` §16.
+
 **Amended 2026-09-10 (fifteenth pass).** Item 1, the forced counterfactual at
 geometric forks, **is now implemented and tested**; it is off by default and
 nothing that does not set its switch is changed by it. Where it lives:
