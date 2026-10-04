@@ -7,13 +7,12 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**In flight (2026-10-04 01:45Z).** Four leases (box 5 died ~01:12Z, §16.2).
-§15: box 2 `forkcf4b_A_s1_p30` (~230 s/step, RANDOMISED at 120). §16: box 4
-`forkcf4b_A_s0_tx` (00:45Z), box 1 `forkcf4b_A_s0_tx_p30` (01:12Z), box 3
-`forkcf4b_D_s0_tx` (relaunched 01:43Z). Box 2 next takes `_tx_p30` s1; `_t`
-waits for a box. Helpers `launch16.sh`, `rewatch.sh` in the session
-scratchpad. Monitors: a background task per box, `mz01-watch`, the inhibitor,
-two read monitors.
+**In flight (2026-10-04 03:20Z).** Four leases. box 2 `forkcf4b_A_s1_p30`
+(§15, final ~03:36Z), box 4 `forkcf4b_A_s0_tx` (~03:32Z), box 1
+`forkcf4b_A_s0_tx_p30` (~03:58Z), box 3 `forkcf4b_D_s0_tx` (~04:24Z). Next on
+each as it frees: box 4 `_t`, box 2 `_tx_p30` s1 (§16), box 1 `_tx_p50`, box 3
+`_tx_p100` (§17, conditional on no §16 AVOIDS). `launch16.sh` covers all of
+them; `rewatch.sh` updates the unit; `read2.py` gives §16.4's read 2.
 Built and merged: the eighteenth pass (§16; `MZ01_FORK_PICK=tie`,
 `MZ01_FORK_SELECT=crossfit`; `record/BUILD-fork-share-2026-10-04.md`, critic
 APPROVE WITH CHANGES, all four made; 147 tests pass). §16's arms go on
