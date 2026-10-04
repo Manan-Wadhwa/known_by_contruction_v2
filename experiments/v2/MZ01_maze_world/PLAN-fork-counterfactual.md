@@ -823,3 +823,36 @@ The design's stand-in expected about 7 credited forks a step on cell A.
 on the next box to free, ahead of `forkcf4b_A_s0_t`: §16 credits no cell-A
 `tx` arm without `forkcf4b_D_s0_tx`'s read at the same step. Box 3
 (`forkcf4b_A_s0_f2`, final due ~01:40Z) takes it; `_t` waits for box 2.
+
+### 15.5 `forkcf4b_A_s0_g10` ended (2026-10-04 01:12Z): ALIVE to 120, then held-out solve falls to 0.328 with a mine ratio of 0.27
+
+160 steps, `status` DONE, 73.6 s/step, the trial's label DEAD (zero-advantage
+groups 0.81 over the last fifth, above its 0.80 bar; `summary.json` `arms[0]`).
+Reads, solve / mine ratio, each valid by the §9 bars: 0.930 / 0.90 at 40, 0.898
+/ 0.93 at 80, 0.875 / 0.82 at 120 (all ALIVE), 0.328 / 0.27 at 160. The final:
+solve 0.328 against 0.922, mine/ep 0.586 (ratio 0.268), held-out `mean_steps`
+21.16 against 13.05 (capped share 0.672 against the reference's 0.078), solved
+routes (`optimality` × 12) 15.33 against 12.13, `detour_paid` 0.641 against
+0.055 (solved episodes only, `detour_paid_solved` 0.429, 18 of 42, against
+0.008, 1 of 118; 64 of the 86 unsolved episodes count as paid),
+`invalid_rate` 0.058, bare 0.999, unparsed 0.001, raw move mass 0.998 at step
+159 (minimum 0.874 at step 21, between reads). Training solve, means over
+twenty-step blocks, stayed 0.82–0.97 to the end (0.82 over steps 140–159).
+
+**Verdict by §13.3: RANDOMISED by the solve clause (the trial labels it DEAD),
+not AVOIDS.** The arm's own closing rule (raw mass < 0.90 at a read) never
+fired. Unlike `forkcf4b_A_s0_p30` (§15.4), the solved episodes at 160 also take
+longer routes and more often avoid every mine, so not all of the change is
+episodes run to the cap. It resembles FAILURES A7 (14B on-policy
+`mass_ctrl_s1`, ratio 0.41 with solve 0.750 at 160 after AVOIDS at 120) only in
+the mine ratio falling far below the bar with a solve loss; this arm's solve
+loss is larger, its capped share is 0.672 against A7's 0.25, and its fall came
+between two reads 40 steps apart. One seed, one read; the mechanism (a 1.0 cap
+on a fork term whose raw norm has median 524, quartiles 309 and 1673) is not
+tested by this run. Its partner `forkcf4b_D_s0_g_rerun` (cap 0.3, not 1.0) did
+not show detours at 160 (solved routes 12.61, `detour_paid_solved` 0.022, 2 of
+89), so the cell-A against cell-D difference mixes the price with the cap. The
+control `ctrl4b_s0` ended RANDOMISED (solve 0.734, ratio 0.80). The box went to
+§16's next arm, `forkcf4b_A_s0_tx_p30` on box 1, launched 01:12:55Z (banner:
+cell A, "fork share: pick tie, select crossfit", cap 0.3, "mine priced at
+-30.0 IN TRAINING"). Verified by the results-verifier with corrections.

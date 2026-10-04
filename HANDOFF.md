@@ -21,7 +21,7 @@ boxes whose §15 run ends flat.
 
 **Last verdicts.**
 - `forkcf4b_A_s0_g10` ALIVE to 120, then held-out solve 0.328 / ratio 0.27
-  at 160 (DEAD); write-up §15.5 pending the verifier.
+  at 160 (RANDOMISED by solve; label DEAD), §15.5.
 - `forkcf4b_A_s0_tx` steps 0-24: credited detour-better 0.81, 3.6 kept forks
   a step (§16.2).
 - `forkcf4b_A_s0_p30` RANDOMISED at 160 (ratio 0.721, solve 0.773); the

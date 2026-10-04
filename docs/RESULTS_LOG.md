@@ -596,11 +596,15 @@ to the warm-start reference (0.922 / 2.188 on seed 0).
 | --- | --- | --- | --- | --- | --- | --- |
 | `forkcf4b_D_s0_g_rerun` | cell D, cap 0.3 (the partner) | 0.898 / 0.86 | 0.820 / 1.00 | 0.656 / 0.746 | 0.695 / 0.86 (DEAD; partner, no verdict) | `results/forkcf4b_D_s0_g_rerun/summary.json` |
 | `forkcf4b_A_s0_p30` | dose −30, cap 0.3 | 0.930 / 0.94 | 0.867 / 0.84 | 0.766 / 0.81 | 0.773 / 0.72 (**RANDOMISED**) | `results/forkcf4b_A_s0_p30/summary.json` |
+| `forkcf4b_A_s0_g10` | fork cap 1.0 | 0.930 / 0.90 | 0.898 / 0.93 | 0.875 / 0.82 | 0.328 / 0.27 (**RANDOMISED** by the solve clause; trial label DEAD) | `results/forkcf4b_A_s0_g10/summary.json` |
 
 Every read valid by the §9 bars. The seed-0 dose arm's ratio fell under 0.75 at
 160 with solve 0.148 below the reference; its unpriced partner swung between
 0.75 and 1.00 with its own solve loss, and the rise in held-out `mean_steps` on
-both is mostly unsolved episodes at the cap (§15.3, §15.4).
+both is mostly unsolved episodes at the cap (§15.3, §15.4). The cap-1.0 arm
+held to 120 and collapsed by 160 (capped share 0.672), its solved episodes
+longer and more often mine-free (`detour_paid_solved` 0.429); its partner ran
+at cap 0.3, so price and cap are not separated (§15.5).
 
 ## What the log says
 
