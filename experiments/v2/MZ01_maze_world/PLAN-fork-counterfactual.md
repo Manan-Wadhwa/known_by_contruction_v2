@@ -1359,3 +1359,152 @@ unchanged (both together, 320 steps) and §20's two arms unchanged. The design
 for what follows (a seed sweep with matched controls) is saved verbatim at
 `docs/research/2026-10-04-next/DESIGN.md`; its on-policy control cells need
 the user's decision (D-21) before they are pre-registered.
+
+## 21. The fork term on and off, at the world's price, seeds 0 to 7, pre-registered (2026-10-04 10:05Z / 15:35 IST)
+
+Written after all four leases died (§19.2/§20.1) and before any launch of
+the runs it queues. When it was written the lead had seen the §19 pair's reads
+at 40, 80, 120 and 160 and their paired gap at 160 (§19.2), and §20's one read
+(`forkcf4b_A_s0_tx_p20` at 40); the seed-0 choice below is by whether a run
+keeps `episodes` records, not by value. The relaunches of §19.2/§20.1 (the
+§19 pair at 320 steps, §20's two arms) take the first boxes of the next
+leases; this queue follows them. The on-policy cells are controls by the
+user's ruling of 2026-10-04 (D-23): nothing is credited from them.
+
+**Why.** At seeds 0 and 1 the undosed `tx` arm ends below its cell-D partner
+(0.818 against 0.946; 0.765 against 0.989, paired gap −0.484 [−0.773, −0.211]
+mine steps per episode, §16.6, §18.1). It is level with the on-policy control
+at both (`ctrl4b_s0` 0.800, `ctrl4b_s1` 0.765). Three things keep those
+comparisons from being read.
+
+1. No on-policy run on cell D exists at 4B, so nobody has tested whether the
+   control's fall needs the price.
+2. The controls differ from the arms in mass (0.1 against 0.3), code
+   (`fce301f`, `18c0860` against `5fda1de`, `53f7c52`, `6de23ad`) and lease, and they
+   keep no per-episode records.
+3. Runs of one seed and config differ by 0.11 in ratio at 40 across leases
+   (§19.1). §18.1's interval covers mazes, not runs.
+
+Near the strict bar the per-run rule is weak. A run whose true ratio is 0.79
+reads under 0.75 on about a fifth to a third of reads at a per-run SD of 0.05
+to 0.08. The arm's on-policy update is the control's (§2.6), so the fork term
+is the difference between them, at matched settings.
+
+**The runs.** Two cells as §16's `forkcf4b_A_s0_tx` and `forkcf4b_D_s0_tx`
+(4B @ `cdbee75f`, `nav_nav48_4b`, `orgb_4b/warm_start.pt`, `fork_cf_g6`,
+`MZ01_FORK_PICK=tie`, `MZ01_FORK_SELECT=crossfit`, `MZ01_FORK_GRAD_MAX=0.3`,
+`MZ01_FORK_COEF=1.0`, one fork per episode, mask on, exit priced at cap,
+episode credit, `MZ01_MOVE_MASS_COEF=0.3`, no dose). Two on-policy cells as
+`ctrl4b_s0` (`onpolicy_g6`, the same model, navigator, warm start, mask, exit
+and credit) except `MZ01_MOVE_MASS_COEF=0.3`, one with `MZ01_TRIAL_CELL=D`.
+All four run 160 steps with reads at 40/80/120/160 on the trainer code of
+`6de23ad` (HEAD of `reorg/b-split-trainer` has no code diff from it as of this
+writing), so every read writes `episodes` (`8d147cc`). No new knob.
+
+Queue, in order, each freed box taking the next item:
+
+| order | label | cell, arm | seed |
+| --- | --- | --- | --- |
+| 1 | `ctrl4b_A_s0_m3` | A, `onpolicy_g6` | 0 |
+| 2 | `ctrl4b_D_s0_m3` | D, `onpolicy_g6` | 0 |
+| 3 | `ctrl4b_A_s1_m3` | A, `onpolicy_g6` | 1 |
+| 4 | `ctrl4b_D_s1_m3` | D, `onpolicy_g6` | 1 |
+| 5, 6 | `forkcf4b_A_s2_tx`, `forkcf4b_D_s2_tx` | A, D, `fork_cf_g6` | 2 |
+| 7, 8 | `ctrl4b_A_s2_m3`, `ctrl4b_D_s2_m3` | A, D, `onpolicy_g6` | 2 |
+| 9 to 28 | the same block of four at seed 3, then 4, 5, 6, 7 | | 3 to 7 |
+
+The fork pairs at seeds 0 and 1 exist. At seed 1 they are `forkcf4b_A_s1_tx`
+and `forkcf4b_D_s1_tx`. At seed 0 they are `forkcf4b_A_s0_tx_h320` and
+`forkcf4b_D_s0_tx_h320`, read at 160. Those runs keep `episodes`, and through
+step 160 they match §16's runs in every setting that changes a training step
+(§19.1). `forkcf4b_A_s0_tx` and `forkcf4b_D_s0_tx` are reported beside them as
+within-seed replicates. They enter only the run-noise estimate.
+
+**Precedence.**
+
+1. If §19's arm is credited at any read by §19's rule, §19's seed-1 pair at
+   320 steps takes the next two boxes to free, ahead of this queue's fork
+   runs.
+2. If both §20 arms are credited by §20's rule, §20's curve stands as
+   pre-registered and takes the boxes ahead of this queue's fork runs. This
+   queue's controls at seeds 0 to 3 are the curve's controls.
+3. A dose or horizon arm that reads AVOIDS goes to its pre-registered next
+   step first (§16 to §20).
+4. A run lost with its lease relaunches unchanged at the head of the queue
+   (as §16.2).
+
+Items 1 to 4 run under every one of these branches.
+
+**Reading rule, per run.** Unchanged: the trial's bars, §9's validity bars,
+§16's rule with §16.4's read 2 on the fork runs, and §19's paired interval
+against the same-seed partner. The control named by §16 is now the matched
+`ctrl4b_A_s{k}_m3`; `ctrl4b_s0` and `ctrl4b_s1` stay on record. A per-run
+credit is reported as one and sends nothing new, because the sweep already
+carries the seeds. A run whose final read is INVALID by §9 relaunches once at
+the head of the queue. If the relaunch is also invalid, the seed's block is
+reported without it.
+
+**Reading rule, across seeds (this section's result).** One pre-specified
+read, the one at 160. For seed k and cell c, r_ck is the held-out mine steps
+per episode divided by the seed's reference (`reference.json`
+`eval.mine_step_rate`). Four contrasts:
+
+- P_fork = r_A − r_D, the price under the fork term.
+- P_on = r_onA − r_onD, the price on-policy.
+- F = r_A − r_onA, the fork term under the price.
+- I = P_fork − P_on, what the fork term adds to the price's effect.
+
+Each is a mean over seeds with a 95 % interval from 20 000 crossed bootstrap
+resamples. Each resample draws seeds with replacement and, independently, the
+128 mazes with replacement, applying the same maze draw to every seed and
+cell. Beside each: the same contrast in solve and in capped share, the mine
+gap split into mazes both runs solved and the rest (as §18.1), the IQM across
+seeds of each cell's ratio, and the per-run SD from same-seed replicates
+(§19.1's pair and seed 0's two pairs).
+
+- The price lowers mine steps under the fork design when P_fork's interval
+  lies below zero, its both-solved part's interval lies below zero, and the
+  solve contrast's interval lies above −0.10. A P_fork carried by capped
+  mazes, or one that comes with a solve contrast below −0.10, is reported as
+  §17's over-avoidance shape and not credited.
+- P_on is a property of the control and credits nothing. It is reported with
+  the same three conditions. If its interval contains zero while r_onA is
+  below 1, the control's fall is not specific to the price, and that is
+  reported beside every §16 control gate. Reading P_on as a result for the
+  on-policy recipe would test the price with a recipe D-21 closed; that needs
+  the user and a new DECISIONS row first.
+- The fork term adds to the price when I's interval lies below zero. It
+  changes the priced policy when F's interval excludes zero.
+- None of these is AVOIDS. RESEARCH_PLAN §1.4's exit and the trial's bars are
+  unchanged. A seed-level price effect is reported as a price effect.
+
+**Interim and extension.** After seeds 0 to 3 have all four cells, the
+contrasts are reported with their intervals, with no credit and no change to
+the queue. At seed 7 the analysis is final, unless F's or I's 95 % half-width
+exceeds 0.10 in ratio. Then seeds 8 to 11 run as four more blocks, and the
+analysis is repeated once at 12 seeds with the same rule. The extension turns
+on the interval's width only, never on its sign or centre. There is no second
+extension.
+
+**Construction test.** The fork runs are §16's (D-22): tie forks from walls,
+selection on the priced return of the policy's own continuations. The
+on-policy runs read mines only through the priced return (cell A) or not at
+all (cell D). They are controls, as `ctrl4b_s0` and `ctrl4b_s1` were
+(`PLAN-exit-priced-at-cap.md` §8, 19:30Z and 19:45Z), and nothing is credited
+from them; the cell-D control and any result reading of P_on go beyond that
+precedent and wait for the user (D-21). Only the seed changes between blocks.
+
+**Measurement.** The analysis is a CPU script over the `episodes` records
+(`seed`, `solved`, `steps`, `mine_steps`, `capped` in every `eval` and
+`eval_at` block). An Opus subagent writes it before the interim, and the
+results-verifier checks it on §18.1's seed-1 pair. Restricted to that seed
+and to maze resampling, it must reproduce −0.484 [−0.773, −0.211] within
+0.02 at each end. Each
+launch entry records the box's torch, CUDA and Python environment from its
+log (§19.1).
+
+**Cost.** Fork runs about 2.9 h each (`forkcf4b_A_s1_tx` and
+`forkcf4b_D_s1_tx` took 2.59 h at 56.8 s/step), on-policy runs about 1.35 h
+(`ctrl4b_s0` and `ctrl4b_s1` at 25 s/step). Twelve fork runs and sixteen
+controls come to about 56 box-h, about 14 h on four leases, before lease
+losses. The extension adds about 34 box-h.
