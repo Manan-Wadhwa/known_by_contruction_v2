@@ -26,7 +26,9 @@ boxes whose §15 run ends flat.
   answered (no leak; too few forks; `docs/research/2026-10-04-fork-share/buildq/`);
   §16.4 replaces read 2 from 80 on (replay gate + route read; `read2.py` in
   the scratchpad computes both).
-- `forkcf4b_A_s0_tx_p30` at 80: 0.945 / 0.929 (FLAT).
+- §16.5 (reads at 80): none AVOIDS; gate passes; the cell-D partner's route
+  credit equals the undosed cell-A arm's (-4.54 vs -4.69), the dosed arm's is
+  3.05 more negative [-7.21, +1.51]. `_tx` at 120: 0.922 / 0.861.
 - `forkcf4b_A_s0_g10` ALIVE to 120, then held-out solve 0.328 / ratio 0.27
   at 160 (RANDOMISED by solve; label DEAD), §15.5.
 - `forkcf4b_A_s0_tx` steps 0-24: credited detour-better 0.81, 3.6 kept forks
@@ -58,6 +60,8 @@ boxes whose §15 run ends flat.
   the worktree by hand at the commit the agent needs.
 - A `.claude/agents/` file added mid-session registers a few turns later;
   until then run it as a general-purpose agent that reads the file.
+- D-22 forbids removing step terms from R, so route credit can only be
+  outweighed (the dose), not subtracted.
 - Run one read monitor at a time: two `reads.py` share `reads.seen` and
   repeat reads.
 - The Stop hook blocks when the repo changed and this file did not.
