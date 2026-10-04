@@ -1153,3 +1153,44 @@ per-episode mine counts beside `eval` and `eval_at` (a trace field, no knob),
 so a gap between an arm and its partner on the same mazes gets a paired
 interval; until then gaps are reported with the Poisson approximation of
 §16.6.
+
+## 19. The undosed tie-and-crossfit pair at 320 steps, pre-registered (2026-10-04 05:50Z / 11:20 IST)
+
+Written before the finals of §17's `_tx_p50` and `_tx_p100` and before any
+read of the runs it queues. It governs boxes 1 and 3 when §17's runs end,
+unless a §17 arm has read AVOIDS with `forkcf4b_D_s0_tx` not AVOIDS at the
+same step (then §18's seed-1 replicate of that arm goes first).
+
+**Why.** Every dosed arm that reached a low mine ratio did so with a solve
+loss (§15.4, §15.5, and `forkcf4b_A_s1_tx_p30` at 80: 0.734 / 0.693); §17's
+−50 and −100 lost solve by 40 (0.719, 0.797). The one arm that kept its solve
+through 160 is the undosed `forkcf4b_A_s0_tx`, whose mine ratio drifted 0.868,
+0.889, 0.861, 0.818 while its partner ended at 0.946 (§16.6; the gap at 160 is
+−0.13, approx. 95 % [−0.28, +0.03]). Whether more steps carry it under the bar
+is untested; `docs/research/APPROACHES.md` §B item 10 (longer horizons) is
+allowed once the fork term gives a live gradient, which §16.3–§16.6 show
+(credited detour-better 0.79, the replay gate passing).
+
+**The runs.** As `forkcf4b_A_s0_tx` and `forkcf4b_D_s0_tx` (§16) in every
+setting but the horizon: 320 steps, reads at 40, 80, …, 280 and the final at
+320, per-episode held-out records on (`8d147cc`).
+
+| box | label | cell | seed |
+| --- | --- | --- | --- |
+| box 1 | `forkcf4b_A_s0_tx_h320` | A | 0 |
+| box 3 | `forkcf4b_D_s0_tx_h320` | D | 0 |
+
+About 60 s/step: ~5.5 h each. Both launch together, or the second as soon as
+its box frees, so their reads come from the same horizon.
+
+**Reading rule.** §16's reading rule and §16.4's read 2 stand, the partner
+being `forkcf4b_D_s0_tx_h320` at the same step. At each read the A − D gap in
+held-out mine steps is reported with a paired 95 % interval over the 128
+mazes (paired on the maze seed of the `episodes` records), beside solve,
+`mean_steps`, `capped_rate` and solved routes. The price is credited at a
+valid read when the cell-A arm AVOIDS, the partner does not, and the paired
+interval on the mine-step gap excludes zero; a fall that comes with a solve
+loss or a capped-share rise is not credited (§15.5's shape). A cross at one
+read and a return above the bar at the next is reported as both, not as
+AVOIDS. One seed: a credit here sends the pair to seed 1 at the same horizon
+before anything else.
