@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SEARCH = [ROOT / "experiments/v2/MZ01_maze_world", ROOT / "experiments/v2/MZ01_maze_world/record",
           ROOT / "docs", ROOT / "docs/planning", ROOT / "scripts/box", ROOT / "src/calibration", ROOT]
-FILE = re.compile(r"`?((?:[\w./-]+/)?(?:PLAN-[\w-]+|RESULTS-[\w-]+|REPORT-[\w-]+|DIAGNOSIS-[\w-]+|SPEC|README|[A-Z_]+_PLAN)(?:\.md|\.py|\.sh)?|[\w-]+\.(?:md|py|sh))`?\s*((?:§\s*[\dA-Z]+(?:\.\d+)?(?:\s*[–-]\s*§?\s*[\dA-Z]+(?:\.\d+)?)?(?:,\s*)?)*)")
+FILE = re.compile(r"`?((?:[\w./-]+/)?(?:PLAN-[\w-]+|RESULTS-[\w-]+|REPORT-[\w-]+|DIAGNOSIS-[\w-]+|SPEC|README|[A-Z_]+_PLAN)(?:\.md|\.py|\.sh)?|(?:[\w./-]+/)?[\w-]+\.(?:md|py|sh))`?\s*((?:§\s*[\dA-Z]+(?:\.\d+)?(?:\s*[–-]\s*§?\s*[\dA-Z]+(?:\.\d+)?)?(?:,\s*)?)*)")
 SHA = re.compile(r"`([0-9a-f]{7,40})`")
 SEC = re.compile(r"§\s*([\dA-Z]+(?:\.\d+)?)")
 
