@@ -3777,8 +3777,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 # and only choose forks; the credited rows are recomputed from
                 # stage 2's FRESH continuations, drawn from the same `fork_gen`
                 # after stage 1's draws, so independent of the returns that
-                # chose them. `pool_stats` keeps stage 1's read for the trace.
-                pool_stats, kept = fork_stats, None
+                # chose them. `stage1_stats` keeps stage 1's read for the trace.
+                stage1_stats, kept = fork_stats, None
                 if fork_select == "crossfit":
                     kept = crossfit_keep(forks, conts)
                     forks2 = [forks[j] for j in kept]
@@ -4026,7 +4026,7 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 history["fork_adv_taken_mean"].append(
                     fork_stats["fork_adv_taken_mean"])
                 history["fork_share_detour_better_pool"].append(
-                    pool_stats["fork_share_detour_better"])
+                    stage1_stats["fork_share_detour_better"])
             # TWELFTH PASS. BY ID, off the tokens that were actually sampled --
             # a decision that generated nothing at all counts as `other`, so the
             # four shares sum to 1 over the step's decisions and a drift reads

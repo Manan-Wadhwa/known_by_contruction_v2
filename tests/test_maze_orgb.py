@@ -7221,21 +7221,24 @@ def test_on_cell_d_a_moved_mine_keeps_the_same_forks():
 
 
 # The fork arm at its defaults, captured on `8d5a75b` (the commit this pass was
-# built on) by `_exit_fixture_train(fork_cf=True)`: a sha over the JSON of every
-# trace field but the four clocks, plus `config["fork"]`, and the adapter sha.
-_PRE_SHARE_FORK_TRACE_SHA = (
-    "0e75e77fe5d1f8ce3dc7912a50c5d1e9c9ae9a3f65b082efdcdb9fe0e9373ab1")
+# built on) by `_exit_fixture_train(fork_cf=True)`: a sha over the JSON of EVERY
+# history key but the clocks (so `config`, `checkpoint`, `examples` and
+# `train_pool_stats` too), and the adapter sha. CRITIC, 2026-10-04: an earlier
+# version hashed the trace fields alone and missed a name collision that wrote
+# the last step's fork stats into `train_pool_stats` on every fork arm.
+_PRE_SHARE_FORK_HISTORY_SHA = (
+    "515da69a37ad908f7816df02ba62ce7e0aff91003cfd4321839888ca280714b5")
 _PRE_SHARE_FORK_ADAPTER_SHA = (
     "399230a2bfb74c19f20c8b2e3f6e7c5f3479a7f9d1eef300c80da8e694853448")
 _CLOCKS = ("step_seconds", "sample_seconds", "rescore_seconds",
-           "fork_sample_seconds")
+           "fork_sample_seconds", "total_seconds", "seconds_per_step",
+           "sampling_seconds_per_step", "rescore_seconds_per_step",
+           "on_step_seconds")
 
 
 def _fork_trace_sha(hist):
-    """sha256 of the fork arm's trace (clocks left out) and its config block."""
-    keep = {k: hist[k] for k in maze_orgb.TRACE_FIELDS
-            + maze_orgb.FORK_TRACE_FIELDS if k not in _CLOCKS}
-    keep["config.fork"] = hist["config"]["fork"]
+    """sha256 of the JSON of every history key but the clocks. -> hex str."""
+    keep = {k: v for k, v in hist.items() if k not in _CLOCKS}
     return hashlib.sha256(json.dumps(keep, sort_keys=True).encode()).hexdigest()
 
 
@@ -7244,7 +7247,8 @@ def test_the_fork_arm_at_the_default_pick_and_selection_is_the_pre_build_arm():
     are the pre-build ones to the bit, and none of the five new fields exist."""
     for kw in ({}, {"fork_pick": "uniform", "fork_select": "none"}):
         hist, state = _exit_fixture_train(fork_cf=True, **kw)
-        assert _fork_trace_sha(hist) == _PRE_SHARE_FORK_TRACE_SHA
+        assert _fork_trace_sha(hist) == _PRE_SHARE_FORK_HISTORY_SHA
+        assert hist["train_pool_stats"] is None
         assert _adapter_sha(state) == _PRE_SHARE_FORK_ADAPTER_SHA
         for field in maze_orgb.FORK_SHARE_TRACE_FIELDS:
             assert field not in hist, field
