@@ -958,3 +958,36 @@ over every credited fork from step 0 to the read:
 Read 1, the reading rule and the bars are unchanged. No running arm is closed.
 The amendment replaces a rule after it fired once, which is a change of
 pre-registration and is reported as one.
+
+### 16.5 The reads at 80, and §16.4's read 2 (2026-10-04)
+
+All three valid by the §9 bars, none AVOIDS. Reads at 80, solve / mine ratio
+against the warm-start reference (0.922 / 2.188), with held-out `mean_steps`
+(reference 13.05): `forkcf4b_A_s0_tx` 0.953 / 0.889, 12.86;
+`forkcf4b_A_s0_tx_p30` 0.945 / 0.929, 12.71; `forkcf4b_D_s0_tx` 0.953 / 0.921,
+12.84. `forkcf4b_A_s0_tx` read 0.922 / 0.861 at 120 (13.11).
+
+**§16.4's read 2 over steps 0–79** (credited forks; stage-2 tie share; pooled
+`fork_adv_taken_mean` with a 95 % step-cluster bootstrap interval, 20 000
+resamples):
+
+| label | credited forks | tie share | pooled A(taken) [95 %] |
+| --- | --- | --- | --- |
+| `forkcf4b_D_s0_tx` | 36 | 0.222 | −4.54 [−8.06, −1.82] |
+| `forkcf4b_A_s0_tx` | 193 | 0.052 | −4.69 [−7.83, −2.43] |
+| `forkcf4b_A_s0_tx_p30` | 174 | 0.040 | −7.58 [−10.65, −4.49] |
+
+The replay gate is read on all three (30 or more credited forks) and is
+positive on each, so no full replay of stage 1. The route read on the
+mine-free partner is negative and excludes zero: on cell D the credit on the
+taken move at kept forks is negative, which on a return with no price can only
+come from route length or failure. Its size matches the undosed cell-A arm's
+(−4.54 against −4.69; the difference is −0.15, 95 % [−4.26, +4.04]). The dosed
+arm's is 3.05 more negative, 95 % [−7.21, +1.51]. On these traces the size of
+the cell-A credit at kept forks cannot be told from the partner's credit, which
+carries no price, at a resolution of about ±4; the held-out reads at 80 do not
+separate the three arms either (ratios 0.889, 0.929, 0.921 with solve
+0.945–0.953). §16.4 was committed after the cell-A arms' reads at 80 (02:08Z,
+02:34Z) and before the partner's (03:01Z). One seed; the partner has 36
+credited forks in 20 of 80 steps. Verified by the results-verifier with
+corrections.
