@@ -21,10 +21,12 @@ boxes whose §15 run ends flat.
 
 **Last verdicts.**
 - `forkcf4b_A_s0_f2` no read AVOIDS (final 0.891 / 0.88), share 0.046 (§15.6).
-- §16.3: tx reads at 40 valid, none AVOIDS; mechanism read 1 passes on cell A
-  (0.79-0.82); read 2 fires on cell D (-2.39 over 17 forks, three carry the
-  sign): no tx arm credited until the build question is answered (an Opus
-  agent is on it; amendment to pre-register before the reads at 80).
+- §16.3: tx reads at 40 valid, none AVOIDS; read 1 passes on cell A
+  (0.79-0.82); read 2 fired on cell D (-2.39 over 17 forks). Build question
+  answered (no leak; too few forks; `docs/research/2026-10-04-fork-share/buildq/`);
+  §16.4 replaces read 2 from 80 on (replay gate + route read; `read2.py` in
+  the scratchpad computes both).
+- `forkcf4b_A_s0_tx_p30` at 80: 0.945 / 0.929 (FLAT).
 - `forkcf4b_A_s0_g10` ALIVE to 120, then held-out solve 0.328 / ratio 0.27
   at 160 (RANDOMISED by solve; label DEAD), §15.5.
 - `forkcf4b_A_s0_tx` steps 0-24: credited detour-better 0.81, 3.6 kept forks
