@@ -7,11 +7,14 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**In flight (2026-10-04 09:25Z).** box 1 `forkcf4b_A_s0_tx_h320` and box 3
-`forkcf4b_D_s0_tx_h320` (§19, finals ~12:00-12:30Z), box 2
-`forkcf4b_A_s0_tx_p20` (08:43Z) and box 4 `forkcf4b_A_s1_tx_p20` (09:17Z)
-(§20, finals ~11:30-12:00Z). Nothing queued after §20: write the next plan
-section before ~11:30Z.
+**In flight: nothing (2026-10-04 09:45Z).** All four leases died ~09:40Z
+(§19.2/§20.1). Partial runs under `results/_lost_2026-10-04_0940Z/`. On the
+next leases: relaunch the §19 pair (320 steps, together) and §20's two arms
+unchanged, via `launch16.sh` (session scratchpad) after `bringup2.sh` +
+`bringup2_nosetup.sh` + the 4B pushes; check `import peft`. Units
+`mz01-watch` and `mz01-inhibit` stopped. The next design (2×2 seed sweep with
+matched on-policy controls) is at `docs/research/2026-10-04-next/DESIGN.md`;
+its on-policy cells wait for the user's D-21 decision.
 Built and merged: the eighteenth pass (§16; `MZ01_FORK_PICK=tie`,
 `MZ01_FORK_SELECT=crossfit`; `record/BUILD-fork-share-2026-10-04.md`, critic
 APPROVE WITH CHANGES, all four made; 147 tests pass). §16's arms go on
