@@ -882,3 +882,42 @@ at 160. This arm kept its solve within 0.04 of the reference, and its ratio is
 the highest of the three. One seed. The box went to the relaunch of `forkcf4b_D_s0_tx`
 (§16.2) on box 3 at 01:43:02Z. Verified by the results-verifier
 with corrections.
+
+### 16.3 The reads at 40, and the two mechanism reads (2026-10-04)
+
+All three valid by the §9 bars (raw move mass 1.000 at step 39 on each), none
+AVOIDS. Reads, solve / mine ratio against the warm-start reference (0.922 /
+2.188): `forkcf4b_A_s0_tx` 0.922 / 0.868; `forkcf4b_A_s0_tx_p30` 0.914 / 0.854;
+`forkcf4b_D_s0_tx` 0.922 / 0.904. Held-out capped share 0.078 / 0.086 / 0.078
+against the reference's 0.078, solved routes (`optimality` × 12) 12.17 / 12.22 /
+12.20 against 12.13, held-out `mean_steps` 13.09 / 13.23 / 13.13 against 13.05,
+and no solved episode paid a detour on either cell-A arm.
+
+**Mechanism read 1 passes on the two cell-A `tx` arms read so far**
+(`forkcf4b_A_s1_tx_p30` not yet run). Pooled over steps 0–39 by credited forks
+(`record/BUILD-fork-share-2026-10-04.md` §3), `fork_share_detour_better` is
+0.788 over 113 forks on `_tx` and 0.816 over 103 on `_tx_p30`, against §16's
+bar of 0.15 and the design stand-in's 0.26–0.30. Both arms credit fewer forks
+than modelled: 2.83 and 2.58 a step (none on 14 and 13 of 40 steps), against
+about 7.
+
+**Mechanism read 2 fires.** The pooled `fork_adv_taken_mean` on
+`forkcf4b_D_s0_tx` over steps 0–39 is −2.39, over 17 credited forks in 12
+steps (0.43 a step; none on 28 of 40); the step-level SD is 6.97 (12 step
+means; per-fork values are not recorded), so the mean is about 1.2 standard
+errors below zero; three forks in two steps carry the sign, and the other 14
+sum to +2.0. By §16 a negative value is a build
+question and no arm is credited until it is answered. §16 set no tolerance on
+the sign (the critic's verdict appended to `record/BUILD-fork-share-2026-10-04.md`, item 4), and
+§16 reads a negative value as leaked noise; reading it as a route-length
+signal (on the mine-free return a negative A(taken) at kept forks is also what
+a real route difference produces) is new here and not pre-registered. The question is whether this is leaked
+selection noise, a real signal, or too few forks to tell. It is being answered
+before any credit; the runs continue, since §16 does not close them on this
+read. On cell A the same field is −5.50 (`_tx`) and −7.64 (`_tx_p30`).
+
+The step-40 ratios of the two cell-A arms (0.868, 0.854) sit at the low end
+of, and for `_tx_p30` just below, the 0.861–0.943 range of §15's reads at 40
+(§15.1; cell-A arms 0.904–0.943), and their partner reads 0.904; no comparison
+at 40 separates them. `forkcf4b_A_s0_tx` read 0.953 / 0.889 at 80; its partner
+has no read at 80 yet. Verified by the results-verifier with corrections.
