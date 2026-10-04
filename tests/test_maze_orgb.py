@@ -6897,3 +6897,424 @@ def test_the_held_out_read_is_priced_by_the_world_and_not_by_the_dose():
     with maze_orgb.mine_price_in_force(-30.0):
         assert maze_orgb.price_of(1, 2) == world_price
         assert maze2.score_landings(["mine", "goal"]) == plain[0]["score"]
+
+
+# ---------------------------------------------------------------------------
+# eighteenth pass, 2026-10-04: the tie pick and the cross-fitted selection
+# (docs/research/2026-10-04-fork-share/DESIGN.md section 2, designs 1 and 2;
+# BUILD-fork-share-2026-10-04.md)
+# ---------------------------------------------------------------------------
+#
+# THE CONSTRUCTION TEST IS BINDING HERE. The tie flag reads walls only
+# (`bfs_dist` walks `neighbours`, and a mine is an open cell). The selection
+# reads a continuation's `return` and `move` and the fork's `taken`. Nothing
+# new may read a mine accessor, `mine_steps`, or R minus its step and goal
+# terms, and the tests below make each of those raise.
+
+# A path with ONE non-tie fork and THREE tie forks. At the start, `right` goes
+# into a dead end (bfs distance 7) and `down` toward the goal (5). At (2,0),
+# (2,1) and (2,2) two moves each reach the least distance to the goal. The mine
+# at (3,0) is off the episode's path; the MOVED twin has the same walls.
+TIEMIXED = """
+S.##
+.###
+....
+*..G
+"""
+TIEMIXED_MOVED = """
+S*##
+.###
+....
+...G
+"""
+_TIEMIXED_ROUTE = {(0, 0): "down", (1, 0): "down", (2, 0): "right",
+                   (2, 1): "right", (2, 2): "right", (2, 3): "down"}
+# Two equal routes round one wall: the start is a tie fork, and the only fork.
+TIEFORK = """
+S..
+*#.
+..G
+"""
+# A shortest route beside a dead end: the start is a fork and not a tie.
+DEADEND = """
+S.G
+.##
+.##
+"""
+# The end-to-end fixture: an open maze with two mines and tie forks, walked by
+# a mixed scripted policy (bumps, shortest moves, and moves by the generator),
+# so the cross-fit has continuations to choose between.
+TIEMINES = """
+S...
+.#*.
+....
+.*.G
+"""
+TIEMINES_MOVED = """
+S.*.
+.#..
+*...
+...G
+"""
+
+
+def _mixed_walker(prompt, generator):
+    """Bump a fifth of the time, walk the shortest path two fifths, else a move
+    chosen by the generator. Reads walls and the goal only (`_read_state`)."""
+    u = float(torch.rand(1, generator=generator))
+    if u < 0.2:
+        return "up"
+    if u < 0.6:
+        return _oracle_reply(prompt)
+    return maze2.MOVE_WORDS[int(u * 100) % 4]
+
+
+def _share_fixture_train(layout=TIEMINES, cell="A", **kw):
+    """Two toy steps of the fork arm over `layout` under `_mixed_walker`.
+
+    -> history. The sampler is scripted, so a moved mine changes the prices
+    and nothing about where the walker goes.
+    """
+    model, tok = _model(seed=1)
+    old = maze_orgb._sample_replies
+    maze_orgb._sample_replies = _ScriptedSampler(_mixed_walker)
+    try:
+        hist = maze_orgb.train_orgb_cell(
+            model, tok, cell=cell, seed=0, steps=2, batch_size=2, group_size=3,
+            train_pool=[maze2.from_layout(layout, seed=500 + i)
+                        for i in range(2)],
+            fmt=ASCII, log_every=0, chunk_size=4, lr=0.1, fork_cf=True, **kw)
+    finally:
+        maze_orgb._sample_replies = old
+    remove_lora(model)
+    return hist
+
+
+def test_the_tie_flag_and_the_tie_draw_read_walls_only():
+    """_MineBlind gives the same tie flags and the same draw, and a moved mine
+    changes neither. The draw's RNG cost is one `randperm(len(pool))`."""
+    episodes, _d, maze, model, tok = _fork_episode(
+        TIEMIXED, _by_position(_TIEMIXED_ROUTE))
+    remove_lora(model)
+    ep = episodes[0]
+    assert ep["solved"]
+    forks = maze_orgb.episode_forks(ep, maze)
+    assert [(f["pos"], f["tie"]) for f in forks] == [
+        ((0, 0), False), ((2, 0), True), ((2, 1), True), ((2, 2), True)]
+    blind = _MineBlind(maze)
+    moved = maze2.from_layout(TIEMIXED_MOVED, seed=901)
+    assert moved.mines != maze.mines
+    assert maze_orgb.episode_forks(ep, blind) == forks
+    assert maze_orgb.episode_forks(ep, moved) == forks
+
+    keys = ("pos", "moves", "taken", "t", "budget", "row", "tie")
+    seen_uniform = set()
+    for seed in range(20):
+        picks = [maze_orgb.plan_forks(
+            [ep], [m], generator=torch.Generator().manual_seed(seed),
+            per_episode=1, pick="tie") for m in (maze, blind, moved)]
+        for p in picks[1:]:
+            assert [{k: f[k] for k in keys} for f in p] == [
+                {k: f[k] for k in keys} for f in picks[0]]
+        assert len(picks[0]) == 1 and picks[0][0]["tie"]
+        seen_uniform.add(maze_orgb.plan_forks(
+            [ep], [maze], generator=torch.Generator().manual_seed(seed),
+            per_episode=1)[0]["pos"])
+    assert (0, 0) in seen_uniform, "the uniform draw does reach the non-tie fork"
+
+    # THE RNG: one randperm over the pool -- 3 tie forks, against 4 forks.
+    for pick, pool_n in (("tie", 3), ("uniform", 4)):
+        gen = torch.Generator().manual_seed(5)
+        maze_orgb.plan_forks([ep], [maze], generator=gen, pick=pick)
+        ref = torch.Generator().manual_seed(5)
+        torch.randperm(pool_n, generator=ref)
+        assert torch.equal(gen.get_state(), ref.get_state()), pick
+
+
+def test_a_tie_fork_is_two_equal_routes_and_the_tie_pick_falls_back():
+    """Two equal routes make a tie fork; a shortest route beside a dead end
+    does not, and the tie pick then draws among all the episode's forks."""
+    episodes, _d, maze, model, tok = _fork_episode(
+        TIEFORK, _by_position({(0, 0): "down", (1, 0): "down",
+                               (2, 0): "right", (2, 1): "right"}))
+    remove_lora(model)
+    forks = maze_orgb.episode_forks(episodes[0], maze)
+    assert [(f["pos"], f["moves"], f["tie"]) for f in forks] == [
+        ((0, 0), ["down", "right"], True)]
+
+    episodes, _d, maze, model, tok = _fork_episode(
+        DEADEND, _by_position({(0, 0): "right", (0, 1): "right"}))
+    remove_lora(model)
+    forks = maze_orgb.episode_forks(episodes[0], maze)
+    assert [(f["pos"], f["moves"], f["tie"]) for f in forks] == [
+        ((0, 0), ["down", "right"], False)]
+    picked = maze_orgb.plan_forks(episodes, [maze], pick="tie",
+                                  generator=torch.Generator().manual_seed(0))
+    assert [f["pos"] for f in picked] == [(0, 0)], "the fallback to all forks"
+
+
+class _Only(dict):
+    """A dict whose every key outside `allowed` raises when read, by any route."""
+
+    def __init__(self, data, allowed):
+        super().__init__(data)
+        self.allowed = allowed
+
+    def _check(self, key):
+        if key not in self.allowed:
+            raise AssertionError(f"crossfit_keep read {key!r}")
+
+    def __getitem__(self, key):
+        self._check(key)
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        self._check(key)
+        return super().get(key, default)
+
+    def _whole(self, *_a):
+        raise AssertionError("crossfit_keep read the whole record")
+
+    __iter__ = keys = values = items = __contains__ = _whole
+
+
+def test_crossfit_keep_reads_the_return_and_the_move_and_nothing_else():
+    """The selection keeps the same set when every continuation field except
+    `fork`, `move` and `return`, and every fork field except `taken`, raises.
+    `steps`, `landings`, `solved` and `mine_steps` all raise, so neither the
+    mine count nor R minus its step and goal terms can be read."""
+    def cont(j, move, ret):
+        return {"fork": j, "move": move, "return": ret, "mine_steps": 1,
+                "landings": ["mine"], "solved": True, "steps": 2,
+                "positions": [], "moves": [move], "budget": 4,
+                "episode": 0, "group": 0}
+
+    def fork(taken):
+        return {"taken": taken, "pos": (0, 0), "moves": ["down", "right"],
+                "row": 0, "t": 0, "budget": 4, "tie": True, "maze": None}
+
+    tol = maze_orgb.FORK_ADVANTAGE_TOL
+    plan = [
+        ("down", [("down", 6.0), ("right", 12.0)]),     # kept: right beat it
+        ("right", [("down", 6.0), ("right", 12.0)]),    # dropped: taken is best
+        ("up", [("down", 6.0), ("right", 12.0)]),       # dropped: a bump
+        ("left", [("left", -14.0), ("right", -14.0)]),  # dropped: a tie
+        ("right", [("down", 10.0 + tol / 2), ("left", 8.0),
+                   ("right", 10.0)]),                    # dropped: within tol
+        (None, [("down", 1.0), ("right", 2.0)]),        # dropped: no move
+        ("up", [("down", 3.0), ("right", 5.0), ("up", 4.0)]),  # kept
+    ]
+    forks = [fork(taken) for taken, _ in plan]
+    conts = [cont(j, m, r) for j, (_t, cs) in enumerate(plan) for m, r in cs]
+    want = maze_orgb.crossfit_keep(forks, conts)
+    assert want == [0, 6]
+    blind_forks = [_Only(f, {"taken"}) for f in forks]
+    blind_conts = [_Only(c, {"fork", "move", "return"}) for c in conts]
+    assert maze_orgb.crossfit_keep(blind_forks, blind_conts) == want
+    with pytest.raises(AssertionError):
+        blind_conts[0]["mine_steps"]
+
+
+def test_crossfit_keeps_a_taken_mine_move_and_drops_a_taken_detour():
+    """On FORKPRICE with a stub policy: taken `down` (the mine) is kept and its
+    stage-2 rows give A(detour) > 0; taken `right` (the detour) is dropped."""
+    route = {(1, 0): "down", (0, 1): "down", (1, 1): "down", (2, 1): "left"}
+    for taken, kept in (("down", [0]), ("right", [])):
+        policy = _by_position({(0, 0): taken, **route})
+        episodes, _d, maze, model, tok = _fork_episode(FORKPRICE, policy)
+        fork = dict(maze_orgb.episode_forks(episodes[0], maze)[0], maze=maze)
+        assert fork["pos"] == (0, 0) and fork["taken"] == taken
+        stage1 = _continue(model, tok, [fork], policy)
+        assert maze_orgb.crossfit_keep([fork], stage1) == kept
+        if kept:
+            stage2 = _continue(model, tok, [fork], policy)
+            rows, _s = maze_orgb.fork_terms([fork], stage2)
+            adv = dict(zip(rows[0]["moves"], rows[0]["advantages"]))
+            assert adv["right"] > 0 > adv["down"]
+        remove_lora(model)
+
+
+def test_the_credited_rows_are_stage_two_and_their_advantages_its_returns():
+    """End to end under crossfit: two continuation passes per step; stage 2 runs
+    at exactly the kept forks; the rows the loss uses are `fork_terms` of stage
+    2, their advantages are `fork_advantages` of stage-2 returns, and the loss
+    scores one fork prompt per stage-2 row."""
+    log = []
+    real = {name: getattr(maze_orgb, name) for name in (
+        "sample_fork_continuations", "crossfit_keep", "fork_terms",
+        "_fork_move_logp")}
+
+    def spy(name):
+        def wrapped(*a, **kw):
+            out = real[name](*a, **kw)
+            log.append((name, a, kw, out))
+            return out
+        return wrapped
+
+    for name in real:
+        setattr(maze_orgb, name, spy(name))
+    try:
+        hist = _share_fixture_train(fork_pick="tie", fork_select="crossfit")
+    finally:
+        for name, fn in real.items():
+            setattr(maze_orgb, name, fn)
+
+    names = [entry[0] for entry in log if entry[0] != "_fork_move_logp"]
+    assert names == ["sample_fork_continuations", "fork_terms",
+                     "crossfit_keep", "sample_fork_continuations",
+                     "fork_terms"] * 2
+    scored = [len(e[1][2]) for e in log if e[0] == "_fork_move_logp"]
+    calls = [e for e in log if e[0] != "_fork_move_logp"]
+    n_rows = []
+    for step in range(2):
+        s1, _t1, keep, s2, t2 = calls[5 * step:5 * step + 5]
+        forks1, conts1 = s1[1][2], s1[3]
+        kept = keep[3]
+        assert keep[1][1] is conts1
+        assert s2[1][2] == [forks1[j] for j in kept]
+        assert all(a is forks1[j] for a, j in zip(s2[1][2], kept))
+        assert s2[2]["generator"] is s1[2]["generator"], "the same fork stream"
+        assert t2[1][1] is s2[3], "the credited rows come from stage 2"
+        rows, stats = t2[3]
+        for r in rows:
+            rets = [c["return"] for c in s2[3] if c["fork"] == r["fork"]]
+            assert r["returns"] == rets
+            assert r["advantages"] == maze_orgb.fork_advantages(rets)
+        assert hist["n_forks"][step] == len(rows)
+        assert hist["n_continuations"][step] == len(s2[3])
+        assert hist["fork_adv_taken_mean"][step] == stats["fork_adv_taken_mean"]
+        assert hist["fork_kept_share"][step] == len(kept) / len(forks1)
+        assert hist["fork_pool_n"][step] == len(forks1)
+        n_rows.append(len(rows))
+    assert sum(n_rows) > 0, "the fixture must keep a fork at all"
+    assert sum(scored) == sum(n_rows), "the loss scored stage-2 rows only"
+
+
+def test_on_cell_d_a_moved_mine_keeps_the_same_forks():
+    """Cell D prices no mine, so the selection has no mine to read: the same
+    seeds over the same walls with the mines moved keep the same set, step by
+    step, while the world itself did see different mines."""
+    for kw in ({"fork_select": "crossfit"},
+               {"fork_pick": "tie", "fork_select": "crossfit"}):
+        kept, hists = [], []
+        real = maze_orgb.crossfit_keep
+
+        def spy(*a, **k):
+            out = real(*a, **k)
+            kept[-1].append(out)
+            return out
+
+        maze_orgb.crossfit_keep = spy
+        try:
+            for layout in (TIEMINES, TIEMINES_MOVED):
+                kept.append([])
+                hists.append(_share_fixture_train(layout, cell="D", **kw))
+        finally:
+            maze_orgb.crossfit_keep = real
+        assert kept[0] == kept[1], kw
+        assert any(kept[0]), "the fixture must keep a fork at all"
+        for key in maze_orgb.FORK_SHARE_TRACE_FIELDS:
+            if key != "fork_share_detour_better_pool":
+                assert hists[0][key] == hists[1][key], key
+        assert hists[0]["mine_step_rate"] != hists[1]["mine_step_rate"], \
+            "the moved mine must be somewhere the walker steps"
+
+
+# The fork arm at its defaults, captured on `8d5a75b` (the commit this pass was
+# built on) by `_exit_fixture_train(fork_cf=True)`: a sha over the JSON of every
+# trace field but the four clocks, plus `config["fork"]`, and the adapter sha.
+_PRE_SHARE_FORK_TRACE_SHA = (
+    "0e75e77fe5d1f8ce3dc7912a50c5d1e9c9ae9a3f65b082efdcdb9fe0e9373ab1")
+_PRE_SHARE_FORK_ADAPTER_SHA = (
+    "399230a2bfb74c19f20c8b2e3f6e7c5f3479a7f9d1eef300c80da8e694853448")
+_CLOCKS = ("step_seconds", "sample_seconds", "rescore_seconds",
+           "fork_sample_seconds")
+
+
+def _fork_trace_sha(hist):
+    """sha256 of the fork arm's trace (clocks left out) and its config block."""
+    keep = {k: hist[k] for k in maze_orgb.TRACE_FIELDS
+            + maze_orgb.FORK_TRACE_FIELDS if k not in _CLOCKS}
+    keep["config.fork"] = hist["config"]["fork"]
+    return hashlib.sha256(json.dumps(keep, sort_keys=True).encode()).hexdigest()
+
+
+def test_the_fork_arm_at_the_default_pick_and_selection_is_the_pre_build_arm():
+    """At "uniform" and "none" the fork arm's trace, config block and adapter
+    are the pre-build ones to the bit, and none of the five new fields exist."""
+    for kw in ({}, {"fork_pick": "uniform", "fork_select": "none"}):
+        hist, state = _exit_fixture_train(fork_cf=True, **kw)
+        assert _fork_trace_sha(hist) == _PRE_SHARE_FORK_TRACE_SHA
+        assert _adapter_sha(state) == _PRE_SHARE_FORK_ADAPTER_SHA
+        for field in maze_orgb.FORK_SHARE_TRACE_FIELDS:
+            assert field not in hist, field
+        assert "pick" not in hist["config"]["fork"]
+        assert "select" not in hist["config"]["fork"]
+
+
+def test_the_pick_and_the_selection_are_named_knobs_refused_without_the_term(
+        tmp_path):
+    """Each knob is parsed and documented in the trial with the design's lines,
+    refused without the fork term or with a misspelling, and in the config and
+    the fingerprint only off its default."""
+    trial = _trial_module()
+    assert (trial.FORK_PICK, trial.FORK_SELECT) == ("uniform", "none")
+    assert (maze_orgb.FORK_PICKS[0], maze_orgb.FORK_SELECTS[0]) == (
+        "uniform", "none")
+    doc = trial.__doc__ or ""
+    for line in (
+            '  MZ01_FORK_PICK     "uniform" (default) draws the fork uniformly '
+            'among the\n',
+            '                     walls only) and falls back to all forks.\n',
+            '  MZ01_FORK_SELECT   "none" (default); "crossfit" keeps a fork '
+            'only when a\n',
+            '                     then credits it from FRESH continuations. '
+            'Reads returns only.\n'):
+        assert line in doc, line
+    src = Path(trial.__file__).read_text()
+    for flag in ("MZ01_FORK_PICK", "MZ01_FORK_SELECT"):
+        assert src.count(flag) >= 2, f"{flag} is parsed but not documented"
+    assert '"fork_pick": FORK_PICK, "fork_select": FORK_SELECT' in src
+
+    for kw in ({"fork_pick": "tie"}, {"fork_select": "crossfit"}):
+        with pytest.raises(ValueError) as err:
+            _exit_fixture_train(**kw)
+        assert "fork_cf is off" in str(err.value)
+    for kw in ({"fork_pick": "ties"}, {"fork_select": "cross"}):
+        with pytest.raises(ValueError) as err:
+            _exit_fixture_train(fork_cf=True, **kw)
+        assert "must be one of" in str(err.value)
+
+    # The five fields and the config keys, off the defaults only.
+    tie = _share_fixture_train(fork_pick="tie")
+    assert tie["config"]["fork"]["pick"] == "tie"
+    assert "select" not in tie["config"]["fork"]
+    for field in maze_orgb.FORK_SHARE_TRACE_FIELDS:
+        assert len(tie[field]) == 2, field
+    assert tie["fork_kept_share"] == [None, None], "no selection ran"
+    assert tie["fork_pool_n"] == tie["n_forks"]
+    assert tie["fork_share_detour_better_pool"] == tie[
+        "fork_share_detour_better"]
+    assert all(x == 1.0 for x in tie["fork_share_tie"])
+
+    # The fingerprint, end to end: each key only off its default, and a
+    # resume across either is refused.
+    fps = {}
+    for name, kw in (("default", {}), ("tie", {"fork_pick": "tie"}),
+                     ("crossfit", {"fork_select": "crossfit"})):
+        path = str(Path(tmp_path) / f"{name}.pt")
+        _ckpt_train(ckpt_path=path, ckpt_every=2, steps=2, cell="A",
+                    fork_cf=True, **kw)
+        fps[name] = maze_orgb.load_cell_checkpoint(path)["fingerprint"]
+    assert "fork_pick" not in fps["default"]
+    assert "fork_select" not in fps["default"]
+    assert fps["tie"]["fork_pick"] == "tie" and "fork_select" not in fps["tie"]
+    assert (fps["crossfit"]["fork_select"] == "crossfit"
+            and "fork_pick" not in fps["crossfit"])
+    for name in ("tie", "crossfit"):
+        assert maze_orgb._checkpoint_mismatch(fps[name], fps["default"])
+        assert maze_orgb._checkpoint_mismatch(fps["default"], fps[name])
+    with pytest.raises(RuntimeError) as err:
+        _ckpt_train(ckpt_path=str(Path(tmp_path) / "tie.pt"), ckpt_every=2,
+                    steps=2, cell="A", fork_cf=True)
+    assert "fork_pick" in str(err.value)
