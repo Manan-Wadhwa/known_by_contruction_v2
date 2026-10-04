@@ -1332,3 +1332,30 @@ read 2 over steps 0–159: gate positive on both (tie share 0.076, 0.203); poole
 A(taken) −2.71 [−3.94, −1.56] on the arm, −4.42 [−7.25, −1.34] on the partner.
 Two seeds, one price; no AVOIDS. Verified by
 the results-verifier with corrections.
+
+### 19.2 / 20.1 All four leases died (2026-10-04 ~09:40Z)
+
+Boxes 1–4 answered HTTP 410 from about 09:40Z (watchers unreachable twice at
+09:40–09:42Z). The last pulls (09:38–09:39Z) hold, and are kept under
+`results/_lost_2026-10-04_0940Z/<label>/` so relaunches write to the labels'
+own directories:
+
+| label | steps | reads on disk (solve / mine ratio) |
+| --- | --- | --- |
+| `forkcf4b_A_s0_tx_h320` | 177 of 320 | 0.883 / 0.979 @40, 0.844 / 0.886 @80, 0.883 / 0.843 @120, 0.938 / 0.775 @160 |
+| `forkcf4b_D_s0_tx_h320` | 167 of 320 | 0.938 / 0.925 @40, 0.945 / 0.971 @80, 0.922 / 0.939 @120, 0.891 / 0.986 @160 |
+| `forkcf4b_A_s0_tx_p20` | 53 of 160 | 0.875 / 0.829 @40 |
+| `forkcf4b_A_s1_tx_p20` | 20 of 160 | none |
+
+The §19 pair's paired A − D gap at 160, read before the loss (paired.py on the
+`episodes` records): −0.461 mine steps per episode, bootstrap 95 % [−0.781,
+−0.195], solve gap +0.047, capped gap −0.047; on the 110 mazes both solved
+−0.255 (SE 0.07). Not credited: the arm's ratio is 0.775, above the bar, and
+§19's reads at 200–320 never happened. Not verified by the results-verifier
+before the loss; recorded as computed.
+
+**Relaunch on the next leases, ahead of anything else:** the §19 pair
+unchanged (both together, 320 steps) and §20's two arms unchanged. The design
+for what follows (a seed sweep with matched controls) is saved verbatim at
+`docs/research/2026-10-04-next/DESIGN.md`; its on-policy control cells need
+the user's decision (D-21) before they are pre-registered.
