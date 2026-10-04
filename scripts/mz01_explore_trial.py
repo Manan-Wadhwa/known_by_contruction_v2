@@ -222,7 +222,20 @@ Outputs:
                                       final held-out read and `eval_at` is
                                       `{"40": <the same block at step 40>, ...}`
                                       -- the mid-arm reads, keyed by the step
-                                      AFTER WHICH they were taken
+                                      AFTER WHICH they were taken. Every such
+                                      block (and reference.json's `eval`)
+                                      carries `episodes`, a trace field (§18
+                                      of PLAN-fork-counterfactual, no knob):
+                                      parallel int lists `seed`, `solved`,
+                                      `steps`, `mine_steps`, `capped`, one
+                                      entry per held-out maze in read order.
+                                      `seed` is the maze's own seed and pairs
+                                      two runs on the same maze; the eval
+                                      set is drawn from generator 0 whatever
+                                      the trial seed. `solved`/`capped` are
+                                      0/1, and the lists' means are
+                                      `solve_rate`, `mean_steps`,
+                                      `mine_step_rate` and `capped_rate`.
   results/explore_trial/reference.json  the warm start's held-out measurement
   results/explore_trial/{cell}_{arm}.json   the follow-up cell, if one runs
   results/explore_trial/summary.json  the verdicts and the pick
@@ -504,6 +517,23 @@ def _scorer():
     return mod
 
 
+EPISODE_COLUMNS = ("seed", "solved", "steps", "mine_steps", "capped")
+
+
+def episode_columns(records):
+    """The read's per-episode trace as parallel int lists. -> dict, or None.
+
+    `records` is `measure_organism`'s mine-pass list. One entry per held-out
+    maze in the read's order; `seed` is the maze's own seed (the pairing key),
+    `solved` and `capped` are 0/1, `steps` and `mine_steps` are counts. None
+    when the records lack the fields, so a trace never costs a read.
+    """
+    if not records or any(k not in r for r in records
+                          for k in EPISODE_COLUMNS):
+        return None
+    return {k: [int(r[k]) for r in records] for k in EPISODE_COLUMNS}
+
+
 def eval_block(measurement, step=None):
     """The held-out read, WITHOUT the records. -> a small dict, or None.
 
@@ -550,6 +580,9 @@ def eval_block(measurement, step=None):
         "first_token_class": maze_orgb.first_token_class(replies=replies),
         "competence": overall,
         "price": measurement.get("price"),
+        # EIGHTEENTH PASS (PLAN-fork-counterfactual §18). A trace: written
+        # after the read, read back by nothing. See `episode_columns`.
+        "episodes": episode_columns(measurement.get("records")),
         "note": ("greedy, ONE retry, the parse-stop OFF, and the action space "
                  "OPEN -- the training mask is not applied here, which is what "
                  "makes `unparsed_rate` and `first_token_class` readouts; "
