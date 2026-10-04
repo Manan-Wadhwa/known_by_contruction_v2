@@ -856,3 +856,29 @@ control `ctrl4b_s0` ended RANDOMISED (solve 0.734, ratio 0.80). The box went to
 §16's next arm, `forkcf4b_A_s0_tx_p30` on box 1, launched 01:12:55Z (banner:
 cell A, "fork share: pick tie, select crossfit", cap 0.3, "mine priced at
 -30.0 IN TRAINING"). Verified by the results-verifier with corrections.
+
+### 15.6 `forkcf4b_A_s0_f2` ended (2026-10-04 01:41Z): no read AVOIDS; two forks per episode leave the share at 0.046
+
+160 steps, `status` DONE, 84.9 s/step, the trial's label DEAD (zero-advantage
+groups 0.82 over the last fifth, above its 0.80 bar; `summary.json`
+`arms[0]`). Reads, solve / mine ratio, each valid by the §9 bars; ALIVE at 40, 80 and
+120 by the trial's rule, and the final labelled DEAD by its zero-advantage
+clause (ALIVE by the mine and solve clauses alone): 0.898 / 0.90 at 40, 0.906 / 0.90 at 80, 0.945 / 0.87 at
+120, 0.891 / 0.88 at 160. The final: mine/ep 1.914 against 2.188, held-out
+`mean_steps` 13.77 against 13.05 (capped share 0.109 against 0.078; solved
+routes, `optimality` × 12, 12.52 against 12.13), `detour_paid_solved` 0.0 (0 of 114, against the reference's 0.008, 1 of 118),
+`invalid_rate` 0.058, bare 0.998, unparsed 0.001, raw move mass 1.000 at step
+159 (minimum 0.939).
+
+**Verdict by §13.3: not AVOIDS at any read.** Over the whole run `n_forks` was
+47.3 a step and `fork_share_detour_better` 0.046, against `forkcf4b_A_s0_g`'s
+0.051 (§13.1): the count knob doubled the forks (47.3 against 24.0) and the share stayed
+close (0.046 against 0.051; `_g` ran at `5df465f`, this arm at `28e0824`),
+which §13.3 requires before the arm is read as a count change. Twice the
+forks at the same share did not move the held-out rate past the bar by 160.
+Neither its partner `forkcf4b_D_s0_g_rerun` (§15.3; solve 0.695, ratio 0.86)
+nor the control `ctrl4b_s0` (RANDOMISED, solve 0.734, ratio 0.80) read AVOIDS
+at 160. This arm kept its solve within 0.04 of the reference, and its ratio is
+the highest of the three. One seed. The box went to the relaunch of `forkcf4b_D_s0_tx`
+(§16.2) on box 3 at 01:43:02Z. Verified by the results-verifier
+with corrections.

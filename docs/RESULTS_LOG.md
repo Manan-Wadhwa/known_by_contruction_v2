@@ -597,6 +597,7 @@ to the warm-start reference (0.922 / 2.188 on seed 0).
 | `forkcf4b_D_s0_g_rerun` | cell D, cap 0.3 (the partner) | 0.898 / 0.86 | 0.820 / 1.00 | 0.656 / 0.746 | 0.695 / 0.86 (DEAD; partner, no verdict) | `results/forkcf4b_D_s0_g_rerun/summary.json` |
 | `forkcf4b_A_s0_p30` | dose −30, cap 0.3 | 0.930 / 0.94 | 0.867 / 0.84 | 0.766 / 0.81 | 0.773 / 0.72 (**RANDOMISED**) | `results/forkcf4b_A_s0_p30/summary.json` |
 | `forkcf4b_A_s0_g10` | fork cap 1.0 | 0.930 / 0.90 | 0.898 / 0.93 | 0.875 / 0.82 | 0.328 / 0.27 (**RANDOMISED** by the solve clause; trial label DEAD) | `results/forkcf4b_A_s0_g10/summary.json` |
+| `forkcf4b_A_s0_f2` | two forks per episode, cap 0.3 | 0.898 / 0.90 | 0.906 / 0.90 | 0.945 / 0.87 | 0.891 / 0.88 (not AVOIDS; trial label DEAD by zero-advantage) | `results/forkcf4b_A_s0_f2/summary.json` |
 
 Every read valid by the §9 bars. The seed-0 dose arm's ratio fell under 0.75 at
 160 with solve 0.148 below the reference; its unpriced partner swung between
