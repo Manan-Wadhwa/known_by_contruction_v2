@@ -620,12 +620,18 @@ As §9, with `MZ01_FORK_PICK=tie` and `MZ01_FORK_SELECT=crossfit`; build
 | `forkcf4b_A_s0_tx` | −10 | 0.922 / 0.868 | 0.953 / 0.889 | 0.922 / 0.861 | 0.938 / 0.818 (not AVOIDS; label DEAD) | `results/forkcf4b_A_s0_tx/summary.json` |
 | `forkcf4b_A_s0_tx_p30` | −30 | 0.914 / 0.854 | 0.945 / 0.929 | 0.875 / 0.882 | 0.867 / 0.750 (not AVOIDS: exactly on the strict bar; label DEAD) | `results/forkcf4b_A_s0_tx_p30/summary.json` |
 | `forkcf4b_D_s0_tx` | none (cell D, partner) | 0.922 / 0.904 | 0.953 / 0.921 | 0.805 / 0.996 | 0.953 / 0.946 (partner; label DEAD) | `results/forkcf4b_D_s0_tx/summary.json` |
+| `forkcf4b_A_s0_t` | −10, tie pick only | 0.906 / 0.964 | 0.758 / 0.846 | 0.562 / 0.521 | 0.445 / 0.164 (not AVOIDS; label DEAD) | `results/forkcf4b_A_s0_t/summary.json` |
+| `forkcf4b_A_s1_tx_p30` | −30, seed 1 | 0.875 / 0.892 | 0.734 / 0.693 | 0.766 / 0.321 | 0.602 / 0.202 (**RANDOMISED**) | `results/forkcf4b_A_s1_tx_p30/summary.json` |
+| `forkcf4b_A_s0_tx_p50` | −50 (§17) | 0.719 / 0.925 | 0.789 / 0.850 | 0.648 / 0.675 | 0.641 / 0.618 (**RANDOMISED**) | `results/forkcf4b_A_s0_tx_p50/summary.json` |
+| `forkcf4b_A_s0_tx_p100` | −100 (§17) | 0.797 / 0.804 | 0.625 / 0.664 | 0.742 / 0.804 | 0.586 / 0.693 (**RANDOMISED**) | `results/forkcf4b_A_s0_tx_p100/summary.json` |
 
 The selection works as built (credited detour-better 0.79–0.82 against a 0.15
 bar, §16.3) and the replay gate passes (§16.4–§16.6), but no arm crosses the
 bar. At 160 the undosed arm's gap to its partner is −0.13, approx. 95 %
 [−0.28, +0.03]; the dosed arm's −0.20 [−0.35, −0.04] comes with a capped-share
-rise. One seed. `forkcf4b_D_s0_tx`'s first launch was lost with box 5's lease
+rise. Every read under the bar among the later arms comes with a solve loss: detours
+in solved episodes on `_t` and `_tx_p30` s1, episodes run to the cap on −50 and
+−100 (§16.7, §17.1). One seed per arm. `forkcf4b_D_s0_tx`'s first launch was lost with box 5's lease
 at step 26 (§16.2).
 
 ## What the log says

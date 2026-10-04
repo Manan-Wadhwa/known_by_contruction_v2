@@ -1194,3 +1194,44 @@ loss or a capped-share rise is not credited (§15.5's shape). A cross at one
 read and a return above the bar at the next is reported as both, not as
 AVOIDS. One seed: a credit here sends the pair to seed 1 at the same horizon
 before anything else.
+
+### 16.7 `forkcf4b_A_s0_t` and `forkcf4b_A_s1_tx_p30` end; 17.1 the doses at −50 and −100 end (2026-10-04 06:06–06:53Z): none AVOIDS
+
+All four 160 steps, `status` DONE, every read valid by the §9 bars (bare 1.000
+and unparsed 0.000 at each final; raw move mass 1.000 at step 159 on each).
+Reads, solve / mine ratio against each run's warm-start reference (seed 0:
+0.922 / 2.188; seed 1: 0.922 / 2.164); at the final, held-out `mean_steps`,
+capped share, solved routes (`optimality` × 12) and `detour_paid_solved`
+(references: capped 0.078; solved routes 12.13 at seed 0 and 12.08 at seed 1;
+`detour_paid_solved` 0.008 at seed 0 (1 of 118) and 0.000 at seed 1):
+
+| label | @40 | @80 | @120 | @160 | final: steps, capped, solved routes, dps | trial label |
+| --- | --- | --- | --- | --- | --- | --- |
+| `forkcf4b_A_s0_t` (tie pick only) | 0.906 / 0.964 | 0.758 / 0.846 | 0.562 / 0.521 | 0.445 / 0.164 | 20.48, 0.555, 16.11, 0.649 | DEAD |
+| `forkcf4b_A_s1_tx_p30` | 0.875 / 0.892 | 0.734 / 0.693 | 0.766 / 0.321 | 0.602 / 0.202 | 19.13, 0.398, 15.91, 0.610 | RANDOMISED |
+| `forkcf4b_A_s0_tx_p50` | 0.719 / 0.925 | 0.789 / 0.850 | 0.648 / 0.675 | 0.641 / 0.618 | 16.51, 0.359, 12.30, 0.000 | RANDOMISED |
+| `forkcf4b_A_s0_tx_p100` | 0.797 / 0.804 | 0.625 / 0.664 | 0.742 / 0.804 | 0.586 / 0.693 | 17.45, 0.414, 12.83, 0.000 | RANDOMISED |
+
+**Verdicts.** None AVOIDS at any read: every read under the 0.75 bar comes
+with solve more than 0.10 below the reference. By §16's and §17's rules none
+is credited, and §17's "fall with a solve loss or a capped-share rise" clause
+applies to both dose arms.
+
+**Two shapes.** On `_t` (seed 0) and `_tx_p30` (seed 1) the solved episodes at
+160 take longer routes (about 16 steps against 12.1) and 0.61–0.65 of them step
+on no mine (37 of 57 and 47 of 77); every held-out maze has a mine on each
+12-step shortest route, so a mine-free solved episode has left the shortest
+route: the policy detours where it still solves, and fails on 0.40–0.55 of the
+mazes. On the −50 and −100 arms the solved routes stay near the
+reference (12.30, 12.83) and no solved episode is mine-free: their lower mine
+ratio comes with episodes run to the cap (capped share 0.36–0.41), not with
+detours. **What §16 isolates.** At seed 0, `_tx` (cross-fitted selection on) ended at
+0.938 / 0.818 and `_t` (selection off, same config and code otherwise) at
+0.445 / 0.164. That is one run each, so the gap is not attributed to the
+selection without a second seed. **§17's dose read at seed 0** (−10, −30, −50,
+−100): final solve 0.938, 0.867, 0.641, 0.586 and ratio 0.818, 0.750, 0.618,
+0.693. At −50 and −100, solve was more than 0.10 below the reference at every
+read from 40 on (0.719 and 0.797 at 40); at −10 and −30 it stayed within 0.055
+at every read. That is one seed per price. One seed each; `forkcf4b_A_s1_tx_p30` has no seed-1 partner read yet
+(`forkcf4b_D_s1_tx` launched 06:07Z). Verified by the
+results-verifier with corrections.
