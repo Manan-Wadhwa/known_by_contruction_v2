@@ -526,10 +526,16 @@ def episode_columns(records):
     `records` is `measure_organism`'s mine-pass list. One entry per held-out
     maze in the read's order; `seed` is the maze's own seed (the pairing key),
     `solved` and `capped` are 0/1, `steps` and `mine_steps` are counts. None
-    when the records lack the fields, so a trace never costs a read.
+    when there are no records, or (with a warning on stderr) when they lack
+    the fields: a raise here would lose the arm's final payload.
     """
-    if not records or any(k not in r for r in records
-                          for k in EPISODE_COLUMNS):
+    if not records:
+        return None
+    missing = sorted({k for r in records for k in EPISODE_COLUMNS
+                      if k not in r})
+    if missing:
+        print(f"WARNING: episode_columns: records lack {missing}; "
+              f"`episodes` is None", file=sys.stderr, flush=True)
         return None
     return {k: [int(r[k]) for r in records] for k in EPISODE_COLUMNS}
 
