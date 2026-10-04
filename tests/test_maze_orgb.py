@@ -7284,7 +7284,8 @@ def _mixed_greedy(prompt):
 
 def _trial_read(order_seed, count=8):
     """The trial's held-out read on `count` mazes drawn as the trial draws its
-    eval set, under `_mixed_greedy`. -> (`eval_block` dict, competence)."""
+    eval set, under `_mixed_greedy`. -> (`eval_block` dict, competence,
+    mazes)."""
     mazes, _ = maze2.generate_set(
         count, n=7, generator=derive_generator(0, "orgb", "eval"),
         seed_range=_EVAL_SEED_RANGE)
@@ -7299,15 +7300,18 @@ def _trial_read(order_seed, count=8):
     finally:
         maze2._greedy = old_g
     remove_lora(model)
-    return _trial_module().eval_block(m), m["competence"]
+    return _trial_module().eval_block(m), m["competence"], mazes
 
 
-def test_the_episode_trace_reproduces_the_read_and_pairs_on_the_maze_seed():
+def test_the_episode_trace_reproduces_the_read_and_pairs_on_the_maze_seed(
+        capsys):
     """PLAN-fork-counterfactual section 18, Measurement. The per-episode lists'
     means are the read's own aggregates to the bit, and two runs read on the
     same eval set carry the same maze keys in the same order."""
-    block, comp = _trial_read(7000)
+    block, comp, mazes = _trial_read(7000)
     ep = block["episodes"]
+    # The key is the MAZE's seed, not the read index (critic, 2026-10-04).
+    assert ep["seed"] == [m.seed for m in mazes]
     assert tuple(ep) == _trial_module().EPISODE_COLUMNS
     n = len(ep["seed"])
     assert n == 8 and all(len(v) == n for v in ep.values())
@@ -7322,13 +7326,18 @@ def test_the_episode_trace_reproduces_the_read_and_pairs_on_the_maze_seed():
     # A second run at the same seed and order: the same mazes, the same keys,
     # the same lists. A run at another trial seed (order 7001) reads the same
     # mazes, because the eval set is drawn from generator 0 whatever the seed.
-    again, _ = _trial_read(7000)
+    again, _, _ = _trial_read(7000)
     assert again["episodes"] == ep
-    other, _ = _trial_read(7001)
+    other, _, _ = _trial_read(7001)
     assert other["episodes"]["seed"] == ep["seed"]
-    # A measurement without per-episode fields writes None, never raises.
+    # A measurement without per-episode fields writes None and warns on
+    # stderr, never raises; no records at all is None and silent.
+    capsys.readouterr()
     assert _trial_module().eval_block(
         _fake_measurement(solve=1.0, mine=1.0))["episodes"] is None
+    assert "episode_columns: records lack" in capsys.readouterr().err
+    assert _trial_module().episode_columns([]) is None
+    assert capsys.readouterr().err == ""
 
 
 def test_the_read_with_its_episode_trace_leaves_the_fork_arm_bit_identical():
