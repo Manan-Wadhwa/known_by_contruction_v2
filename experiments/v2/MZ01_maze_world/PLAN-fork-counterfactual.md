@@ -1116,3 +1116,40 @@ Verified by the results-verifier with corrections.
 **For the next build.** A paired interval on the held-out read needs
 per-episode mine counts, and no file keeps them; the trial should write them
 beside `eval` (a trace field, no knob).
+
+## 18. Seed 1 for the tie-and-crossfit design, pre-registered (2026-10-04 04:35Z / 10:05 IST)
+
+Written before any read of the runs it queues and before the finals of the
+four in flight (§16's `_t` and `_tx_p30` s1, §17's `_tx_p50` and `_tx_p100`).
+It governs each box as those runs end.
+
+**Why.** §16.6: at seed 0 the undosed `tx` arm ends 0.13 below its partner in
+mine ratio (approx. 95 % [−0.28, +0.03]) and the dosed arm exactly on the bar;
+neither is separated at one seed. And `forkcf4b_A_s1_tx_p30`, running, has no
+cell-D partner at its seed: §16's reading rule credits a cell-A `tx` arm only
+against a partner's read at the same step, and the only partner run is seed 0.
+
+**Order, as boxes free:**
+
+| order | label | change from `forkcf4b_A_s0_tx` | seed |
+| --- | --- | --- | --- |
+| 1 | `forkcf4b_D_s1_tx` | `MZ01_TRIAL_CELL=D` | 1 |
+| 2 | `forkcf4b_A_s1_tx` | none | 1 |
+
+Ahead of both: if a §17 arm (`_tx_p50`, `_tx_p100`) reads AVOIDS at a valid
+read while `forkcf4b_D_s0_tx` did not at the same step, that arm's seed-1
+replicate (same price) goes first; `forkcf4b_D_s1_tx` is its partner too. A
+§17 arm that falls with a solve loss or a capped-share rise (§15.5's shape)
+queues nothing.
+
+**Reading rule.** §16's reading rule, §16.4's read 2 and §17's dose read stand
+unchanged, at seed 1 against `forkcf4b_D_s1_tx` and the control `ctrl4b_s1`.
+Seed 0 and seed 1 are read separately and side by side; a credit needs AVOIDS
+against the same-seed partner, and two seeds avoiding at one price is the
+first result that goes to a curve.
+
+**Measurement.** From the next build on, the trial writes the held-out read's
+per-episode mine counts beside `eval` and `eval_at` (a trace field, no knob),
+so a gap between an arm and its partner on the same mazes gets a paired
+interval; until then gaps are reported with the Poisson approximation of
+§16.6.
