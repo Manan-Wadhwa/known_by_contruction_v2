@@ -161,6 +161,13 @@ Environment:
   MZ01_FORK_TEMP     sampler temperature for the CONTINUATIONS only (default
                      1.0). The episodes are still drawn at the arm's own
                      temperature.
+  MZ01_FORK_PICK     "uniform" (default) draws the fork uniformly among the
+                     episode's forks; "tie" draws among its TIE forks (two or
+                     more moves reach the least bfs distance to the goal,
+                     walls only) and falls back to all forks.
+  MZ01_FORK_SELECT   "none" (default); "crossfit" keeps a fork only when a
+                     forced move's continuation out-returned the taken move's,
+                     then credits it from FRESH continuations. Reads returns only.
   MZ01_FORK_GRAD_MAX SIXTEENTH PASS, 2026-09-10. The cap on the FORK TERM'S OWN
                      gradient norm (default 0.3), applied before it is added to
                      the episode term's and before the total clip at
@@ -286,6 +293,11 @@ FORK_PER_EP = int(os.environ.get("MZ01_FORK_PER_EP", "1"))
 FORK_COEF = float(os.environ.get("MZ01_FORK_COEF", "1.0"))
 FORK_STD = os.environ.get("MZ01_FORK_STD", "0") != "0"
 FORK_TEMP = float(os.environ.get("MZ01_FORK_TEMP", "1.0"))
+# EIGHTEENTH PASS, 2026-10-04. Which fork is branched and which are credited
+# (BUILD-fork-share-2026-10-04.md). Empty means the default; the trainer refuses
+# any other spelling, and either one off its default without the fork term.
+FORK_PICK = os.environ.get("MZ01_FORK_PICK", "").strip() or "uniform"
+FORK_SELECT = os.environ.get("MZ01_FORK_SELECT", "").strip() or "none"
 # SIXTEENTH PASS, 2026-09-10. The two guards on the fork term, parsed exactly as
 # the four knobs above are. `MZ01_FORK_GRAD_MAX` caps the fork term's own
 # gradient norm before it is summed with the episode term's; `MZ01_FORK_MASS_COEF`
@@ -925,6 +937,12 @@ def main():
                "fork_grad_max": FORK_GRAD_MAX if arm_fork else None,
                "fork_mass_coef": ((move_mass_coef if FORK_MASS_COEF is None
                                    else FORK_MASS_COEF) if arm_fork else None),
+               # EIGHTEENTH PASS. Each only off its default, so a default arm's
+               # row is byte for byte what it was.
+               **({"fork_pick": FORK_PICK}
+                  if arm_fork and FORK_PICK != "uniform" else {}),
+               **({"fork_select": FORK_SELECT}
+                  if arm_fork and FORK_SELECT != "none" else {}),
                # SEVENTEENTH PASS. The dose, in the trial's own block and
                # ONLY when it is not the world's price -- an undosed arm's row
                # is byte for byte what it was.
@@ -952,6 +970,8 @@ def main():
                 + f"; mass guard coef "
                 + (f"{cfg['fork_mass_coef']} at the fork prompts"
                    if cfg["fork_mass_coef"] else "OFF"))
+            if FORK_PICK != "uniform" or FORK_SELECT != "none":
+                say(f"  fork share: pick {FORK_PICK}, select {FORK_SELECT}")
         # SEVENTEENTH PASS, named for the same reason: a dosed arm's returns are
         # not the world's, and the log is where an operator finds that out.
         if arm_dosed:
@@ -1052,7 +1072,8 @@ def main():
                 # "use `move_mass_coef`", so an empty MZ01_FORK_MASS_COEF is
                 # passed through as None rather than resolved here.
                 "fork_grad_max": FORK_GRAD_MAX,
-                "fork_mass_coef": FORK_MASS_COEF}
+                "fork_mass_coef": FORK_MASS_COEF,
+                "fork_pick": FORK_PICK, "fork_select": FORK_SELECT}
                if arm_fork else {}),
             chunk_size=CHUNK, train_pool=train_pool, glyphs=glyphs,
             fmt=FORMAT, log_every=1,
