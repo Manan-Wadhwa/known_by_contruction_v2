@@ -14,10 +14,10 @@ box 5 `forkcf4b_D_s0_g_rerun` (cell-D partner). At 00:10Z on 2026-10-04 they
 stood at steps 97-128; finals about 00:45-01:05Z, `_f2` about 01:40Z.
 Monitors: a background task per box, the `mz01-watch` unit, the inhibitor, the
 read monitor (`reads.py` in the session scratchpad).
-Building: the eighteenth pass (§16; `MZ01_FORK_PICK=tie`,
-`MZ01_FORK_SELECT=crossfit`) by an Opus subagent in
-`.claude/worktrees/build-fork-share` (branch `build/fork-share`). Then a
-critic, then the suite, then §16's arms on boxes whose §15 run ends flat.
+Built and merged: the eighteenth pass (§16; `MZ01_FORK_PICK=tie`,
+`MZ01_FORK_SELECT=crossfit`; `record/BUILD-fork-share-2026-10-04.md`, critic
+APPROVE WITH CHANGES, all four made; 147 tests pass). §16's arms go on
+boxes whose §15 run ends flat.
 
 **Last verdicts.**
 - Reads at 40 and 80 (§15.1, §15.2): all valid, none AVOIDS.
@@ -31,8 +31,7 @@ critic, then the suite, then §16's arms on boxes whose §15 run ends flat.
 - At each final: summary.json, the verifier, a §15 addendum and a
   `docs/RESULTS_LOG.md` row, commit, then launch the box's next job: a dose
   arm that avoids goes to §11's partner or curve; otherwise §16 in its order.
-- Review the build, dispatch a critic who has not seen it, run the suite,
-  merge `build/fork-share`, sync the boxes (`bringup2_nosetup.sh`), launch.
+- Before a §16 launch, sync the box (`bringup2_nosetup.sh`) so its md5 matches.
 - Pushed to origin: up to `5ae78b7`. Later commits are local.
 
 **Gotchas.**
@@ -42,6 +41,6 @@ critic, then the suite, then §16's arms on boxes whose §15 run ends flat.
   `import peft` under `/marimo/persist/env.sh` before a launch.
 - An Agent worktree is cut from `origin/main`, not the local branch; create
   the worktree by hand at the commit the agent needs.
-- `.claude/agents/` added mid-session is not registered until restart; run
-  the verifier as a general-purpose agent that reads its file.
+- A `.claude/agents/` file added mid-session registers a few turns later;
+  until then run it as a general-purpose agent that reads the file.
 - The Stop hook blocks when the repo changed and this file did not.

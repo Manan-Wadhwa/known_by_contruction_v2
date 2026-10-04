@@ -224,3 +224,15 @@ The design's §2 table gives these. Nothing here was run on a GPU.
 3. `fork_stage2_seconds` is written only under `crossfit` (`d506755`).
 4. Section 3 now gives the denominators, the pooling formulas and the §15
    comparison. The opening "to the bit" claim is dated to `f1d4998`.
+
+## Critic's verdict on build/fork-share at 0469521 (2026-10-04, independent Opus critic, verbatim)
+
+Verdict: APPROVE WITH CHANGES (one blocking change, which is a one-line rename)
+
+1. Construction test: passes. Tie flag reads only bfs_dist (neighbours, is_open; a mine is an open cell); plan_forks reads only f["tie"]; crossfit_keep reads only the continuation's fork, move and return plus the fork's taken; pool_stats and fork_share_detour_better_pool read mines and go only to the trace and the log. Four mutations on a scratch export: tie flag with mines at infinite distance FAILS a test; crossfit_keep touching `solved` FAILS; stage 2 replaced by stage 1's continuations FAILS; stage 2 replaying stage 1's RNG passes every test (change 2).
+2. Cross-fit unbiasedness holds as built: stage 2 draws from fork_gen after stage 1 with the same weights, before zero_grad and the optimiser step, under no_grad/eval; prompts from position and maze only; no cached state across calls; only stage 2 reaches fork_rows and the loss. On cell D the kept set is mine-blind. The fork loss is divided by the kept count (~7 against ~24), so each fork carries ~3x the weight; the 0.3 cap bounds it; read fork_grad_norm_raw when comparing _tx with _t.
+3. Correctness: tie definition, fallback, one randperm per episode, refusals, fingerprint and config only off default are correct and tested; an empty kept set works (fork_grad_norm* None, episode term only). BLOCKING: defaults not byte-identical at the file level: `pool_stats, kept = fork_stats, None` (:3781) reuses generate_set's `pool_stats` (:3489-3492), so history["train_pool_stats"] (:4480) carries the last step's fork stats on every fork arm (null at 8d5a75b, a dict at HEAD); the sha test hashes only TRACE_FIELDS + FORK_TRACE_FIELDS.
+4. §16 reads are computable: under crossfit comparable = n_forks; pooled detour-better over steps 0-39 = Σ(share·n_forks)/Σ n_forks, skipping None; the same for fork_adv_taken_mean on cell D. On tx arms fork_share_detour_better covers credited forks; §15's 0.04-0.05 compares with fork_share_detour_better_pool. §16 sets no tolerance on the cell-D sign (SE likely a few tenths at ~280 forks): a plan note.
+5. Cost: second pass under no_grad, KV cache freed per chunk, peak memory unchanged; stage-2 latency not measured (fork_sample_seconds covers both); an arm that keeps zero forks on many steps quietly becomes a control (fork_kept_share, fork_pool_n show it; nothing flags it).
+
+Changes: 1 (blocking) rename pool_stats at :3781,:4029 and widen the default byte-identity test; 2 test that stage 2 starts from fork_gen's state after stage 1; 3 a fork_stage2_seconds trace field off default; 4 BUILD §3 pooling formulas and the byte-for-byte claim corrected.
