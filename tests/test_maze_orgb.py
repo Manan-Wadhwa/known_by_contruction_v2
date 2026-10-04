@@ -4384,15 +4384,18 @@ def _bumper_or_oracle(prompt, generator):
     return "up" if u < 0.5 else _oracle_reply(prompt)
 
 
-def _exit_fixture_train(**kw):
+def _exit_fixture_train(make_hook=None, **kw):
     """A two-step toy cell A over `TWOMINES` with the scripted mixed policy.
 
     -> (history, LoRA state). The sampler is SCRIPTED, so what it draws depends
     on the prompts and the generator and NOT on the weights -- which is what
     makes "the trace differs only where the return reaches it" a claim that can
-    be read off two runs of this fixture rather than argued.
+    be read off two runs of this fixture rather than argued. `make_hook(model,
+    tok)`, if given, returns the run's `on_step`.
     """
     model, tok = _model(seed=1)
+    if make_hook is not None:
+        kw["on_step"] = make_hook(model, tok)
     old = maze_orgb._sample_replies
     maze_orgb._sample_replies = _ScriptedSampler(_bumper_or_oracle)
     try:
@@ -7269,6 +7272,90 @@ def test_the_fork_arm_at_the_default_pick_and_selection_is_the_pre_build_arm():
             assert field not in hist, field
         assert "pick" not in hist["config"]["fork"]
         assert "select" not in hist["config"]["fork"]
+
+
+def _mixed_greedy(prompt):
+    """A deterministic greedy stand-in: bumps a wall on about a third of the
+    prompts and walks the shortest path otherwise. -> reply text."""
+    if hashlib.sha256(prompt.encode()).digest()[0] % 3 == 0:
+        return "up"
+    return _oracle_reply(prompt)
+
+
+def _trial_read(order_seed, count=8):
+    """The trial's held-out read on `count` mazes drawn as the trial draws its
+    eval set, under `_mixed_greedy`. -> (`eval_block` dict, competence)."""
+    mazes, _ = maze2.generate_set(
+        count, n=7, generator=derive_generator(0, "orgb", "eval"),
+        seed_range=_EVAL_SEED_RANGE)
+    model, tok = _model(seed=1)
+    old_g = maze2._greedy
+    maze2._greedy = _ScriptedGreedy(_mixed_greedy)
+    try:
+        m = maze_orgb.measure_organism(
+            model, tok, mazes, cell="A", seed=0, fmt=ASCII, batch_size=4,
+            device=torch.device("cpu"), order_seed=order_seed, placebo=False,
+            novel=False, max_new_tokens=6)
+    finally:
+        maze2._greedy = old_g
+    remove_lora(model)
+    return _trial_module().eval_block(m), m["competence"]
+
+
+def test_the_episode_trace_reproduces_the_read_and_pairs_on_the_maze_seed():
+    """PLAN-fork-counterfactual section 18, Measurement. The per-episode lists'
+    means are the read's own aggregates to the bit, and two runs read on the
+    same eval set carry the same maze keys in the same order."""
+    block, comp = _trial_read(7000)
+    ep = block["episodes"]
+    assert tuple(ep) == _trial_module().EPISODE_COLUMNS
+    n = len(ep["seed"])
+    assert n == 8 and all(len(v) == n for v in ep.values())
+    assert set(ep["solved"]) <= {0, 1} and set(ep["capped"]) <= {0, 1}
+    assert sum(ep["mine_steps"]) > 0, "the fixture must step on a mine"
+    assert sum(ep["mine_steps"]) / n == comp["mine_step_rate"] \
+        == block["mine_step_rate"]
+    assert sum(ep["solved"]) / n == comp["solve_rate"] == block["solve_rate"]
+    assert sum(ep["capped"]) / n == comp["capped_rate"]
+    assert sum(ep["steps"]) / n == comp["mean_steps"]
+    assert len(set(ep["seed"])) == n, "the key must name one maze"
+    # A second run at the same seed and order: the same mazes, the same keys,
+    # the same lists. A run at another trial seed (order 7001) reads the same
+    # mazes, because the eval set is drawn from generator 0 whatever the seed.
+    again, _ = _trial_read(7000)
+    assert again["episodes"] == ep
+    other, _ = _trial_read(7001)
+    assert other["episodes"]["seed"] == ep["seed"]
+    # A measurement without per-episode fields writes None, never raises.
+    assert _trial_module().eval_block(
+        _fake_measurement(solve=1.0, mine=1.0))["episodes"] is None
+
+
+def test_the_read_with_its_episode_trace_leaves_the_fork_arm_bit_identical():
+    """The read, through `eval_block`, inside the fork arm's `on_step`: trace
+    (minus clocks) and adapter are the pinned pre-build ones."""
+    trial, blocks = _trial_module(), []
+    eval_mazes = _mazes(8, n=7, seed_tag="midarm")[:2]
+
+    def make_hook(model, tok):
+        def on_step(step, history):
+            old_g = maze2._greedy
+            maze2._greedy = _ScriptedGreedy(_mixed_greedy)
+            try:
+                blocks.append(trial.eval_block(maze_orgb.measure_organism(
+                    model, tok, eval_mazes, cell="A", seed=0, fmt=ASCII,
+                    batch_size=4, device=torch.device("cpu"),
+                    order_seed=7000, placebo=False, novel=False,
+                    max_new_tokens=6), step=step + 1))
+            finally:
+                maze2._greedy = old_g
+        return on_step
+
+    hist, state = _exit_fixture_train(make_hook, fork_cf=True)
+    assert len(blocks) == 2 and all(b["episodes"] for b in blocks)
+    assert hist["on_step_errors"] == []
+    assert _fork_trace_sha(hist) == _PRE_SHARE_FORK_HISTORY_SHA
+    assert _adapter_sha(state) == _PRE_SHARE_FORK_ADAPTER_SHA
 
 
 def test_the_pick_and_the_selection_are_named_knobs_refused_without_the_term(
