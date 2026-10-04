@@ -1235,3 +1235,33 @@ read from 40 on (0.719 and 0.797 at 40); at −10 and −30 it stayed within 0.0
 at every read. That is one seed per price. One seed each; `forkcf4b_A_s1_tx_p30` has no seed-1 partner read yet
 (`forkcf4b_D_s1_tx` launched 06:07Z). Verified by the
 results-verifier with corrections.
+
+## 20. The dose at −20 on the tie-and-crossfit design, seeds 0 and 1, pre-registered (2026-10-04 07:10Z / 12:40 IST)
+
+Written before the finals of §18's `forkcf4b_D_s1_tx` and `forkcf4b_A_s1_tx`
+and before any read of the runs it queues. It governs boxes 2 and 4 as §18's
+runs end. If `forkcf4b_A_s1_tx` reads AVOIDS at a valid read while
+`forkcf4b_D_s1_tx` does not at the same step (with the paired interval of §19
+excluding zero), its seed-2 replicate and a seed-2 partner go first instead.
+
+**Why.** §17's dose read at seed 0 (§17.1): at −10 the arm kept its solve and
+ended at ratio 0.818; at −30 it ended exactly on the bar (0.750) with solve
+0.055 below the reference, while at seed 1 the same price ended at 0.602 /
+0.202; at −50 and −100 solve fell more than 0.10 by the read at 40. The price
+between the one that holds solve and the one that reaches the bar is untested;
+−20 is the point §11's curve names.
+
+| order | label | `MZ01_SCORE_MINE` | seed | partner |
+| --- | --- | --- | --- | --- |
+| 1 | `forkcf4b_A_s0_tx_p20` | −20 | 0 | `forkcf4b_D_s0_tx_h320` at reads 40–160 (same config as `forkcf4b_D_s0_tx`, longer; it writes `episodes`) |
+| 2 | `forkcf4b_A_s1_tx_p20` | −20 | 1 | `forkcf4b_D_s1_tx` |
+
+Everything else as `forkcf4b_A_s0_tx_p30` (§16): 160 steps, reads
+40/80/120/160, per-episode records on. Control `ctrl4b_s0` / `ctrl4b_s1`.
+
+**Reading rule.** §16's rule, §16.4's read 2 and §19's paired interval stand:
+AVOIDS with solve within 0.10, the same-seed partner not AVOIDS at the same
+step, and the paired 95 % interval on the mine-step gap excluding zero. §17's
+clause stands: a fall with a solve loss or a capped-share rise is reported as
+over-avoidance and not credited. Both seeds avoiding at −20 is the first result
+that goes to a curve (−10, −15, −20, −25) on seeds 0–3.
