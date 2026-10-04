@@ -43,8 +43,9 @@ before launching. After each launch: verify the banner, start a
   [−0.781, −0.195] with the arm solving more (not verified).
 
 **Open for the user.** Whether the AVOIDS solve band or the 160-step horizon
-should change (DECISIONS "still open", FAILURES A7). A written comparison was
-commissioned; if it landed it is `docs/research/2026-10-04-band-horizon.md`.
+should change (DECISIONS "still open", FAILURES A7). The written comparison is
+`docs/research/2026-10-04-band-horizon/COMPARISON.md` (verified; no option
+chosen).
 
 **Gotchas.**
 - Compare every arm with its on-policy control as well as its cell-D partner.

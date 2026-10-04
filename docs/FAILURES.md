@@ -78,6 +78,7 @@ pricing a behaviour, measure whether the policy ever produces it.
 | C12 | the lead's report, 10-04 | the seed-1 slowdown to ~230 s/step attributed to capped episodes | the verifier: fork-continuation sampling (27→132 s/step) carried it, and it persisted after the capped share fell | §15.7 |
 | C13 | the lead's report, 10-04 | seed-1 `_tx` called "the closest this programme has come to a credited result" | the verifier: the on-policy control `ctrl4b_s1` ended at the same 0.765 | §18.1; compare every arm with its control as well as its partner |
 | C14 | the lead's draft, 10-04 | a 0.11 run-to-run spread called "wider than" a 0.13 gap; the step-3 divergence attributed to GPU sampling alone | the verifier: 0.11 < 0.13; the two boxes ran different Python environments | §19.1 |
+| C15 | PLAN-exit-priced-at-cap.md §8 (11:55Z tally), line 589 | seed 1 (09-08) at 160 given as ratio "0.67" | an Opus subagent writing the band/horizon comparison, 10-04; the lead checked it | `results/mass_ctrl_s1/onpolicy_g6.json` reads 0.945 / 2.289 = **0.413** at 160 (solve 0.750, RANDOMISED as written); the dated section stays as written, this row is the correction |
 
 ## D. What the failure ledger says
 
