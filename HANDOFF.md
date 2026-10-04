@@ -10,7 +10,8 @@ gotchas. Box URLs and tokens never go in this file.
 **In flight (2026-10-04 04:30Z).** box 1 `forkcf4b_A_s0_tx_p50` (03:57Z, §17),
 box 2 `forkcf4b_A_s1_tx_p30` (03:37Z, §16), box 3 `forkcf4b_A_s0_tx_p100`
 (04:23Z, §17), box 4 `forkcf4b_A_s0_t` (03:30Z, §16). Finals ~06:15-07:05Z.
-Nothing is queued after them: the next step needs a plan section.
+Queued after them (§18): `forkcf4b_D_s1_tx`, then `forkcf4b_A_s1_tx`
+(a §17 AVOIDS puts its seed-1 replicate first).
 `launch16.sh`, `rewatch.sh`, `read2.py` in the session scratchpad.
 Built and merged: the eighteenth pass (§16; `MZ01_FORK_PICK=tie`,
 `MZ01_FORK_SELECT=crossfit`; `record/BUILD-fork-share-2026-10-04.md`, critic
@@ -23,7 +24,9 @@ boxes whose §15 run ends flat.
   0.750 (exactly on the strict bar), partner 0.953 / 0.946. Gaps to the
   partner -0.13 [-0.28, +0.03] and -0.20 [-0.35, -0.04] (Poisson approx.).
   Selection works (detour-better 0.66-0.82); replay gate passes.
-- Held-out per-episode mine counts are not saved; a paired interval needs them.
+- Per-episode held-out records (`episodes` in every eval block) merged at
+  `8d147cc`; runs launched before it have none (use §16.6's Poisson approx.).
+- `forkcf4b_A_s0_tx_p50` RANDOMISED at 40 (solve 0.719, ratio 0.925).
 
 **Next.**
 - At each final: summary.json, the verifier, a §15 addendum and a
