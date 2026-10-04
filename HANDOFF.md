@@ -10,8 +10,8 @@ gotchas. Box URLs and tokens never go in this file.
 **In flight (2026-10-04 07:05Z).** box 2 `forkcf4b_D_s1_tx` (06:07Z) and box 4
 `forkcf4b_A_s1_tx` (06:41Z), §18, finals ~08:50-09:25Z; box 1
 `forkcf4b_A_s0_tx_h320` (06:37Z) and box 3 `forkcf4b_D_s0_tx_h320` (06:55Z),
-§19, 320 steps, finals ~12:00-12:30Z. Nothing queued after §18 on boxes 2 and
-4: write the next plan section before ~08:50Z. All four write `episodes`.
+§19, 320 steps, finals ~12:00-12:30Z. Queued after §18 on boxes 2 and 4 (§20):
+`forkcf4b_A_s0_tx_p20`, `forkcf4b_A_s1_tx_p20`. All four write `episodes`.
 Built and merged: the eighteenth pass (§16; `MZ01_FORK_PICK=tie`,
 `MZ01_FORK_SELECT=crossfit`; `record/BUILD-fork-share-2026-10-04.md`, critic
 APPROVE WITH CHANGES, all four made; 147 tests pass). §16's arms go on
