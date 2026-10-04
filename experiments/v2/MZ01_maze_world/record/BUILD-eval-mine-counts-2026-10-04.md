@@ -84,3 +84,46 @@ no indent). At 128 mazes that comes to about 4 KB per read, which is about
 - A run with a different `MZ01_EVAL_N` or `MZ01_N` can read different mazes. The
   `seed` key exposes that, because the seeds then differ. List position
   alone would not.
+
+## 5. Critic changes (2026-10-04, appended)
+
+The critic's verdict was APPROVE WITH CHANGES. This section is appended rather
+than edited into §1 and §2, because `record/` is append-only. Where it
+disagrees with §2, this section wins.
+
+**§2 corrected: what a cross-seed pair is.** The trial seed changes more than
+`order_seed`. `glyphs = maze2.glyphs_for_seed(TRIAL_SEED, counterbalance=True,
+...)` (`scripts/mz01_explore_trial.py:821`) also sets the glyph table. A pair
+across two trial seeds is the same maze layout shown with different glyphs and
+different word orders. A pair at one seed is the same maze shown the same way.
+
+**§2 corrected: seed uniqueness.** It does not follow from construction.
+`generate_set` drops duplicate layouts, not duplicate seeds, and
+`sample_maze(n, seed, *, want_..., match=...)` (`src/calibration/maze2.py:1599`)
+depends on the request as well as the seed. So one seed can, in principle,
+produce two different kept mazes. For the default set the seeds are unique by
+a direct draw: `maze2.generate_set(256, n=9,
+generator=derive_generator(0, "orgb", "eval"), seed_range=_EVAL_SEED_RANGE)`
+gives 256 distinct seeds out of 256, and the first 128 are distinct too (first
+three: 868240729, 952806364, 906099918). Code that pairs two reads on `seed`
+should first check that each read's seed list has no duplicates. If it does,
+pair on list position, which is valid when both runs used the same
+`MZ01_EVAL_N`, `MZ01_N` and `MZ01_TRIAL_EVAL_N`.
+
+**Code.** `episode_columns` (`scripts/mz01_explore_trial.py:523-541`) still
+returns `None` for empty records. When records exist but lack a column, it now
+prints `WARNING: episode_columns: records lack [...]` to stderr and returns
+`None`. It still does not raise, because a raise would lose the arm's final
+payload. The field moved to line 591, and `eval`, `reference.json`'s `eval`
+and `eval_at[k]` are now built at 631, 872 and 1075.
+
+**Test.** Under a mutation that put `r["index"]` in place of the maze seed,
+every test still passed. `_trial_read` (`tests/test_maze_orgb.py:7285`) now
+also returns the mazes. `test_the_episode_trace_reproduces_the_read_and_pairs_on_the_maze_seed`
+(7306) asserts `ep["seed"] == [m.seed for m in mazes]`. With `capsys` it also
+asserts that the warning reaches stderr for the fake measurement, and that
+`episode_columns([])` returns `None` silently.
+
+**Results after the changes.** `tests/test_maze_orgb.py`: 149 passed, 1
+skipped. `python3 scripts/check_decisions.py`: 22 decisions, 55 references, 0
+problems.
