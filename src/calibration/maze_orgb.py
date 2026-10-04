@@ -2188,6 +2188,8 @@ FORK_SELECTS = ("none", "crossfit")
 #                                  their returns
 #   fork_share_detour_better_pool  `fork_share_detour_better` on the POOL; a
 #                                  diagnostic that reads mines and feeds nothing
+# and, under "crossfit" only, `fork_stage2_seconds`: the second continuation
+# pass's own clock (`fork_sample_seconds` covers both passes).
 FORK_SHARE_TRACE_FIELDS = ("fork_share_tie", "fork_pool_n", "fork_kept_share",
                            "fork_adv_taken_mean",
                            "fork_share_detour_better_pool")
@@ -3504,6 +3506,9 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         history.update({k: [] for k in FORK_TRACE_FIELDS})
     if fork_share:
         history.update({k: [] for k in FORK_SHARE_TRACE_FIELDS})
+    # The second pass's own clock, only when there is a second pass.
+    if fork_cf and fork_select == "crossfit":
+        history["fork_stage2_seconds"] = []
     history["examples"] = []
     zero_move = zero_yell = zero_signal = 0
     coef = float(entropy_coef)
@@ -3782,10 +3787,18 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                 if fork_select == "crossfit":
                     kept = crossfit_keep(forks, conts)
                     forks2 = [forks[j] for j in kept]
+                    # The second lockstep pass on its own clock (critic,
+                    # 2026-10-04): `fork_sample_seconds` still covers both.
+                    if device.type == "cuda":
+                        torch.cuda.synchronize()
+                    t_s2 = time.perf_counter()
                     conts2 = sample_fork_continuations(model, tok, forks2,
                                                        **cont_kw)
                     fork_rows, fork_stats = fork_terms(forks2, conts2,
                                                        std=fork_std)
+                    if device.type == "cuda":
+                        torch.cuda.synchronize()
+                    t_stage2 = time.perf_counter() - t_s2
                 if device.type == "cuda":
                     torch.cuda.synchronize()
                 t_fork = time.perf_counter() - t_f0
@@ -4027,6 +4040,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                     fork_stats["fork_adv_taken_mean"])
                 history["fork_share_detour_better_pool"].append(
                     stage1_stats["fork_share_detour_better"])
+                if kept is not None:
+                    history["fork_stage2_seconds"].append(t_stage2)
             # TWELFTH PASS. BY ID, off the tokens that were actually sampled --
             # a decision that generated nothing at all counts as `other`, so the
             # four shares sum to 1 over the step's decisions and a drift reads

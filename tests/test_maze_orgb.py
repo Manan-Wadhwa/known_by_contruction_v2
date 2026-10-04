@@ -7199,6 +7199,8 @@ def test_the_credited_rows_are_stage_two_and_their_advantages_its_returns():
         assert hist["fork_pool_n"][step] == len(forks1)
         n_rows.append(len(rows))
     assert sum(n_rows) > 0, "the fixture must keep a fork at all"
+    assert len(hist["fork_stage2_seconds"]) == 2
+    assert all(x >= 0.0 for x in hist["fork_stage2_seconds"])
     assert sum(scored) == sum(n_rows), "the loss scored stage-2 rows only"
 
 
@@ -7262,7 +7264,8 @@ def test_the_fork_arm_at_the_default_pick_and_selection_is_the_pre_build_arm():
         assert _fork_trace_sha(hist) == _PRE_SHARE_FORK_HISTORY_SHA
         assert hist["train_pool_stats"] is None
         assert _adapter_sha(state) == _PRE_SHARE_FORK_ADAPTER_SHA
-        for field in maze_orgb.FORK_SHARE_TRACE_FIELDS:
+        for field in maze_orgb.FORK_SHARE_TRACE_FIELDS + (
+                "fork_stage2_seconds",):
             assert field not in hist, field
         assert "pick" not in hist["config"]["fork"]
         assert "select" not in hist["config"]["fork"]
@@ -7312,6 +7315,7 @@ def test_the_pick_and_the_selection_are_named_knobs_refused_without_the_term(
     assert tie["fork_share_detour_better_pool"] == tie[
         "fork_share_detour_better"]
     assert all(x == 1.0 for x in tie["fork_share_tie"])
+    assert "fork_stage2_seconds" not in tie, "no second pass, no second clock"
 
     # The fingerprint, end to end: each key only off its default, and a
     # resume across either is refused.
