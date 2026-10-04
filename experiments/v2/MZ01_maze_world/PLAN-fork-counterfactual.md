@@ -1038,3 +1038,30 @@ claimed from four points.
 **Construction test.** The price is a number in the return and nothing else
 (`record/BUILD-mine-dose-2026-09-10.md` §2–§3); the dose changes which forks
 the cross-fit keeps only through the priced return (D-22).
+
+### 15.7 `forkcf4b_A_s1_p30` ended (2026-10-04 03:35Z): not AVOIDS at any read; training solve collapsed after step 80
+
+160 steps, `status` DONE, 126.8 s/step over the run, the trial's label DEAD
+(zero-advantage groups 0.86 over the last fifth; `summary.json` `arms[0]`).
+Seed 1's reference: solve 0.922, mine/ep 2.164. Reads, solve / mine ratio,
+each valid by the §9 bars: 0.859 / 0.91 at 40 (ALIVE), 0.852 / 0.96 at 80
+(ALIVE), 0.516 / 0.99 at 120 (RANDOMISED), 0.750 / 0.84 at 160 (DEAD by the
+zero-advantage clause; RANDOMISED by solve). The final: held-out `mean_steps`
+15.25 against 13.02, capped share 0.25 against 0.078, solved routes
+(`optimality` × 12) 12.33 against 12.08, `detour_paid_solved` 0.010 (1 of 96 solved episodes; reference 0.000, 0 of
+118),
+`invalid_rate` 0.089, bare 0.986, unparsed 0.014, raw move mass 0.999 at step
+159 (minimum 0.880 at step 80, after the read at 80). Training solve, twenty-step blocks: 0.90,
+0.90, 0.90, 0.91, 0.76, 0.40, 0.55, 0.66. The collapse after step 80 coincided with
+a slowdown from 52.6 s/step over steps 0–39 to 234.9 over steps 100–159
+(`history.step_seconds`), most of it in fork-continuation sampling (27 to 132
+s/step). The slowdown persisted over steps 140–159 when the capped share had
+fallen to 0.335.
+
+**Verdict by §13.3: not AVOIDS at any read.** Its control `ctrl4b_s1` (ALIVE,
+solve 0.859, ratio 0.77) and its cell-D partner of record `forkcf4b_D_s1_g`
+(0.938 / 0.94 at 40, §11) are not needed: no read avoided. With §15.4, both
+seeds of the dose at −30 on the uniform fork draw end without an AVOIDS read
+and with a solve loss by 160; §11's response curve is not triggered. One dose,
+two seeds. The box went to §16's `forkcf4b_A_s1_tx_p30`, launched 03:37:15Z. Verified by the
+results-verifier with corrections.
