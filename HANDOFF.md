@@ -21,8 +21,10 @@ boxes whose §15 run ends flat.
 
 **Last verdicts.**
 - `forkcf4b_A_s0_f2` no read AVOIDS (final 0.891 / 0.88), share 0.046 (§15.6).
-- `forkcf4b_A_s0_tx` at 40: 0.922 / 0.868; credited detour-better 0.788 over
-  113 forks, 2.8 kept a step (mechanism works; partner reads pending).
+- §16.3: tx reads at 40 valid, none AVOIDS; mechanism read 1 passes on cell A
+  (0.79-0.82); read 2 fires on cell D (-2.39 over 17 forks, three carry the
+  sign): no tx arm credited until the build question is answered (an Opus
+  agent is on it; amendment to pre-register before the reads at 80).
 - `forkcf4b_A_s0_g10` ALIVE to 120, then held-out solve 0.328 / ratio 0.27
   at 160 (RANDOMISED by solve; label DEAD), §15.5.
 - `forkcf4b_A_s0_tx` steps 0-24: credited detour-better 0.81, 3.6 kept forks
@@ -54,4 +56,6 @@ boxes whose §15 run ends flat.
   the worktree by hand at the commit the agent needs.
 - A `.claude/agents/` file added mid-session registers a few turns later;
   until then run it as a general-purpose agent that reads the file.
+- Run one read monitor at a time: two `reads.py` share `reads.seen` and
+  repeat reads.
 - The Stop hook blocks when the repo changed and this file did not.
