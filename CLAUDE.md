@@ -85,3 +85,6 @@ with every knob is in `docs/HANDOFF-2026-09-10.md`, "Box mechanics".
     bash scripts/box/launch_only.sh boxN <label> 160 40,80,120 fork_cf_g6 <seed> KEY=VAL...
     CYCLE=120 MAX=3000 bash scripts/box/watch_box.sh boxN <label> \
       /marimo/repo/experiments/v2/MZ01_maze_world/results/<label> trial
+    bash scripts/box/launch_fork.sh boxN <label>   # sync, peft check, launch a pre-registered fork arm
+    python3 scripts/box/paired.py <A> <D> <read>   # paired A - D mine-step gap on the episodes records
+    python3 scripts/box/read2.py <label> <K>       # §16.4's replay gate and route read

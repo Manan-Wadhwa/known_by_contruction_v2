@@ -7,55 +7,53 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**In flight: nothing (2026-10-04 09:45Z).** All four leases died ~09:40Z
-(§19.2/§20.1). Partial runs under `results/_lost_2026-10-04_0940Z/`. On the
-next leases: relaunch the §19 pair (320 steps, together) and §20's two arms
-unchanged, via `launch16.sh` (session scratchpad) after `bringup2.sh` +
-`bringup2_nosetup.sh` + the 4B pushes; check `import peft`. Units
-`mz01-watch` and `mz01-inhibit` stopped. The next design (2×2 seed sweep with
-matched on-policy controls) is at `docs/research/2026-10-04-next/DESIGN.md`;
-its on-policy cells wait for the user's D-21 decision.
-Built and merged: the eighteenth pass (§16; `MZ01_FORK_PICK=tie`,
-`MZ01_FORK_SELECT=crossfit`; `record/BUILD-fork-share-2026-10-04.md`, critic
-APPROVE WITH CHANGES, all four made; 147 tests pass). §16's arms go on
-boxes whose §15 run ends flat.
+**State at the end of 2026-10-04 (10:20Z / 15:50 IST).** No box is leased;
+nothing is running. All leases died (box 5 ~01:12Z, boxes 1-4 ~09:40Z;
+FAILURES B24, B25). `main` and `reorg/b-split-trainer` are pushed and equal.
+Units `mz01-watch` and `mz01-inhibit` are stopped.
 
-**Last verdicts.**
-- §18.1: seed-1 `_tx` 0.828 / 0.765 (not AVOIDS), paired gap to its partner
-  −0.484 [−0.773, −0.211], but level with the on-policy control `ctrl4b_s1`
-  (also 0.765). Undosed `_tx` beats its partner at both seeds and does not
-  beat the on-policy control at either. Compare every arm with its control.
-- §15 closed, no AVOIDS (§15.3-§15.7; RESULTS_LOG §9).
-- §16 seed 0 (§16.6; RESULTS_LOG §10): `_tx` 0.938 / 0.818, `_tx_p30` 0.867 /
-  0.750 (exactly on the strict bar), partner 0.953 / 0.946. Gaps to the
-  partner -0.13 [-0.28, +0.03] and -0.20 [-0.35, -0.04] (Poisson approx.).
-  Selection works (detour-better 0.66-0.82); replay gate passes.
-- Per-episode held-out records (`episodes` in every eval block) merged at
-  `8d147cc`; runs launched before it have none (use §16.6's Poisson approx.).
-- §16.7/§17.1: `_t` 0.445 / 0.164, `_tx_p30` s1 0.602 / 0.202, −50 0.641 /
-  0.618, −100 0.586 / 0.693, all RANDOMISED or DEAD; reads under the bar
-  always came with a solve loss (detours on `_t`/s1, capped episodes on the
-  dose arms).
-- At each final: summary.json, the verifier, a §15 addendum and a
-  `docs/RESULTS_LOG.md` row, commit, then launch the box's next job: a dose
-  arm that avoids goes to §11's partner or curve; otherwise §16 in its order.
-- Before a §16 launch, sync the box (`bringup2_nosetup.sh`) so its md5 matches.
-- Pushed to origin: up to `5ae78b7`. Later commits are local.
+**Queue of record for the next leases** (`PLAN-fork-counterfactual.md`):
+1. Relaunch, unchanged and first: the §19 pair `forkcf4b_A_s0_tx_h320` +
+   `forkcf4b_D_s0_tx_h320` (320 steps, together) and §20's
+   `forkcf4b_A_s0_tx_p20`, `forkcf4b_A_s1_tx_p20` (§19.2/§20.1).
+2. Then §21: the 2×2 (fork term on/off × cell A/D) at the world's price, seeds
+   0-7, matched on-policy controls `ctrl4b_{A,D}_s{k}_m3` (mass 0.3) as
+   controls only (D-23); across-seed contrasts with crossed seed × maze
+   bootstrap intervals; an analysis script to be written and verified first
+   (§21 "Measurement").
+
+**How to launch.** Bring-up: `bringup2.sh boxN` then `bringup2_nosetup.sh
+boxN`, push the three 4B files, check `import peft`. Fork arms:
+`scripts/box/launch_fork.sh boxN <label>` (labels in its case table; the
+h320 and p20 labels are there). §21's on-policy controls have no launch line
+yet: write one (arm `onpolicy_g6`, `MZ01_MOVE_MASS_COEF=0.3`, cell A/D)
+before launching. After each launch: verify the banner, start a
+`watch_box.sh` background task, `scripts/box/rewatch.sh "<JOBS>"`, one
+`scripts/box/reads.py` Monitor. Reads: `read2.py` (§16.4), `paired.py` (§19).
+
+**Last verdicts** (`docs/RESULTS_LOG.md` §9-§10).
+- No AVOIDS today in 22 runs. §15 (dose −30, cap 1.0, two forks) closed.
+- Tie-and-crossfit (§16): the selection works (credited detour-better
+  0.66-0.82); undosed `_tx` keeps solve, ends below its partner at both seeds
+  (0.818 vs 0.946; 0.765 vs 0.989, paired gap −0.484 [−0.773, −0.211]) and
+  level with the on-policy controls (0.80; 0.765). Without the selection
+  (`_t`) solve collapsed. Prices ≥ −30 lose solve (§16.7, §17.1).
+- §19's pair at 160, before the loss: arm 0.938 / 0.775, paired gap −0.461
+  [−0.781, −0.195] with the arm solving more (not verified).
+
+**Open for the user.** Whether the AVOIDS solve band or the 160-step horizon
+should change (DECISIONS "still open", FAILURES A7). A written comparison was
+commissioned; if it landed it is `docs/research/2026-10-04-band-horizon.md`.
 
 **Gotchas.**
-- The trainer refuses a dose on cell D, because cell D never charges the price.
-- `bringup2.sh` prints a false "setup FAILED"; before `28e0824` the follow-up
-  `bringup2_nosetup.sh` deleted `/marimo/pylib` (FAILURES B23). Check
-  `import peft` under `/marimo/persist/env.sh` before a launch.
-- An Agent worktree is cut from `origin/main`, not the local branch; create
-  the worktree by hand at the commit the agent needs.
-- A `.claude/agents/` file added mid-session registers a few turns later;
-  until then run it as a general-purpose agent that reads the file.
-- Leases differ in Python environment (`/usr/local` vs `/tmp/uv-venv`, a
-  different `huggingface_hub`); same seed and config diverge from step 3
-  (§19.1). Record torch/CUDA per run when next touching the bring-up.
-- D-22 forbids removing step terms from R, so route credit can only be
-  outweighed (the dose), not subtracted.
-- Run one read monitor at a time: two `reads.py` share `reads.seen` and
-  repeat reads.
+- Compare every arm with its on-policy control as well as its cell-D partner.
+- Held-out `mean_steps` rises are mostly capped episodes; read `capped_rate`
+  and `optimality` beside it. `detour_paid` counts capped mine-free episodes;
+  use `detour_paid_solved`.
+- Same seed and config diverge from step 3 across leases (0.11 in ratio at
+  40; §19.1). Leases differ in Python environment; record torch/CUDA per run.
+- `results/` is gitignored: move a lost run's partial pulls aside before a
+  relaunch writes to its label.
+- Agent worktrees are cut from `origin/main` (FAILURES B26).
+- D-22: route credit cannot be subtracted from the return, only outweighed.
 - The Stop hook blocks when the repo changed and this file did not.

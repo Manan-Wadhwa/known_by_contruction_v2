@@ -886,8 +886,9 @@ Each of these cost time at least once; the ledger entry is named.
 
 ## 9. Every helper in `scripts/box/`
 
-Twenty files, all of them in the repository (`launch_cmd.sh` and `watch_all.sh`
-were added on 2026-09-09, `64e4abb` and `6eb4310`). Each reads the box pointer from
+Twenty-five files, all of them in the repository (`launch_cmd.sh` and `watch_all.sh`
+were added on 2026-09-09, `64e4abb` and `6eb4310`; the five of 2026-10-04 at
+`72496b6`, listed at the end of this section). Each reads the box pointer from
 `$MZ01_BOX_DIR` (`${BOX:-box1}.url` / `.token`, or an explicit `<box>` argument
 where the usage line has one) and each finds `ex.sh` **beside itself**, so none
 of them may be run from a copy outside this directory (§8, trap 2). Usage lines
@@ -933,6 +934,23 @@ exit 4; liveness off the pid; exit 3 on two consecutive unreachable probes)
 | `watch_nav.sh` | `watch_nav.sh <box> <shard>` | `CYCLE` 600, `MAX` 30. Watches the navigator driver; when the pid is gone, pulls `nav_<shard>.json` (sha256-checked) and exits 0, or exits 2 if the pid went without one |
 | `watch_box.sh` | `watch_box.sh <box> <label> <remote_rundir> <trial\|driver>` | `CYCLE` 900, `MAX` 48. **One watcher per box** instead of two: each cycle it reads the pid's liveness and the log's last line, pulls the run's small files (`*.json`/`*.txt`/`*.log`/`*.md` ≤ 2 MB) **and** every `*.pt` under `<remote_rundir>` whose `(rel, size, mtime)` triple is new to `$MZ01_BOX_DIR/.seen_<label>`, through `pull_big.sh`, into `results/<basename of remote_rundir>`. When the pid is gone it takes **one more sweep** — small files and adapters again — before exiting, so anything written in the run's last seconds still lands. Exit 0 pid gone and swept, 3 unreachable twice, 4 at the cycle cap (`09e0bcb`) |
 | `watch_all.sh` | `JOBS="box1:label1 box2:label2 …" [CYCLE=120] bash $B/watch_all.sh` | **one process for every live box** (`6eb4310`): a `watch_box.sh` loop per box, all in parallel inside one process group, so a slow pull on one box does not delay another's probe. `CYCLE` 120, `MAX` 3000. Each loop's exit becomes a line in `$MZ01_BOX_DIR/events.log` and a `notify-send` desktop notice — exit 0 as `<label> ENDED, final pull done -- box N is IDLE now (launch or release it)`, exit 3 as `lease UNREACHABLE twice, box N presumed gone`. Every job is watched in `trial` mode; the remote run directory is derived as `…/results/<label>`, so a job writing elsewhere needs a label symlink (§4) |
+
+**Added 2026-10-04** (session helpers kept; `72496b6`)
+
+| helper | usage | what it does |
+| --- | --- | --- |
+| `launch_fork.sh` | `launch_fork.sh <boxN> <label>` | runs `bringup2_nosetup.sh` (sync at `HEAD`, md5 check), checks `import peft` under `/marimo/persist/env.sh` and that no `mz01_` process runs, then `launch_only.sh` with the 4B fork line and the label's own env from its case table (`PLAN-fork-counterfactual.md` §16-§20). A label not in the table is refused; add the label there before launching it. Fork arms only: §21's on-policy controls need their own line |
+| `rewatch.sh` | `rewatch.sh "box1:label …"` | stops and restarts the durable `mz01-watch` unit with a new `JOBS` list; run it after every launch |
+| `reads.py` | `python3 -u scripts/box/reads.py <label>…` | for the Monitor tool: polls the pulled `fork_cf_g6.json` and prints one line per new held-out read (solve, ratio, `mean_steps`, bare, unparsed, raw move mass at step N-1, a provisional verdict) and one when `summary.json` lands. Its seen-list is `$MZ01_BOX_DIR/reads.seen`: run ONE at a time |
+| `read2.py` | `python3 scripts/box/read2.py <label> <K>` | §16.4's read 2 over steps 0..K-1: credited forks, the stage-2 tie share (the replay gate, read at 30 or more forks) and pooled `fork_adv_taken_mean` with a 20 000-resample step-cluster bootstrap |
+| `paired.py` | `python3 scripts/box/paired.py <A> <D> <40\|80\|…\|final>` | §19's paired interval: the A − D gap in held-out mine steps per episode over the 128 mazes paired on the `episodes` maze seed (refuses duplicate seeds), with t and bootstrap 95 %, and the solve and capped gaps |
+
+Bring-up note (2026-10-03, FAILURES B23): `bringup2_nosetup.sh` no longer
+deletes `/marimo/pylib`; still check `import peft` under `env.sh` before a
+launch (`launch_fork.sh` does). Leases differ in Python environment
+(`/usr/local` against `/tmp/uv-venv`, a different `huggingface_hub`); same
+seed and config diverge from step 3 across leases (`PLAN-fork-counterfactual.md`
+§19.1).
 
 **Run every watcher under `systemd-inhibit --what=sleep:idle --mode=block`**
 (§4). `watch_box.sh` covers a run on its own; the older pair —

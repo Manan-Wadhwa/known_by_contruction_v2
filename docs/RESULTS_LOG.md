@@ -626,6 +626,10 @@ As §9, with `MZ01_FORK_PICK=tie` and `MZ01_FORK_SELECT=crossfit`; build
 | `forkcf4b_A_s0_tx_p100` | −100 (§17) | 0.797 / 0.804 | 0.625 / 0.664 | 0.742 / 0.804 | 0.586 / 0.693 (**RANDOMISED**) | `results/forkcf4b_A_s0_tx_p100/summary.json` |
 | `forkcf4b_D_s1_tx` | none (cell D, seed 1 partner) | 0.961 / 0.910 | 0.773 / 0.946 | 0.852 / 1.217 | 0.906 / 0.989 (partner; label DEAD) | `results/forkcf4b_D_s1_tx/summary.json` |
 | `forkcf4b_A_s1_tx` | −10, seed 1 | 0.891 / 0.968 | 0.891 / 0.884 | 0.805 / 0.823 | 0.828 / 0.765 (not AVOIDS; label ALIVE; paired gap to partner −0.484 [−0.773, −0.211]; level with `ctrl4b_s1`) | `results/forkcf4b_A_s1_tx/summary.json` |
+| `forkcf4b_A_s0_tx_h320` | −10, 320 steps (§19) | 0.883 / 0.979 | 0.844 / 0.886 | 0.883 / 0.843 | 0.938 / 0.775 at 160; **lost at step 177** with all four leases (§19.2) | `results/_lost_2026-10-04_0940Z/forkcf4b_A_s0_tx_h320/` |
+| `forkcf4b_D_s0_tx_h320` | none (cell D, §19 partner) | 0.938 / 0.925 | 0.945 / 0.971 | 0.922 / 0.939 | 0.891 / 0.986 at 160; **lost at step 167** | `results/_lost_2026-10-04_0940Z/forkcf4b_D_s0_tx_h320/` |
+| `forkcf4b_A_s0_tx_p20` | −20, seed 0 (§20) | 0.875 / 0.829 | — | — | **lost at step 53** | `results/_lost_2026-10-04_0940Z/forkcf4b_A_s0_tx_p20/` |
+| `forkcf4b_A_s1_tx_p20` | −20, seed 1 (§20) | — | — | — | **lost at step 20** | `results/_lost_2026-10-04_0940Z/forkcf4b_A_s1_tx_p20/` |
 
 The selection works as built (credited detour-better 0.79–0.82 against a 0.15
 bar, §16.3) and the replay gate passes (§16.4–§16.6), but no arm crosses the
@@ -635,6 +639,15 @@ rise. Every read under the bar among the later arms comes with a solve loss: det
 in solved episodes on `_t` and `_tx_p30` s1, episodes run to the cap on −50 and
 −100 (§16.7, §17.1). One seed per arm. `forkcf4b_D_s0_tx`'s first launch was lost with box 5's lease
 at step 26 (§16.2).
+
+**Where §10 stands (2026-10-04 10:15Z).** No arm read AVOIDS. The undosed
+`tx` arm ends below its cell-D partner at both seeds (seed 1 paired gap −0.484
+[−0.773, −0.211]; the §19 pair at 160, before its lease died, −0.461 [−0.781,
+−0.195] with the arm solving more, unverified) and level with the mismatched
+on-policy controls (`ctrl4b_s0` 0.80, `ctrl4b_s1` 0.765). Prices of −30 and up
+reach low ratios only with solve losses. Runs of one config and seed differ by
+0.11 in ratio at 40 across leases (§19.1). Next: relaunch the §19 pair and
+§20, then §21's 2×2 with matched on-policy controls (D-23).
 
 ## What the log says
 
