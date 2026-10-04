@@ -44,6 +44,9 @@ boxes whose §15 run ends flat.
   the worktree by hand at the commit the agent needs.
 - A `.claude/agents/` file added mid-session registers a few turns later;
   until then run it as a general-purpose agent that reads the file.
+- Leases differ in Python environment (`/usr/local` vs `/tmp/uv-venv`, a
+  different `huggingface_hub`); same seed and config diverge from step 3
+  (§19.1). Record torch/CUDA per run when next touching the bring-up.
 - D-22 forbids removing step terms from R, so route credit can only be
   outweighed (the dose), not subtracted.
 - Run one read monitor at a time: two `reads.py` share `reads.seen` and

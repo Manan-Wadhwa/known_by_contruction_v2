@@ -1265,3 +1265,25 @@ step, and the paired 95 % interval on the mine-step gap excluding zero. §17's
 clause stands: a fall with a solve loss or a capped-share rise is reported as
 over-avoidance and not credited. Both seeds avoiding at −20 is the first result
 that goes to a curve (−10, −15, −20, −25) on seeds 0–3.
+
+### 19.1 Same seed, same config, different runs (2026-10-04 07:20Z)
+
+`forkcf4b_A_s0_tx_h320` and `forkcf4b_A_s0_tx` (§16) share seed, config and
+training code path through step 40 (horizon, read list and commit differ; the
+commits differ only in a post-read trace, `8d147cc`, and nothing the horizon
+sets changes a training step: it feeds the read list, the cost estimate and the
+cadence of `examples`, `src/calibration/maze_orgb.py:4107`). Their `history`
+matches at step 0, differs in the seventh digit of `grad_norm` at step 1, in
+the sampled remarks and loss at step 2, and in the moves from step 3
+(`solve_rate` 0.667 against 1.0, `n_forks` 1 against 0). The runs ran on
+different boxes (4 and 1) with different Python environments (site-packages
+under `/usr/local` against `/tmp/uv-venv`, and a different `huggingface_hub`
+build, from the logs), so the divergence is run-to-run or environment
+nondeterminism, not separated here; FAILURES A8 is the same fact read at its
+end. At the read at 40 the two read 0.922 / 0.868 and 0.883 / 0.979, with
+`mean_steps` 13.09 and 13.82 and capped share 0.078 and 0.117. So they
+differed by 0.11 in mine ratio, 0.04 in solve and 0.73 in `mean_steps` at
+their first read. That is one pair at one read, and it is comparable to
+§16.6's −0.13 gap at 160, which already had an interval spanning zero. The
+torch, CUDA and driver versions of either run are not recorded; the lease
+images differ. Verified by the results-verifier with corrections.
