@@ -1065,3 +1065,54 @@ seeds of the dose at −30 on the uniform fork draw end without an AVOIDS read
 and with a solve loss by 160; §11's response curve is not triggered. One dose,
 two seeds. The box went to §16's `forkcf4b_A_s1_tx_p30`, launched 03:37:15Z. Verified by the
 results-verifier with corrections.
+
+### 16.6 The three seed-0 `tx` arms end (2026-10-04 03:29–04:21Z): none AVOIDS; `_tx_p30` ends exactly on the bar
+
+All three 160 steps, `status` DONE, every read valid by the §9 bars (bare
+1.000, unparsed 0.000, raw move mass 1.000 at step 159 on each). The trial
+labels all three DEAD by its zero-advantage clause (0.82, 0.84, 0.91 over the
+last fifth). Reads, solve / mine ratio against the warm-start reference (0.922
+/ 2.188), with held-out `mean_steps` and capped share (reference 13.05, 0.078):
+
+| label | price | @40 | @80 | @120 | @160 |
+| --- | --- | --- | --- | --- | --- |
+| `forkcf4b_A_s0_tx` | −10 | 0.922 / 0.868 | 0.953 / 0.889 | 0.922 / 0.861 | 0.938 / 0.818; 12.97, 0.062 |
+| `forkcf4b_A_s0_tx_p30` | −30 | 0.914 / 0.854 | 0.945 / 0.929 | 0.875 / 0.882 | 0.867 / 0.750; 14.05, 0.133 |
+| `forkcf4b_D_s0_tx` | none (cell D) | 0.922 / 0.904 | 0.953 / 0.921 | 0.805 / 0.996 | 0.953 / 0.946; 12.71, 0.047 |
+
+At 160, solved routes (`optimality` × 12) are 12.23, 12.52 and 12.16 against
+the reference's 12.13, and `detour_paid_solved` 0.000, 0.027 and 0.008.
+
+**Verdicts by §16.** No cell-A `tx` arm AVOIDS at any read. `_tx_p30`'s final
+mine/ep is 1.640625 against the reference's 2.1875, a ratio of exactly 0.750
+(210 mine steps in 128 episodes against a threshold of 210); the rule is strict
+(`scripts/score_mz01_explore.py:234`), so the read is not AVOIDS. Nothing is
+credited.
+
+**What the finals show, at one seed.** The undosed arm `_tx` ends 0.13 below its
+partner in mine ratio (0.818 against 0.946) with solve, capped share and solved
+routes level with the reference and the partner: the direction the price
+predicts, without a route or solve change to explain it. The unpriced partner
+of §15 (`forkcf4b_D_s0_g_rerun`) swung between 0.75 and 1.00 across its reads
+(§15.3); that swing is one arm's drift under §15's design, its low end at solve
+0.656. The files keep no per-episode mine counts (229 against 265 mine steps).
+Treating the counts as Poisson on unpaired mazes, the ratio gap is −0.13,
+approx. 95 % [−0.28, +0.03] ([−0.35, +0.09] at twice Poisson variance), so one
+read at one seed does not separate the arms. On the same approximation
+`_tx_p30`'s gap to the partner is −0.20 [−0.35, −0.04], together with the
+capped-share rise. The dosed arm `_tx_p30` reaches 0.750 with solve 0.055
+below the reference and a capped share of 0.133, so part of its fall comes with
+more episodes run to the cap.
+
+**§16.4's read 2 over steps 0–159.** The gate is read and positive on all three
+(credited forks 349 / 329 / 67; tie share 0.052 / 0.046 / 0.179). Pooled
+`fork_adv_taken_mean` with 95 % step-cluster bootstrap intervals: `_tx` −3.89
+[−5.78, −2.43], `_tx_p30` −10.05 [−15.36, −6.06], partner −5.84 [−8.55, −3.07]. Differences from the partner (independent step-cluster
+bootstraps, 20 000 resamples): `_tx` minus partner +1.94, 95 % [−1.38, +5.08];
+`_tx_p30` minus partner −4.22, 95 % [−10.18, +0.74]. Neither excludes zero.
+The on-policy control `ctrl4b_s0` ended at solve 0.734 and ratio 0.80 (§15.4).
+Verified by the results-verifier with corrections.
+
+**For the next build.** A paired interval on the held-out read needs
+per-episode mine counts, and no file keeps them; the trial should write them
+beside `eval` (a trace field, no knob).

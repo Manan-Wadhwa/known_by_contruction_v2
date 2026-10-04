@@ -609,6 +609,25 @@ longer and more often mine-free (`detour_paid_solved` 0.429); its partner ran
 at cap 0.3, so price and cap are not separated (§15.5). Both dose seeds lost solve by 160
 without an AVOIDS read, so §11's response curve is not triggered (§15.7).
 
+## 10. 2026-10-04 — the eighteenth pass (tie forks, cross-fitted selection) on 4B
+
+As §9, with `MZ01_FORK_PICK=tie` and `MZ01_FORK_SELECT=crossfit`; build
+`record/BUILD-fork-share-2026-10-04.md`. Pre-registration and verdicts:
+`PLAN-fork-counterfactual.md` §16–§16.6. Reads are solve / mine ratio.
+
+| label | price | @40 | @80 | @120 | @160 (verdict) | file |
+| --- | --- | --- | --- | --- | --- | --- |
+| `forkcf4b_A_s0_tx` | −10 | 0.922 / 0.868 | 0.953 / 0.889 | 0.922 / 0.861 | 0.938 / 0.818 (not AVOIDS; label DEAD) | `results/forkcf4b_A_s0_tx/summary.json` |
+| `forkcf4b_A_s0_tx_p30` | −30 | 0.914 / 0.854 | 0.945 / 0.929 | 0.875 / 0.882 | 0.867 / 0.750 (not AVOIDS: exactly on the strict bar; label DEAD) | `results/forkcf4b_A_s0_tx_p30/summary.json` |
+| `forkcf4b_D_s0_tx` | none (cell D, partner) | 0.922 / 0.904 | 0.953 / 0.921 | 0.805 / 0.996 | 0.953 / 0.946 (partner; label DEAD) | `results/forkcf4b_D_s0_tx/summary.json` |
+
+The selection works as built (credited detour-better 0.79–0.82 against a 0.15
+bar, §16.3) and the replay gate passes (§16.4–§16.6), but no arm crosses the
+bar. At 160 the undosed arm's gap to its partner is −0.13, approx. 95 %
+[−0.28, +0.03]; the dosed arm's −0.20 [−0.35, −0.04] comes with a capped-share
+rise. One seed. `forkcf4b_D_s0_tx`'s first launch was lost with box 5's lease
+at step 26 (§16.2).
+
 ## What the log says
 
 Four findings, in the order the log produces them. Each is a statement about
