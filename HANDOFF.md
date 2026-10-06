@@ -16,9 +16,10 @@ and recorded: §20 closed (§20.3, §20.4); controls seeds 0-2 cell A, 0-1 cell 
 checkout), inhibitor, reads monitor. Creds in the job scratchpad only. The
 classifier once blocked a launch on a freed box; the user said "launch it".
 
-**Next:** each freed box takes §21's next item (`forkcf4b_D_s3_tx`,
-then `ctrl4b_{A,D}_s3_m3`, seeds 4-7). Open for the user: credit §20.2's read (§21.4)? §21.5 done. via `launch_fork.sh`. `s21.py` (across-seed
-analysis, verified on §18.1, fixes in `a43550e`) reads `both` (§21.1).
+**Next:** each freed box takes §21's next item via `launch_fork.sh`
+(`forkcf4b_D_s3_tx`, then `ctrl4b_{A,D}_s3_m3`, then seeds 4-7); the §19
+pair's verdict when box1 ends. `s21.py` (verified on §18.1) reads `both`
+(§21.1). Open for the user: credit §20.2's read at 120 (§21.4)?
 
 **Gotcha (new):** run helpers from a worktree and pulls land in that
 worktree's `results/`; symlink each new label to the main checkout's
