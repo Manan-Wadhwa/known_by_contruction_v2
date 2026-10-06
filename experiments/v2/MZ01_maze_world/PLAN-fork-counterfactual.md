@@ -1808,3 +1808,21 @@ the same horizon before anything else") and §21 Precedence item 1 put
 `forkcf4b_{A,D}_s1_tx_h320` on the next two free boxes ahead of
 `ctrl4b_{A,D}_s3_m3`; otherwise those controls go next. Verified by the
 results-verifier with corrections.
+
+### 21.7 Two notes for the record (2026-10-07 02:30 IST)
+
+**§19.4's read stays uncredited, by the user's choice (2026-10-07 ~02:25 IST).**
+Asked whether to credit the §19 arm's read at 320 (§19.4), the user chose to
+keep credit withheld and run §21's queue as written. §21 Precedence item 1
+does not fire; the seed-1 320-step pair (`forkcf4b_{A,D}_s1_tx_h320`, labels
+in `launch_fork.sh`) is not queued. The user also gave standing approval for
+the session to launch each next queue item as a box frees.
+
+**The lead saw the across-seed contrasts at seeds 0 to 2 before the interim.**
+At ~02:30 IST, while scoring the seed-2 runs, the lead ran `scripts/box/s21.py
+--seeds 0,1,2` and saw P_fork, P_on, F and I over those three seeds. §21's
+interim is at seeds 0 to 3 and credits nothing; the extension turns on F's and
+I's half-widths only. Nothing in §21's queue or reading rule changes, and those
+numbers are not reported anywhere before the interim at seeds 0 to 3, which is
+run once all four seed-3 cells have a read at 160 and goes through the
+results-verifier.
