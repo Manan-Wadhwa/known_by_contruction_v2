@@ -7,17 +7,17 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**State 2026-10-06 14:30Z (session d6f94cbe, branch `s21-tooling`).** Five
-leases, all running since 14:24:42Z (PLAN §21.1): box1/box2 the §19 pair
-`forkcf4b_{A,D}_s0_tx_h320` (320 steps, ~5.5 h+), box3 §21's
-`forkcf4b_A_s2_tx`, box4 `ctrl4b_A_s2_m3`, box5 `forkcf4b_D_s2_tx` (seed-0
-and seed-1 controls ended, §21.2-§21.5). Watchers: one
-bg task per box, `mz01-watch` (run from the main checkout), inhibitor, reads
-monitor. Creds in the job scratchpad only. Pushed 2026-10-06 with the user's
-go: `reorg/b-split-trainer` at `064ca2d`, `s21-tooling` (not merged).
+**State 2026-10-07 00:40 IST (session d6f94cbe, branch `s21-tooling`).** Five
+leases since 14:24Z on 10-06: box1 §19 arm `forkcf4b_A_s0_tx_h320` (ends
+~01:35 IST; its partner ended 00:27), box2 `ctrl4b_D_s2_m3`, box3
+`forkcf4b_A_s2_tx`, box4 `forkcf4b_A_s3_tx`, box5 `forkcf4b_D_s2_tx`. Ended
+and recorded: §20 closed (§20.3, §20.4); controls seeds 0-2 cell A, 0-1 cell D
+(§21.2-§21.6). Watchers: one bg task per box, `mz01-watch` (from the main
+checkout), inhibitor, reads monitor. Creds in the job scratchpad only. The
+classifier once blocked a launch on a freed box; the user said "launch it".
 
-**Next:** each freed box takes §21's next item (`ctrl4b_D_s2_m3`, then
-seeds 3-7). Open for the user: credit §20.2's read (§21.4)? §21.5 done. via `launch_fork.sh`. `s21.py` (across-seed
+**Next:** each freed box takes §21's next item (`forkcf4b_D_s3_tx`,
+then `ctrl4b_{A,D}_s3_m3`, seeds 4-7). Open for the user: credit §20.2's read (§21.4)? §21.5 done. via `launch_fork.sh`. `s21.py` (across-seed
 analysis, verified on §18.1, fixes in `a43550e`) reads `both` (§21.1).
 
 **Gotcha (new):** run helpers from a worktree and pulls land in that

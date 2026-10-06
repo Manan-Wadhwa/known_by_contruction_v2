@@ -1745,3 +1745,22 @@ detours and capped episodes (capped 0.180 against 0.109, `detour_paid_solved`
 the control and credits nothing; reading it as a result waits for the user
 (D-21, D-23, §21). `ctrl4b_A_s2_m3` launched at 17:54:18Z on box4. Verified
 by the results-verifier with corrections.
+
+### 21.6 `ctrl4b_A_s2_m3` ended (2026-10-06 19:04:56Z / 00:34 IST on 10-07): the seed-2 cell-A control; nothing credited
+
+160 steps, status DONE, 25.3 s/step, `13ed7e0` (no trainer-code diff from
+`6de23ad`), `onpolicy_g6`, cell A, seed 2, `MZ01_MOVE_MASS_COEF=0.3`. Every
+read is valid (bare 1.000, unparsed 0.000; raw move mass ≥ 0.9996 at every
+read step, 1.000 at 159). The trial labels it DEAD (zero-advantage 0.914 over
+the last fifth). Reads, solve / mine ratio against the seed-2 reference
+(0.930 / 2.164): 0.938 / 0.881 at 40, 0.938 / 0.866 at 80, 0.914 / 0.769 at
+120, 0.859 / 0.758 at 160. No read is AVOIDS. At 160: 210 mine steps against a
+bar of 207.75, solve −0.070. Capped share 0.141, 18 of 128 (reference 0.070,
+9), `mean_steps` 13.95 (13.00), solved routes 12.30 (12.17),
+`detour_paid_solved` 0.018, 2 of 110 (0.008, 1 of 119). On solved episodes
+mine/ep is 1.773 (reference 2.059); the 18 unsolved episodes carry 15 mine
+steps (reference 32 on 9). It is a control (D-23) and fills §21's onA cell at
+seed 2; nothing is credited from it. Its cell-D partner `ctrl4b_D_s2_m3`
+launched at 19:00:00Z on box2 (the §19 partner's lease, freed at 18:57Z);
+`forkcf4b_A_s3_tx` launched at 19:06:17Z on box4, the lease this run freed.
+Verified by the results-verifier with corrections.
