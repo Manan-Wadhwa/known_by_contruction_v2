@@ -4,7 +4,8 @@ Usage: python3 s21.py [--results DIR] [--seeds 0,1,...] [--set k:CELL=LABEL ...]
                       [--mazes-only] [--raw] [--B 20000] [--rng 0]
 CELL is A or D (fork_cf_g6.json) or onA or onD (onpolicy_g6.json). Default seeds 0-7. Default labels:
 A/D forkcf4b_{A,D}_s{k}_tx (seed 0: forkcf4b_{A,D}_s0_tx_h320), onA/onD ctrl4b_{A,D}_s{k}_m3. Default
-replicate pairs: forkcf4b_A_s0_tx_h320,forkcf4b_A_s0_tx and forkcf4b_D_s0_tx_h320,forkcf4b_D_s0_tx.
+replicate pairs: forkcf4b_A_s0_tx_h320,forkcf4b_A_s0_tx and forkcf4b_D_s0_tx_h320,forkcf4b_D_s0_tx, the _h320
+runs being the relaunches; the lost ones in _lost_2026-10-04_0940Z/ enter through --rep (and --set).
 r = mean mine steps per episode at the read / the run's reference.json eval.mine_step_rate. Prints each
 cell's r, solve and capped share per seed, then P_fork = r_A - r_D, P_on = r_onA - r_onD,
 F = r_A - r_onA, I = P_fork - P_on, each a mean over seeds with a 95 % interval from B crossed bootstrap
@@ -14,9 +15,16 @@ on mazes both runs solved and on the rest, the IQM of each cell's r, and the per
 
 Choices where the plan leaves room:
 - The read at 160 is eval_at["160"] when present, else `eval` when trial_steps == 160 (the final `eval`
-  carries at_step None). Any other run is refused, as is a read without `episodes` (before 8d147cc).
+  carries at_step None). A run without one (in progress) is absent, with a note in the table. A read
+  without `episodes` (before 8d147cc) makes the script exit.
+- Validity is printed, never acted on: per run its status, the §9 numbers at the read (bare share
+  first_token_class.bare, unparsed_rate, raw move mass history.move_mass at the last step below 160, the
+  step the read follows, as reads.py), config.move_mass_coef and config.git_sha. "INVALID" marks bare
+  < 0.90, unparsed > 0.05 (UNPARSED_BAR) or mass < 0.90; §21 relaunches such a run once, by hand. A
+  move_mass_coef other than 0.3 is warned.
 - Each run's arm, cell and seed must match the slot it fills; every run must hold the same maze-seed set;
-  every cell of one seed must share one reference mine_step_rate. The script exits otherwise.
+  every cell of one seed must share one reference mine_step_rate. The script exits otherwise. The
+  reference is held fixed in resampling, not resampled with the mazes.
 - A contrast uses the seeds where all its cells exist and names the seeds it drops; with none it is
   skipped. Contrasts over the same seed set share each resample's seed draw.
 - The split, per seed, on the mazes both runs of the pair solved. "both" is the mean gap per episode on
@@ -24,7 +32,8 @@ Choices where the plan leaves room:
   their contributions to the contrast (sum over those mazes / all mazes), so they add up to it (§18.1's
   -32 and -30 of -62 mine steps). For I each is P_fork's minus P_on's, each on its own mask. A resample
   in which a seed's pair solved none of the drawn mazes in common has no "both"; it is left out and the
-  count is printed.
+  count is printed. §21's both-solved condition reads "both" (PLAN §21.1, 2026-10-06); "both part" is
+  reported only.
 - Solve and capped contrasts are shares, never divided by the reference.
 - IQM: the mean after cutting int(n/4) values from each end (scipy's trim_mean at 0.25); a point value.
 - Interval: the sorted resamples at int(0.025 B) and int(0.975 B), as paired.py. "hw" is (hi - lo) / 2,
@@ -59,17 +68,29 @@ def run(res, label):
     return None
 
 
-def read160(d, label):
-    """Return the read at 160 of result dict d (eval_at["160"], else a 160-step run's eval); exit if none."""
+def read160(d):
+    """Return the read at 160 of result dict d (eval_at["160"], else a 160-step run's eval), or None if none."""
     if "160" in (d.get("eval_at") or {}):
         return d["eval_at"]["160"]
     if d.get("trial_steps") == 160 and d.get("eval"):
         return d["eval"]
-    sys.exit(f"{label}: no read at 160 (trial_steps {d.get('trial_steps')}, status {d.get('status')})")
+    return None
+
+
+def valid(d, b):
+    """Return run d's status, §9 numbers at read b, move_mass_coef and git sha as text, flagging failures."""
+    h, c = d.get("history") or {}, d.get("config") or {}
+    ms = [m for s, m in zip(h.get("step", []), h.get("move_mass", [])) if s < 160]
+    bare, unp, mass = b["first_token_class"]["bare"], b["unparsed_rate"], ms[-1] if ms else None
+    bad = bare < 0.90 or unp > 0.05 or (mass is not None and mass < 0.90)
+    return (f"{d.get('status')}; bare {bare:.3f}, unparsed {unp:.3f}, mass {'?' if mass is None else f'{mass:.3f}'}; "
+            f"coef {c.get('move_mass_coef')}, sha {c.get('git_sha')}" + (" INVALID" if bad else "")
+            + ("" if c.get("move_mass_coef") == 0.3 else " WARNING move_mass_coef is not 0.3"))
 
 
 def cell(res, label, k, c):
-    """Load seed k's cell c from label. -> (ref, {maze seed: (mine, solved, capped)}), or None if absent."""
+    """Load seed k's cell c from label. -> (ref, {maze seed: (mine, solved, capped)}, valid() text), None if
+    absent, or a note if the run has no read at 160 yet."""
     x = run(res, label)
     if x is None:
         return None
@@ -77,11 +98,14 @@ def cell(res, label, k, c):
     want = ("onpolicy_g6" if c.startswith("on") else "fork_cf_g6", c[-1], k)
     if (d.get("arm"), d.get("cell"), d.get("seed")) != want:
         sys.exit(f"{label}: arm, cell, seed {(d.get('arm'), d.get('cell'), d.get('seed'))} is not {want}")
-    e = read160(d, label).get("episodes")
+    b = read160(d)
+    if b is None:
+        return f"absent, no read at 160 yet (trial_steps {d.get('trial_steps')}, status {d.get('status')})"
+    e = b.get("episodes")
     if not e:
         sys.exit(f"{label}: the read at 160 has no `episodes` records (runs before 8d147cc cannot enter §21)")
     assert len(set(e["seed"])) == len(e["seed"]), f"{label}: duplicate maze seeds"
-    return ref, {s: (m, v, cp) for s, m, v, cp in zip(e["seed"], e["mine_steps"], e["solved"], e["capped"])}
+    return ref, {s: (m, v, cp) for s, m, v, cp in zip(e["seed"], e["mine_steps"], e["solved"], e["capped"])}, valid(d, b)
 
 
 def ci(v):
@@ -114,10 +138,11 @@ def main():
         kc, l = s.split("=", 1); k, c = kc.split(":")
         assert c in CELLS and int(k) in seeds, f"--set {s}: cell or seed not in the analysis"
         lab[int(k), c] = l
-    V, ref, mazes = {}, {}, None
+    V, ref, mazes, info = {}, {}, None, {}
     for (k, c), l in lab.items():
         x = cell(a.results, l, k, c)
-        if x is None:
+        info[k, c] = x[2] if isinstance(x, tuple) else x or "absent"
+        if not isinstance(x, tuple):
             continue
         mazes = mazes or sorted(x[1])
         assert sorted(x[1]) == mazes, f"{l}: maze seeds differ from the other runs'"
@@ -130,13 +155,13 @@ def main():
     den = {k: 1.0 if a.raw else ref[k] for k in ref}
     print(f"§21 read at 160; {n} mazes; mine in {unit}; B={a.B}, rng {a.rng}, "
           f"{'mazes only, seeds fixed' if a.mazes_only else 'crossed seeds x mazes'}")
-    print("seed cell label: r, solve, capped, reference")
+    print("seed cell label: r, solve, capped, reference; status; bare, unparsed, mass; move_mass_coef, git sha")
     for (k, c), l in sorted(lab.items()):
         if (k, c) in V:
             m, s, cp = (sum(v) / n for v in V[k, c])
-            print(f"  {k} {c:3} {l}: {m / den[k]:.3f}, {s:.3f}, {cp:.3f}, {ref[k]}")
+            print(f"  {k} {c:3} {l}: {m / den[k]:.3f}, {s:.3f}, {cp:.3f}, {ref[k]}; {info[k, c]}")
         else:
-            print(f"  {k} {c:3} {l}: absent")
+            print(f"  {k} {c:3} {l}: {info[k, c]}")
     # Per seed and pair: mine gap on both-solved mazes, and the both-solved indicator.
     PB = {(k, x, y): ([(mx - my) * sx * sy for mx, my, sx, sy in zip(V[k, x][0], V[k, y][0], V[k, x][1], V[k, y][1])],
                       [sx * sy for sx, sy in zip(V[k, x][1], V[k, y][1])])
@@ -204,14 +229,14 @@ def main():
         ls, xs = p.split(","), []
         for l in ls:
             x = run(a.results, l)
-            if x is None:
+            if x is None or read160(x[0]) is None:
                 break
-            b, who = read160(x[0], l), tuple(x[0].get(f) for f in ("arm", "cell", "seed"))
+            b, who = read160(x[0]), tuple(x[0].get(f) for f in ("arm", "cell", "seed"))
             assert len(xs) == 0 or who == first, f"{p}: arm, cell, seed differ ({first} against {who})"
             first = who
             xs.append((b["mine_step_rate"] / (1.0 if a.raw else x[1]), b["solve_rate"], b["competence"]["capped_rate"]))
         if len(xs) < 2:
-            print(f"  {p}: skipped, {l} absent")
+            print(f"  {p}: skipped, {l} absent or without a read at 160")
             continue
         d = [u - w for u, w in zip(*xs)]
         sq.append([e * e / 2 for e in d])
