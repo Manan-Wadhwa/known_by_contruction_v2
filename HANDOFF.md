@@ -17,10 +17,8 @@ monitor. Creds in the job scratchpad only. Pushed 2026-10-06 with the user's
 go: `reorg/b-split-trainer` at `064ca2d`, `s21-tooling` (not merged).
 
 **Next:** each freed box takes §21's next item (`ctrl4b_{A,D}_s1_m3`, then
-blocks of four per seed 2-7) via `launch_fork.sh`.
-`s21.py` (across-seed analysis, verified on §18.1; the verifier's fixes in
-`a43550e`) prints validity per run; §21.1 fixed that the both-solved
-condition reads its `both`.
+blocks of four per seed 2-7) via `launch_fork.sh`. `s21.py` (across-seed
+analysis, verified on §18.1, fixes in `a43550e`) reads `both` (§21.1).
 
 **Gotcha (new):** run helpers from a worktree and pulls land in that
 worktree's `results/`; symlink each new label to the main checkout's
