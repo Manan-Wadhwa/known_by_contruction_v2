@@ -7,23 +7,21 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**State at the end of 2026-10-04 (10:20Z / 15:50 IST).** No box is leased;
-nothing is running. All leases died (box 5 ~01:12Z, boxes 1-4 ~09:40Z;
-FAILURES B24, B25). Pushed through `eec426f`; five later commits are local (ask before pushing).
+**State 2026-10-06 (session d6f94cbe, worktree branch `s21-tooling`).** Five
+fresh leases (box1-5, creds in the job scratchpad only); bring-up running as
+`mz01-bringup-boxN` units; inhibitor up. Nothing launched yet. Pushed through
+`eec426f`; later commits local (ask before pushing).
 
-**Queue of record for the next leases** (`PLAN-fork-counterfactual.md`):
-1. Relaunch, unchanged and first: the §19 pair `forkcf4b_A_s0_tx_h320` +
-   `forkcf4b_D_s0_tx_h320` (320 steps, together) and §20's
-   `forkcf4b_A_s0_tx_p20`, `forkcf4b_A_s1_tx_p20` (§19.2/§20.1).
-2. Then §21: the 2×2 (fork term on/off × cell A/D) at the world's price, seeds
-   0-7, matched on-policy controls `ctrl4b_{A,D}_s{k}_m3` (mass 0.3) as
-   controls only (D-23); across-seed contrasts with crossed seed × maze
-   bootstrap intervals; an analysis script to be written and verified first
-   (§21 "Measurement").
+**In flight / next, in queue order** (`PLAN-fork-counterfactual.md`):
+1. box1/box2 the §19 pair `forkcf4b_{A,D}_s0_tx_h320` (320 steps), box3/box4
+   §20's `forkcf4b_A_s{0,1}_tx_p20` (§19.2/§20.1 relaunches).
+2. box5 `ctrl4b_A_s0_m3`, then §21's queue: controls `ctrl4b_{A,D}_s{k}_m3`
+   (D-23, controls only), then blocks of four per seed 2-7.
 
-**How to launch, read and record:** `docs/HANDOFF-2026-10-06.md` (bring-up,
-helpers, what §21 still needs built: a control launch path, control-aware
-read scripts, the across-seed analysis script).
+**Built this session (`e30072a`):** `launch_fork.sh` takes the §21 labels
+(controls on `onpolicy_g6`, no fork knobs); `reads.py`, `read2.py`,
+`paired.py` read `onpolicy_g6.json`; `scripts/box/s21.py` is the across-seed
+analysis (reproduces §18.1 at rng 0; results-verifier check pending).
 
 **Last verdicts** (`docs/RESULTS_LOG.md` §9-§10).
 - No AVOIDS in 19 launches; §15 closed.
