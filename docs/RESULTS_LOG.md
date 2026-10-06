@@ -658,6 +658,7 @@ Reads are solve / mine ratio. Controls credit nothing (D-23).
 | label | role | @40 | @80 | @120 | @160 (verdict) | file |
 | --- | --- | --- | --- | --- | --- | --- |
 | `ctrl4b_A_s0_m3` | §21 onA, seed 0, mass 0.3 | 0.844 / 0.914 | 0.891 / 0.893 | 0.828 / 0.804 | 0.938 / 0.854 (control, not AVOIDS; label DEAD) | `results/ctrl4b_A_s0_m3/summary.json` |
+| `ctrl4b_D_s0_m3` | §21 onD, seed 0, mass 0.3 | 0.961 / 0.932 | 0.891 / 1.036 | 0.875 / 0.964 | 0.828 / 1.071 (control; label DEAD; seed-0 on-policy A − D gap −0.477 [−0.961, −0.055], mostly mazes only A solved, §21.3) | `results/ctrl4b_D_s0_m3/summary.json` |
 
 ## What the log says
 

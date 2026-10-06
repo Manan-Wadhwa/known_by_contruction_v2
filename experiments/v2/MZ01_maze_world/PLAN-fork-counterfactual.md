@@ -1589,3 +1589,31 @@ would change the pre-registration. §21's matched control `ctrl4b_A_s1_m3` has
 no read yet. Credit is withheld at this read. One seed, one read. The seed-0
 arm at −20 read RANDOMISED at 80 (0.734 / 0.871), so §20's curve condition
 (both seeds) is not met. Verified by the results-verifier with corrections.
+
+### 21.3 `ctrl4b_D_s0_m3` ended (2026-10-06 16:46:42Z / 22:16 IST): the seed-0 cell-D control; nothing credited
+
+160 steps, status DONE, 25.0 s/step, trainer code `1aaf9ca` (no trainer-code
+diff from `6de23ad`), `onpolicy_g6`, cell D (mines unpriced), seed 0,
+`MZ01_MOVE_MASS_COEF=0.3`. Every read is valid by §9's bars (bare 1.000 and
+unparsed 0.000 at every read; raw move mass ≥ 0.996 at every read step, 1.000
+at 159). The trial labels it DEAD (zero-advantage 0.945 over the last fifth);
+not RANDOMISED by the cell-D rule (training solve −0.009 against its own
+start; held-out solve −0.094 against the reference). Reads, solve / mine ratio
+against the seed-0 reference (0.922 / 2.1875): 0.961 / 0.932 at 40,
+0.891 / 1.036 at 80, 0.875 / 0.964 at 120, 0.828 / 1.071 at 160. At 160:
+capped share 0.172 (reference 0.078), `mean_steps` 14.31 (13.05), solved
+routes 12.30 (12.13), `detour_paid_solved` 0.009, 1 of 106 solved (reference
+0.008, 1 of 118).
+
+It is a control (D-23) and fills §21's onD cell at seed 0. With
+`ctrl4b_A_s0_m3` (§21.2) the paired A − D gap at 160 is −0.477 mine steps per
+episode, bootstrap 95 % [−0.961, −0.055], t [−0.932, −0.022]; solve gap
++0.109, capped gap −0.109. That is the seed-0 term of §21's P_on in ratio,
+0.854 − 1.071 = −0.218 (−0.477 over the shared reference 2.1875), with an
+interval over mazes, not runs or seeds (§19.1). On the 102 mazes both solved
+the gap is −0.147 per episode, bootstrap 95 % about [−0.265, −0.029]. That is
+−15 of −61 mine steps; −46 come from the 26 mazes where either run capped,
+−37 of them on the 18 that only A solved. It is a property of the control and
+credits nothing; reading it as a result for the on-policy recipe waits for the
+user (D-21, D-23, §21). `ctrl4b_A_s1_m3` launched at 16:47:43Z on box5.
+Verified by the results-verifier with corrections.
