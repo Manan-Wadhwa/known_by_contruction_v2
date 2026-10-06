@@ -1563,3 +1563,29 @@ cause is assigned. This run is a control (D-23) and nothing is credited from
 it. It fills §21's onA cell at seed 0. Its cell-D partner `ctrl4b_D_s0_m3`
 launched at 15:37:00Z on the lease this run freed (box5 in §21.1's table).
 Verified by the results-verifier with corrections.
+
+### 20.2 `forkcf4b_A_s1_tx_p20` reads AVOIDS at 120 (2026-10-06 16:19Z / 21:49 IST); credit withheld at this read
+
+A mid-run read, at step ~121 of 160 (launched 14:24:42Z at `e4b74f5`, §21.1).
+At 120: solve 0.906 (reference 0.922, −0.016), mine ratio 0.664 against the
+seed-1 reference 2.164, valid (bare 1.000, unparsed 0.000, mass 1.000). The
+partner `forkcf4b_D_s1_tx` read 0.852 / 1.217 at 120, not AVOIDS. Paired A − D
+gap at 120: −1.195 mine steps per episode, bootstrap 95 % [−1.750, −0.734],
+t [−1.717, −0.674]; solve gap +0.055, capped gap −0.055. §16.4's read 2 over
+steps 0–119: 309 credited forks, tie share 0.071 (gate passes), pooled
+A(taken) −6.51 [−10.41, −3.51]. Against the reference: capped share 0.094
+(0.078), `mean_steps` 13.88 (13.02), solved routes 12.84 (12.08),
+`detour_paid_solved` 0.052 (0.000). At 120 the control `ctrl4b_s1` read
+0.859 / 0.845 (capped 0.141) and the undosed arm `forkcf4b_A_s1_tx`
+0.805 / 0.823.
+
+By §20's rule the read meets the AVOIDS, partner and paired conditions. The
+paired gap is mostly the partner's own rise to 1.217 (−106 of −153 mine steps
+on the 25 mazes either run failed; −0.456 [−0.612, −0.301] on the 103 both
+solved, routes 12.88 against 12.24). §17's clause names no size. Here the
+capped share rose +0.016 (2 mazes) with solve −0.016, where precedent applied
+it only at +0.094 or more (§18.1, §16.7); fixing a size now, after the read,
+would change the pre-registration. §21's matched control `ctrl4b_A_s1_m3` has
+no read yet. Credit is withheld at this read. One seed, one read. The seed-0
+arm at −20 read RANDOMISED at 80 (0.734 / 0.871), so §20's curve condition
+(both seeds) is not met. Verified by the results-verifier with corrections.
