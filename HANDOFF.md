@@ -7,21 +7,22 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**State 2026-10-06 (session d6f94cbe, worktree branch `s21-tooling`).** Five
-fresh leases (box1-5, creds in the job scratchpad only); bring-up running as
-`mz01-bringup-boxN` units; inhibitor up. Nothing launched yet. Pushed through
-`eec426f`; later commits local (ask before pushing).
+**State 2026-10-06 14:30Z (session d6f94cbe, branch `s21-tooling`).** Five
+leases, all running since 14:24:42Z (PLAN §21.1): box1/box2 the §19 pair
+`forkcf4b_{A,D}_s0_tx_h320` (320 steps, ~5.5 h+), box3/box4 §20's
+`forkcf4b_A_s{0,1}_tx_p20`, box5 `ctrl4b_A_s0_m3` (~1.4-2 h). Watchers: one
+bg task per box, `mz01-watch` (run from the main checkout), inhibitor, reads
+monitor. Creds in the job scratchpad only. Pushed through `eec426f`; later
+commits local (ask before pushing).
 
-**In flight / next, in queue order** (`PLAN-fork-counterfactual.md`):
-1. box1/box2 the §19 pair `forkcf4b_{A,D}_s0_tx_h320` (320 steps), box3/box4
-   §20's `forkcf4b_A_s{0,1}_tx_p20` (§19.2/§20.1 relaunches).
-2. box5 `ctrl4b_A_s0_m3`, then §21's queue: controls `ctrl4b_{A,D}_s{k}_m3`
-   (D-23, controls only), then blocks of four per seed 2-7.
+**Next:** each freed box takes §21's next item (`ctrl4b_D_s0_m3`, then
+`ctrl4b_{A,D}_s1_m3`, then blocks of four per seed 2-7) via `launch_fork.sh`.
+`s21.py` (across-seed analysis, verified on §18.1) gets the verifier's
+fixes; §21.1 fixed that the both-solved condition reads its `both`.
 
-**Built this session (`e30072a`):** `launch_fork.sh` takes the §21 labels
-(controls on `onpolicy_g6`, no fork knobs); `reads.py`, `read2.py`,
-`paired.py` read `onpolicy_g6.json`; `scripts/box/s21.py` is the across-seed
-analysis (reproduces §18.1 at rng 0; results-verifier check pending).
+**Gotcha (new):** run helpers from a worktree and pulls land in that
+worktree's `results/`; symlink each new label to the main checkout's
+`results/` before its watcher starts.
 
 **Last verdicts** (`docs/RESULTS_LOG.md` §9-§10).
 - No AVOIDS in 19 launches; §15 closed.
