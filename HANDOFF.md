@@ -17,7 +17,7 @@ monitor. Creds in the job scratchpad only. Pushed 2026-10-06 with the user's
 go: `reorg/b-split-trainer` at `064ca2d`, `s21-tooling` (not merged).
 
 **Next:** each freed box takes §21's next item (`ctrl4b_D_s2_m3`, then
-seeds 3-7). Open for the user: credit §20.2's read (§21.4)? via `launch_fork.sh`. `s21.py` (across-seed
+seeds 3-7). Open for the user: credit §20.2's read (§21.4)? §21.5 done. via `launch_fork.sh`. `s21.py` (across-seed
 analysis, verified on §18.1, fixes in `a43550e`) reads `both` (§21.1).
 
 **Gotcha (new):** run helpers from a worktree and pulls land in that

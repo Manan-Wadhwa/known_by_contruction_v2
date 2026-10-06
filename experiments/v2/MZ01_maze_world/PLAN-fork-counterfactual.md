@@ -1711,3 +1711,37 @@ Paired arm − control at 120, which no rule names: +1.148 mine steps per
 episode [+0.977, +1.328], solve +0.266. The read stays withheld for the user.
 Either way no queue changes (§20.4, §21). Verified by the results-verifier
 with corrections.
+
+### 21.5 `ctrl4b_D_s1_m3` ended (2026-10-06 17:52:41Z / 23:22 IST): the seed-1 cell-D control; nothing credited
+
+160 steps, status DONE, 17.4 s/step, `a3c9c25` (no trainer-code diff from
+`6de23ad`), `onpolicy_g6`, cell D (mines unpriced), seed 1,
+`MZ01_MOVE_MASS_COEF=0.3`. Every read is valid by §9's bars (bare 1.000 and
+unparsed 0.000 at 40, 80 and 120; bare 0.990 and unparsed 0.010 at 160, from
+0.9896 and 0.0104; raw move mass ≥ 0.9997 at every read step). The trial
+labels it DEAD (zero-advantage 0.906 over the last fifth). It is not
+RANDOMISED by the cell-D rule: training solve rose by 0.014 against its own
+start (0.941 to 0.956, first and last fifths), and held-out solve is 0.031
+below the reference. Reads, solve / mine ratio against the seed-1 reference
+(0.922 / 2.164): 0.938 / 0.939 at 40, 0.922 / 0.903 at 80, 0.914 / 1.011 at
+120, 0.891 / 0.928 at 160. At 160: capped share 0.109 (reference 0.078),
+`mean_steps` 13.57 (13.02), solved routes 12.29 (12.08),
+`detour_paid_solved` 0.000 (0.000).
+
+It is a control (D-23) and fills §21's onD cell at seed 1. With
+`ctrl4b_A_s1_m3` (§21.4) the seed-1 on-policy pair's A − D gap at 160 is
+−1.281 mine steps per episode, bootstrap 95 % [−1.531, −1.062], t [−1.517,
+−1.045]; solve gap −0.070, capped gap +0.070. On the 94 mazes both runs
+solved, the gap is −1.223 per episode, bootstrap 95 % [−1.426, −1.032], and
+A's routes there run 14.36 steps against D's 12.29. That is −115 of −164 mine
+steps. The other −49 come from 34 mazes: −33 on the 20 only D solved, −5 on
+the 11 only A solved, −11 on the 3 neither solved. At 120 the gap is −1.898
+[−2.242, −1.602] with solve gap −0.273; the both-solved part is −118 of −243
+mine steps on 79 mazes, and −80 fall on the 38 only D solved. In ratio, the
+seed-1 term of §21's P_on is 0.336 − 0.928 = −0.592 (bootstrap [−0.707,
+−0.491], over mazes, not runs or seeds). The cell-A control's fall comes with
+detours and capped episodes (capped 0.180 against 0.109, `detour_paid_solved`
+0.324 against 0.000, solved routes 14.46 against 12.29). It is a property of
+the control and credits nothing; reading it as a result waits for the user
+(D-21, D-23, §21). `ctrl4b_A_s2_m3` launched at 17:54:18Z on box4. Verified
+by the results-verifier with corrections.
