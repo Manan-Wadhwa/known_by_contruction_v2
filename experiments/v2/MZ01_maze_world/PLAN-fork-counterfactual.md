@@ -1617,3 +1617,31 @@ the gap is −0.147 per episode, bootstrap 95 % about [−0.265, −0.029]. That
 credits nothing; reading it as a result for the on-policy recipe waits for the
 user (D-21, D-23, §21). `ctrl4b_A_s1_m3` launched at 16:47:43Z on box5.
 Verified by the results-verifier with corrections.
+
+### 20.3 `forkcf4b_A_s1_tx_p20` ended (2026-10-06 17:03Z / 22:33 IST): RANDOMISED at 160; no read credited
+
+160 steps, status DONE, 58.2 s/step, `e4b74f5`, seed 1, mine priced at −20 in
+training. Every read is valid (bare 1.000, unparsed 0.000; raw move mass
+≥ 0.9998 at every read step). The trial labels it DEAD (zero-advantage 0.805
+over the last fifth). Reads, solve / mine ratio against the seed-1 reference
+(0.922 / 2.164): 0.883 / 0.924 at 40, 0.930 / 0.863 at 80, 0.906 / 0.664 at
+120 (AVOIDS, credit withheld, §20.2), 0.633 / 0.162 at 160. At 160: capped
+share 0.367 (reference 0.078), `mean_steps` 18.91 (13.02), solved routes 15.95
+(12.08), `detour_paid_solved` 0.642 (0.000). The partner `forkcf4b_D_s1_tx`
+read 0.906 / 0.989 at 160, not AVOIDS. Paired A − D gap at 160: −1.789 mine
+steps per episode, bootstrap 95 % [−2.148, −1.445]; solve gap −0.273, capped
+gap +0.273. §16.4's read 2 over steps 0–159: 363 credited forks, tie share
+0.061, pooled A(taken) −6.21 [−9.52, −3.61].
+
+Not credited: the final read is RANDOMISED (solve 0.289 below). The fall comes
+with a solve loss, a rise in capped share and detours in solved episodes. That
+is §17's over-avoidance shape, in the detour form of `forkcf4b_A_s1_tx_p30`
+and `forkcf4b_A_s0_t` (§16.7). The −50 and −100 arms fell with capped
+episodes and no detours (§17.1). No read of the run is credited. The read at
+120 stays withheld as §20.2 left it, because its matched control
+`ctrl4b_A_s1_m3` (§21) is at step 38 with no read. The old control
+`ctrl4b_s1` (mass 0.1, `18c0860`) ended 0.859 / 0.765. §20's curve condition
+(both seeds at −20) is not met. Seed 1 ends RANDOMISED. Seed 0
+(`forkcf4b_A_s0_tx_p20`) read RANDOMISED at 80 and 120 (0.734 / 0.871,
+0.742 / 0.961), and its read at 160 is pending. `ctrl4b_D_s1_m3` launched at
+17:04:06Z on box4. Verified by the results-verifier with corrections.

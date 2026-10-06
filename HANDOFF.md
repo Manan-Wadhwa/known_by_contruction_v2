@@ -10,14 +10,14 @@ gotchas. Box URLs and tokens never go in this file.
 **State 2026-10-06 14:30Z (session d6f94cbe, branch `s21-tooling`).** Five
 leases, all running since 14:24:42Z (PLAN §21.1): box1/box2 the §19 pair
 `forkcf4b_{A,D}_s0_tx_h320` (320 steps, ~5.5 h+), box3/box4 §20's
-`forkcf4b_A_s{0,1}_tx_p20`, box5 `ctrl4b_A_s1_m3` since 16:47Z (seed-0
+`forkcf4b_A_s0_tx_p20`, box4 `ctrl4b_D_s1_m3`, box5 `ctrl4b_A_s1_m3` (seed-0
 controls ended: §21.2 0.938 / 0.854, §21.3 0.828 / 1.071). Watchers: one
 bg task per box, `mz01-watch` (run from the main checkout), inhibitor, reads
 monitor. Creds in the job scratchpad only. Pushed 2026-10-06 with the user's
 go: `reorg/b-split-trainer` at `064ca2d`, `s21-tooling` (not merged).
 
-**Next:** each freed box takes §21's next item (`ctrl4b_D_s1_m3`, then
-blocks of four per seed 2-7) via `launch_fork.sh`. `s21.py` (across-seed
+**Next:** each freed box takes §21's next item (blocks of four per seed
+2-7, starting `forkcf4b_A_s2_tx`) via `launch_fork.sh`. `s21.py` (across-seed
 analysis, verified on §18.1, fixes in `a43550e`) reads `both` (§21.1).
 
 **Gotcha (new):** run helpers from a worktree and pulls land in that
@@ -31,8 +31,8 @@ worktree's `results/`; symlink each new label to the main checkout's
   (0.818 vs 0.946; 0.765 vs 0.989, paired gap −0.484 [−0.773, −0.211]) and
   level with the on-policy controls (0.80; 0.765). Without the selection
   (`_t`) solve collapsed. Prices ≥ −30 lose solve (§16.7, §17.1).
-- 10-06: `forkcf4b_A_s1_tx_p20` AVOIDS at 120 (0.906 / 0.664), credit
-  withheld (§20.2: partner's rise, §17's clause unsized, no matched control).
+- 10-06: `forkcf4b_A_s1_tx_p20` AVOIDS at 120 (withheld, §20.2), then
+  RANDOMISED at 160 (0.633 / 0.162, detours; §20.3). Curve not met.
 
 **Open for the user.** Whether the AVOIDS solve band or the 160-step horizon
 should change (DECISIONS "still open", FAILURES A7). The written comparison is
