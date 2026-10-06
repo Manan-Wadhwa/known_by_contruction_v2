@@ -669,6 +669,23 @@ Reads are solve / mine ratio. Controls credit nothing (D-23).
 | `forkcf4b_A_s2_tx` | §21 A, seed 2 | 0.930 / 0.884 | 0.922 / 0.899 | 0.969 / 0.870 | 0.961 / 0.830 (not AVOIDS; label DEAD; paired gap −0.125 [−0.289, +0.031]; §21.8) | `results/forkcf4b_A_s2_tx/summary.json` |
 | `forkcf4b_D_s2_tx` | §21 D, seed 2 | 0.922 / 0.942 | 0.930 / 0.996 | 0.914 / 0.986 | 0.914 / 0.888 (partner; label DEAD) | `results/forkcf4b_D_s2_tx/summary.json` |
 | `ctrl4b_D_s2_m3` | §21 onD, seed 2 | 0.859 / 0.917 | 0.875 / 1.025 | 0.945 / 0.982 | 0.914 / 0.931 (control; label DEAD; seed-2 on-policy gap −0.375 [−0.523, −0.227]) | `results/ctrl4b_D_s2_m3/summary.json` |
+| `forkcf4b_A_s3_tx` | §21 A, seed 3 | 0.875 / 0.839 | 0.938 / 0.889 | 0.828 / 0.729 (RANDOMISED) | 0.742 / 0.332 (**RANDOMISED**; detours and capped episodes; §21.9) | `results/forkcf4b_A_s3_tx/summary.json` |
+| `forkcf4b_D_s3_tx` | §21 D, seed 3 | 0.922 / 1.018 | 0.891 / 0.964 | 0.906 / 0.957 | 0.938 / 0.868 (partner; label DEAD) | `results/forkcf4b_D_s3_tx/summary.json` |
+| `ctrl4b_A_s3_m3` | §21 onA, seed 3 | 0.969 / 0.921 | 0.883 / 0.925 | 0.906 / 0.893 | 0.938 / 0.896 (control; label DEAD) | `results/ctrl4b_A_s3_m3/summary.json` |
+| `ctrl4b_D_s3_m3` | §21 onD, seed 3 | 0.945 / 0.954 | 0.945 / 0.936 | 0.930 / 0.879 | 0.875 / 1.004 (control; label DEAD) | `results/ctrl4b_D_s3_m3/summary.json` |
+| seed-4 runs (4) | §21, stopped | | | | stopped at steps 24-86 by the user's choice; enter nothing (§21.11) | `results/_stopped_2026-10-07/` |
+
+**Where §11 stands (2026-10-07 04:00 IST).** §20 closed with no credit: both
+−20 arms ended RANDOMISED (§20.3, §20.4). §19's arm met AVOIDS at 320 by the
+mine and solve clauses (0.938 / 0.743, paired −0.430 [−0.664, −0.242]); the
+user kept credit withheld (§19.4, §21.7). §21 stopped at its interim on seeds
+0 to 3 (D-24): P_fork −0.168 [−0.436, +0.091] (not shown; solve contrast's
+lower end −0.176); P_on −0.273 [−0.494, −0.086] (a control property, credits
+nothing); F +0.033 [−0.374, +0.359] and I +0.105 [−0.268, +0.418] contain
+zero with half-widths far above 0.10 (§21.10). Two cells, one fork arm and one
+control, ended in the detour-and-cap over-avoidance shape. No AVOIDS has been
+credited in the programme.
+
 
 ## What the log says
 

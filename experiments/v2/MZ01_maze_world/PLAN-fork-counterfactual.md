@@ -1880,3 +1880,84 @@ peft 0.20.0, transformers 5.14.1 as §21.1 recorded; no re-setup):
 
 Box1 and box2 were idle from ~20:08Z to 20:57Z while launches waited on the
 user's approval (§21.7).
+
+### 21.9 The seed-3 block (ended 2026-10-06 21:56–22:20Z)
+
+All four 160 steps, DONE, valid at every read (bare 1.000, unparsed 0.000;
+raw move mass ≥ 0.9997 at every read step; 128 mazes, order_seed 7003). None
+of `c982d2f`, `d3f422a`, `3995c4d` differs from `6de23ad` outside docs and
+`scripts/box`. Reads, solve / mine ratio against the seed-3 reference
+(0.930 / 2.1875), at 40, 80, 120, 160:
+- `forkcf4b_A_s3_tx` (`c982d2f`, ended 21:56:59Z, 62.8 s/step): 0.875 / 0.839,
+  0.938 / 0.889, 0.828 / 0.729, 0.742 / 0.332; the trial labels it RANDOMISED
+  (at 120 and 160). At 160: capped share 0.258 (reference 0.070),
+  `mean_steps` 16.75 (12.93), solved routes 14.23 (12.09),
+  `detour_paid_solved` 0.347 (0.000). Read 2: 404 forks, tie share 0.059,
+  pooled A(taken) −3.43 [−5.03, −1.95]. Not credited: RANDOMISED, in the
+  detour-and-cap over-avoidance shape (§20.3, §21.4).
+- partner `forkcf4b_D_s3_tx` (`d3f422a`, ended 22:19:55Z, 53.4 s/step):
+  0.922 / 1.018, 0.891 / 0.964, 0.906 / 0.957, 0.938 / 0.868; DEAD; not
+  RANDOMISED by the cell-D rule (training solve 0.966 to 0.995). Read 2: 111
+  forks, tie share 0.153, −6.11 [−8.58, −3.45].
+- `ctrl4b_A_s3_m3` (`3995c4d`, ended 22:07:06Z, 24.8 s/step): 0.969 / 0.921,
+  0.883 / 0.925, 0.906 / 0.893, 0.938 / 0.896; DEAD.
+- `ctrl4b_D_s3_m3` (`3995c4d`, ended 22:06:05Z, 24.5 s/step): 0.945 / 0.954,
+  0.945 / 0.936, 0.930 / 0.879, 0.875 / 1.004; DEAD; not RANDOMISED by the
+  cell-D rule (training solve 0.958 to 0.958; held-out solve −0.055).
+
+Paired fork A − D at 160: −1.172 mine steps per episode [−1.375, −0.969],
+solve −0.195; on the 92 mazes both solved, −1.130 [−1.359, −0.913], −104 of
+−150 mine steps, routes 14.22 against 12.11; −47 on the 28 mazes only D
+solved. On-policy pair at 160: −0.234 [−0.531, +0.039], solve +0.062; on the
+109 mazes both solved, −0.138 [−0.294, −0.009], −15 of −30. Controls credit
+nothing (D-23). Verified by the results-verifier with corrections.
+
+### 21.10 The interim at seeds 0 to 3 (run 2026-10-07 ~03:54 IST); §21 ends here
+
+`python3 scripts/box/s21.py --seeds 0,1,2,3` (B = 20 000, rng 0, crossed
+seeds × mazes; ratio to each seed's reference; the read at 160). Interim of
+§21 at four seeds (0 to 3), one run per cell. §21 did not reach its
+pre-registered final analysis at seed 7, because the user stopped the
+programme during seed 4 (§21.11). Reported with no credit.
+
+| contrast | mine | solve | both-solved (`both`) |
+| --- | --- | --- | --- |
+| P_fork = r_A − r_D | −0.168 [−0.436, +0.091] | −0.080 [−0.176, +0.014] | −0.190 [−0.420, −0.029] |
+| P_on = r_onA − r_onD | −0.273 [−0.494, −0.086] | +0.012 [−0.082, +0.100] | −0.205 [−0.447, −0.049] |
+| F = r_A − r_onA | +0.033 [−0.374, +0.359] (hw 0.367) | −0.039 [−0.160, +0.076] | −0.006 [−0.340, +0.287] |
+| I = P_fork − P_on | +0.105 [−0.268, +0.418] (hw 0.343) | −0.092 [−0.244, +0.068] | +0.015 [−0.314, +0.308] |
+
+IQM of each cell's ratio over the four seeds: A 0.798, D 0.896, onA 0.806,
+onD 0.967. Per-run SD 0.109 over the three seed-0 runs per cell (0.118 over
+the two default pairs).
+
+P_fork fails two of §21's three conditions. Its interval contains zero, and
+its solve contrast's lower end (−0.176) is below −0.10. Only the both-solved
+condition holds. Seed 3's term (−0.536) comes from an arm that ended
+RANDOMISED in the detour-and-cap shape; the other seeds give +0.146, −0.224
+and −0.058. P_on meets all three conditions as written; it is a property of
+the control and credits nothing (D-21, D-23), and its largest term is seed 1's
+RANDOMISED control (−0.592). F and I contain zero, so neither effect is
+shown, and at half-widths 0.367 and 0.343 effects of that size are not ruled
+out. Two cells ended RANDOMISED with detours and capped episodes: the seed-3
+fork arm (0.742 / 0.332) and the seed-1 cell-A control (0.820 / 0.336). A
+bootstrap over four seeds understates the width. Verified by the
+results-verifier with corrections.
+
+### 21.11 The programme stopped by the user (2026-10-07 ~03:38 IST); what was seen before
+
+At ~03:38 IST the user asked to start releasing the boxes and to summarise.
+Asked how, the user chose to stop the seed-4 runs and let the last seed-3 cell
+finish. Stopped at ~03:53 IST (`pkill` on each box): `ctrl4b_D_s4_m3` at step
+33, `ctrl4b_A_s4_m3` at 37, `forkcf4b_D_s4_tx` at 24, `forkcf4b_A_s4_tx` at
+86. Their partial pulls are in `results/_stopped_2026-10-07/`;
+`forkcf4b_A_s4_tx` holds reads at 40 and 80 (0.922 / 0.960, 0.945 / 0.824,
+provisional) that enter nothing. No run enters §21 from seed 4.
+
+Before the user's request, the lead had relayed (provisionally, in chat) the
+reads at 160 of `forkcf4b_A_s3_tx` (~03:28), `ctrl4b_D_s3_m3` and
+`ctrl4b_A_s3_m3` (~03:36–03:37), besides every earlier read, and had seen the
+seeds 0–2 contrasts (§21.7). The partner `forkcf4b_D_s3_tx`'s read at 160
+arrived after the user chose, and the interim was first run after it
+(~03:54). All five leases are idle and unwatched; `mz01-watch` and the sleep
+inhibitor are stopped.
