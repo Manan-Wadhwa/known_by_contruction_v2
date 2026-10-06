@@ -2,12 +2,13 @@
 
 Usage: python3 -u scripts/box/reads.py <label>...  Run ONE at a time: they share reads.seen.
 
-Reads results/<label>/fork_cf_g6.json (eval_at, the final eval, history) against
-results/<label>/reference.json (eval). Applies the trial's bars as a provisional
-verdict: INVALID if bare < 0.90, unparsed > 0.05 or raw move mass < 0.90;
-RANDOMISED if solve fell > 0.10; AVOIDS if mine ratio < 0.75 with solve within
-0.10; otherwise FLAT. Seen reads persist in reads.seen so a re-armed monitor
-prints only new ones. Also prints when summary.json lands.
+Reads results/<label>/fork_cf_g6.json (eval_at, the final eval, history), or
+onpolicy_g6.json for a control, against results/<label>/reference.json (eval).
+Applies the trial's bars as a provisional verdict: INVALID if bare < 0.90,
+unparsed > 0.05 or raw move mass < 0.90; RANDOMISED if solve fell > 0.10;
+AVOIDS if mine ratio < 0.75 with solve within 0.10; otherwise FLAT. Seen reads
+persist in reads.seen so a re-armed monitor prints only new ones. Also prints
+when summary.json lands.
 """
 import json, os, sys, time
 
@@ -53,7 +54,7 @@ def line(label, step, e, ref, hist):
 seen = set(open(SEEN).read().split()) if os.path.exists(SEEN) else set()
 while True:
     for label in LABELS:
-        d = load(f"{R}/{label}/fork_cf_g6.json")
+        d = load(f"{R}/{label}/fork_cf_g6.json") or load(f"{R}/{label}/onpolicy_g6.json")
         r = load(f"{R}/{label}/reference.json")
         if d and r:
             reads = dict(d.get("eval_at") or {})

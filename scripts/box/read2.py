@@ -3,10 +3,13 @@
 Usage: python3 read2.py <label> <K>. Reads results/<label>/fork_cf_g6.json history
 entries 0..K-1. Prints credited forks, the stage-2 tie share (gate) and the pooled
 fork_adv_taken_mean with a 95 % step-cluster bootstrap interval (20 000 resamples).
+An on-policy control (onpolicy_g6.json, no fork_cf_g6.json) has no forks: it says so and exits 0.
 """
 import json, os, random, sys
 R = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../experiments/v2/MZ01_maze_world/results")
 label, K = sys.argv[1], int(sys.argv[2])
+if not os.path.exists(f"{R}/{label}/fork_cf_g6.json") and os.path.exists(f"{R}/{label}/onpolicy_g6.json"):
+    print(f"{label}: an onpolicy_g6 control, no forks; §16.4's read 2 does not apply"); sys.exit(0)
 h = json.load(open(f"{R}/{label}/fork_cf_g6.json"))["history"]
 steps = [(n, nz, a) for n, nz, a in zip(h["n_forks"][:K], h["fork_share_nonzero"][:K], h["fork_adv_taken_mean"][:K]) if n]
 N = sum(n for n, _, _ in steps)

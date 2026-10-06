@@ -1,6 +1,8 @@
 """Paired A - D gap in held-out mine steps at one read (§19), on the `episodes` records.
 
 Usage: python3 paired.py <label_A> <label_D> <read>   (read: 40, 80, ... or final)
+Opens fork_cf_g6.json, else onpolicy_g6.json (controls). A read at the run's last step
+(160 on a 160-step run) is its final eval; on a 320-step run 160 is in eval_at.
 Pairs episodes on maze seed (refuses duplicate seeds), prints the mean per-episode
 mine-step gap, a t interval and a 20 000-resample bootstrap 95 % interval over mazes,
 and the gaps in solve and capped share on the same mazes.
@@ -9,8 +11,11 @@ import json, os, random, statistics as st, sys
 R = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../experiments/v2/MZ01_maze_world/results")
 def ep(label, read):
     """Return the per-episode dict for one read of one run, keyed by maze seed."""
-    d = json.load(open(f"{R}/{label}/fork_cf_g6.json"))
-    e = (d["eval"] if read == "final" else d["eval_at"][read])["episodes"]
+    p = f"{R}/{label}/fork_cf_g6.json"
+    d = json.load(open(p if os.path.exists(p) else f"{R}/{label}/onpolicy_g6.json"))
+    at = d.get("eval_at") or {}
+    e = (d["eval"] if read == "final" or (read not in at and read == str(d.get("trial_steps"))) else at[read]).get("episodes")
+    if e is None: sys.exit(f"{label}: no episodes records at read {read}")
     assert len(set(e["seed"])) == len(e["seed"]), f"{label}: duplicate maze seeds"
     return {s: (m, v, c) for s, m, v, c in zip(e["seed"], e["mine_steps"], e["solved"], e["capped"])}
 a, b = ep(sys.argv[1], sys.argv[3]), ep(sys.argv[2], sys.argv[3])
