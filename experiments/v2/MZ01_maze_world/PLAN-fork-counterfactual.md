@@ -1539,3 +1539,27 @@ is reported beside it and credits nothing. `s21.py` reproduces §18.1's seed-1
 interval on maze resampling, −0.484 [−0.766, −0.211] at rng 0 (the gap to
 [−0.773, −0.211] is the random stream; rng 2 gives it exactly), checked by the
 results-verifier.
+
+### 21.2 `ctrl4b_A_s0_m3` ended (2026-10-06 15:35Z / 21:05 IST): a control, not AVOIDS at any read; nothing credited
+
+160 steps, status DONE, 25.2 s/step, trainer code `e4b74f5` (no trainer-code
+diff from `6de23ad`; only four `scripts/box` analysis helpers added),
+`onpolicy_g6`, cell A, seed 0, `MZ01_MOVE_MASS_COEF=0.3`. Every read is valid
+by §9's bars (bare 1.000 and unparsed 0.000 at every read; raw move mass
+≥ 0.9998 at every read step, 1.000 at 159). The trial labels it DEAD
+(zero-advantage 0.867 over the last fifth). Reads, solve / mine ratio against
+the seed-0 reference (0.922 / 2.1875): 0.844 / 0.914 at 40, 0.891 / 0.893 at
+80, 0.828 / 0.804 at 120, 0.938 / 0.854 at 160. `mean_steps` 14.23, 13.55,
+14.52 at 40/80/120 (reference 13.05); the 0.804 at 120 comes with solve
+−0.094 and capped share 0.172. No read is AVOIDS. At 160: capped share 0.0625
+(reference 0.078), `mean_steps` 13.10 (13.05), solved routes (`optimality`
+× 12) 12.38 (12.13), `detour_paid_solved` 0.000 (reference 0.008, 1 of 118
+solved).
+
+The old control `ctrl4b_s0` (mass 0.1, `fce301f`, no `episodes`) ended
+RANDOMISED at 0.800 with solve 0.734 and capped share 0.266. That is one run
+each, differing in mass, code and lease (§19.1: 0.11 between runs), so no
+cause is assigned. This run is a control (D-23) and nothing is credited from
+it. It fills §21's onA cell at seed 0. Its cell-D partner `ctrl4b_D_s0_m3`
+launched at 15:37:00Z on the lease this run freed (box5 in §21.1's table).
+Verified by the results-verifier with corrections.

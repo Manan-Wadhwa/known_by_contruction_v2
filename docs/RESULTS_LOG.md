@@ -649,6 +649,16 @@ reach low ratios only with solve losses. Runs of one config and seed differ by
 0.11 in ratio at 40 across leases (§19.1). Next: relaunch the §19 pair and
 §20, then §21's 2×2 with matched on-policy controls (D-23).
 
+## 11. 2026-10-06 — the relaunches and §21's matched controls on 4B
+
+Five fresh leases from 14:24Z (`PLAN-fork-counterfactual.md` §21.1): the §19
+pair at 320 steps, §20's two −20 arms, and §21's controls in queue order.
+Reads are solve / mine ratio. Controls credit nothing (D-23).
+
+| label | role | @40 | @80 | @120 | @160 (verdict) | file |
+| --- | --- | --- | --- | --- | --- | --- |
+| `ctrl4b_A_s0_m3` | §21 onA, seed 0, mass 0.3 | 0.844 / 0.914 | 0.891 / 0.893 | 0.828 / 0.804 | 0.938 / 0.854 (control, not AVOIDS; label DEAD) | `results/ctrl4b_A_s0_m3/summary.json` |
+
 ## What the log says
 
 Four findings, in the order the log produces them. Each is a statement about
