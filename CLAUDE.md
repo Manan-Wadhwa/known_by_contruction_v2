@@ -1,17 +1,19 @@
 # MZ01 agent rules
 
 This repository is MZ01, the minefield maze of the "Known by Construction"
-programme. The live state of every agent is in `HANDOFF.md`. The standing rules
-and the box mechanics are in `docs/HANDOFF-2026-09-10.md`.
+programme. The live state of every agent is in `HANDOFF.md`; the takeover prompt is
+`docs/HANDOFF-2026-10-06.md`; the box mechanics are in `docs/HANDOFF-2026-09-10.md`.
 
 ## Hard rules, in priority order
 
-1. Read `docs/HANDOFF-2026-09-10.md` first. Load only the files its stage table
-   names for the stage you are in. The rest of the repository is record.
+1. Read `HANDOFF.md` and `docs/HANDOFF-2026-10-06.md` first (live state and the
+   takeover prompt), then `docs/HANDOFF-2026-09-10.md` for the box mechanics and
+   its stage table. Load only what the stage needs. The rest is record.
 2. The construction test. Mine positions enter only through the priced return.
    No mine-aware experts, hints, prompt prefixes, or forks placed by mine
    adjacency (`docs/research/APPROACHES.md` §B, last row). No on-policy-only
-   recipe on the nav48 navigators (D-21). No new knob without a line in the
+   recipe on the nav48 navigators (D-21), except as controls with nothing
+   credited from them (D-23). No new knob without a line in the
    trial's docstring (`scripts/mz01_explore_trial.py`).
 3. Pre-register every run and its reading rule as a dated plan section before
    its first read. The queue of record is the latest dated section of the
