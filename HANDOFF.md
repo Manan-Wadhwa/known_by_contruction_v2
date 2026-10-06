@@ -7,19 +7,20 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**State 2026-10-07 00:40 IST (session d6f94cbe, branch `s21-tooling`).** Five
-leases since 14:24Z on 10-06: box1 §19 arm `forkcf4b_A_s0_tx_h320` (ends
-~01:35 IST; its partner ended 00:27), box2 `ctrl4b_D_s2_m3`, box3
-`forkcf4b_A_s2_tx`, box4 `forkcf4b_A_s3_tx`, box5 `forkcf4b_D_s2_tx`. Ended
-and recorded: §20 closed (§20.3, §20.4); controls seeds 0-2 cell A, 0-1 cell D
-(§21.2-§21.6). Watchers: one bg task per box, `mz01-watch` (from the main
-checkout), inhibitor, reads monitor. Creds in the job scratchpad only. The
-classifier once blocked a launch on a freed box; the user said "launch it".
+**State 2026-10-07 01:45 IST (session d6f94cbe, branch `s21-tooling`).** box1
+and box2 IDLE: the classifier blocks launches on freed boxes until the user
+approves. box3 `forkcf4b_D_s3_tx`, box4 `forkcf4b_A_s3_tx`, box5
+`forkcf4b_D_s2_tx` (ends ~02:05). Ended, not yet recorded: `forkcf4b_A_s2_tx`
+(0.961 / 0.830, waits for its partner), `ctrl4b_D_s2_m3` (0.914 / 0.931).
+Watchers: one bg task per box, `mz01-watch` (main checkout), inhibitor, reads
+monitor. Creds in the job scratchpad only.
 
-**Next:** each freed box takes §21's next item via `launch_fork.sh`
-(`forkcf4b_D_s3_tx`, then `ctrl4b_{A,D}_s3_m3`, then seeds 4-7); the §19
-pair's verdict when box1 ends. `s21.py` (verified on §18.1) reads `both`
-(§21.1). Open for the user: credit §20.2's read at 120 (§21.4)?
+**Open for the user.** (1) §19.4: the §19 arm meets AVOIDS at 320 (0.938 /
+0.743, paired −0.430 [−0.664, −0.242]); credit withheld on the control-at-320
+and DEAD-label clauses. Credit sends `forkcf4b_{A,D}_s1_tx_h320` (labels now
+in `launch_fork.sh`) to the next two boxes; otherwise `ctrl4b_{A,D}_s3_m3`.
+(2) §20.2's read at 120 (§21.4). (3) Launch approval for idle boxes.
+(4) Band or horizon (`docs/research/2026-10-04-band-horizon/COMPARISON.md`).
 
 **Gotcha (new):** run helpers from a worktree and pulls land in that
 worktree's `results/`; symlink each new label to the main checkout's
@@ -34,11 +35,6 @@ worktree's `results/`; symlink each new label to the main checkout's
   (`_t`) solve collapsed. Prices ≥ −30 lose solve (§16.7, §17.1).
 - 10-06: `forkcf4b_A_s1_tx_p20` AVOIDS at 120 (withheld, §20.2), then
   RANDOMISED at 160 (§20.3); seed 0 RANDOMISED from 80 (§20.4). §20 closed.
-
-**Open for the user.** Whether the AVOIDS solve band or the 160-step horizon
-should change (DECISIONS "still open", FAILURES A7). The written comparison is
-`docs/research/2026-10-04-band-horizon/COMPARISON.md` (verified; no option
-chosen).
 
 **Gotchas** (the full list is in the takeover prompt).
 - Compare every arm with its on-policy control as well as its cell-D partner.

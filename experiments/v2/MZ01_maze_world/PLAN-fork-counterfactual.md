@@ -1764,3 +1764,47 @@ seed 2; nothing is credited from it. Its cell-D partner `ctrl4b_D_s2_m3`
 launched at 19:00:00Z on box2 (the §19 partner's lease, freed at 18:57Z);
 `forkcf4b_A_s3_tx` launched at 19:06:17Z on box4, the lease this run freed.
 Verified by the results-verifier with corrections.
+
+### 19.4 The §19 pair ended (2026-10-06 20:07:14Z arm, 18:57:26Z partner): the arm meets AVOIDS at 320 by the mine and solve clauses; credit withheld for the user
+
+Both 320 steps, status DONE, `e4b74f5`, launched 14:24:42Z (§21.1). Every
+read is valid (bare 1.000, unparsed 0.000; raw move mass ≥ 0.9994 at every
+read step). Reads, solve / mine ratio against the seed-0 reference
+(0.922 / 2.1875), at 40, 80, …, 320:
+
+| label | 40 | 80 | 120 | 160 | 200 | 240 | 280 | 320 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `forkcf4b_A_s0_tx_h320` | 0.867 / 0.982 | 0.891 / 0.961 | 0.672 / 1.089 | 0.867 / 1.050 | 0.789 / 0.904 | 0.891 / 0.761 | 0.898 / 0.779 | 0.938 / 0.743 |
+| `forkcf4b_D_s0_tx_h320` | 0.930 / 0.882 | 0.930 / 0.918 | 0.938 / 0.893 | 0.961 / 0.904 | 0.922 / 0.857 | 0.953 / 0.907 | 0.938 / 0.907 | 0.945 / 0.939 |
+
+At 320 the arm meets AVOIDS by the mine and solve clauses (the trial labels
+the final DEAD, zero-advantage 0.848 over the last fifth; its pick is NONE):
+208 mine steps against a bar of 210 (0.75 × 2.1875 × 128), solve +0.016;
+capped share 0.062 (reference 0.078), `mean_steps` 13.12 (13.05), solved
+routes 12.40 (12.13), `detour_paid_solved` 0.025 (0.008). Partner not AVOIDS
+(DEAD, 0.914); the trial labels the arm's reads at 120 and 200 RANDOMISED.
+Paired A − D gap at 320: −0.430 mine steps per episode, bootstrap 95 %
+[−0.664, −0.242], t [−0.643, −0.216]; solve gap −0.008, capped gap +0.008. On
+the 116 mazes both solved the gap is −0.319 [−0.483, −0.172], 37 of 55. At
+160 the gap was +0.320 [−0.047, +0.727]. Against the reference the arm has 72
+fewer mine steps: 37 on the 111 mazes both solved, 35 from the other 17 (the
+reference's 10 unsolved episodes carried 35, the arm's 8 carried 4). §16.4's
+read 2 over steps 0–319: 768 credited forks, tie share 0.053, pooled
+A(taken) −4.28 [−5.22, −3.42]; partner 122 forks, −3.39 [−6.12, −0.52].
+
+By §19's rule the read meets the AVOIDS, partner and paired-interval
+conditions, and no solve loss or capped-share rise against the reference.
+Credit is withheld for the user on two open clauses. (1) §16's control
+condition ("its on-policy control ... does not") attaches no step to the
+control; the precedent (§20.2, §21.4) withheld until the control read at the
+same step. The matched control `ctrl4b_A_s0_m3` (§21.2) ran 160 steps, none
+of its four reads AVOIDS, and none at 320 exists or is pre-registered.
+(2) Whether the trial's DEAD label, under §16's "the trial's bars stand",
+blocks credit. Caveats, not conditions: the margin is 2 mine steps; the arm
+swung from 1.089 at 120; the final read has no next read for §19's
+cross-and-return clause; §21's "near the strict bar the per-run rule is weak";
+one seed, one read. If the user credits it, §19 ("sends the pair to seed 1 at
+the same horizon before anything else") and §21 Precedence item 1 put
+`forkcf4b_{A,D}_s1_tx_h320` on the next two free boxes ahead of
+`ctrl4b_{A,D}_s3_m3`; otherwise those controls go next. Verified by the
+results-verifier with corrections.

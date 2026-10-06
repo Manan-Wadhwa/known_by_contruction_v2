@@ -664,6 +664,8 @@ Reads are solve / mine ratio. Controls credit nothing (D-23).
 | `ctrl4b_A_s1_m3` | §21 onA, seed 1, mass 0.3 | 0.945 / 0.953 | 0.844 / 0.765 | 0.641 / 0.134 (RANDOMISED) | 0.820 / 0.336 (**RANDOMISED**; control, detours and capped episodes; §21.4) | `results/ctrl4b_A_s1_m3/summary.json` |
 | `ctrl4b_D_s1_m3` | §21 onD, seed 1, mass 0.3 | 0.938 / 0.939 | 0.922 / 0.903 | 0.914 / 1.011 | 0.891 / 0.928 (control; label DEAD; seed-1 on-policy A − D gap −1.281 [−1.531, −1.062], with A's detours, §21.5) | `results/ctrl4b_D_s1_m3/summary.json` |
 | `ctrl4b_A_s2_m3` | §21 onA, seed 2, mass 0.3 | 0.938 / 0.881 | 0.938 / 0.866 | 0.914 / 0.769 | 0.859 / 0.758 (control, not AVOIDS: 210 mine steps against 207.75; label DEAD; §21.6) | `results/ctrl4b_A_s2_m3/summary.json` |
+| `forkcf4b_A_s0_tx_h320` | −10, 320 steps (§19) | 0.867 / 0.982 | 0.891 / 0.961 | 0.672 / 1.089 | 0.867 / 1.050 at 160; 0.938 / **0.743** at 320 (meets AVOIDS by mine and solve; label DEAD; paired gap −0.430 [−0.664, −0.242]; credit withheld for the user, §19.4) | `results/forkcf4b_A_s0_tx_h320/summary.json` |
+| `forkcf4b_D_s0_tx_h320` | partner (§19) | 0.930 / 0.882 | 0.930 / 0.918 | 0.938 / 0.893 | 0.961 / 0.904 at 160; 0.945 / 0.939 at 320 (label DEAD) | `results/forkcf4b_D_s0_tx_h320/summary.json` |
 
 ## What the log says
 
