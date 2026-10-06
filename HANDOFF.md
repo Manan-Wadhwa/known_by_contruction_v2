@@ -7,20 +7,17 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**State 2026-10-07 01:45 IST (session d6f94cbe, branch `s21-tooling`).** box1
-and box2 IDLE: the classifier blocks launches on freed boxes until the user
-approves. box3 `forkcf4b_D_s3_tx`, box4 `forkcf4b_A_s3_tx`, box5
-`forkcf4b_D_s2_tx` (ends ~02:05). Ended, not yet recorded: `forkcf4b_A_s2_tx`
-(0.961 / 0.830, waits for its partner), `ctrl4b_D_s2_m3` (0.914 / 0.931).
+**State 2026-10-07 02:40 IST (session d6f94cbe, branch `s21-tooling`).** box1
+`ctrl4b_A_s3_m3`, box2 `ctrl4b_D_s3_m3`, box3 `forkcf4b_D_s3_tx`, box4
+`forkcf4b_A_s3_tx`, box5 `forkcf4b_A_s4_tx`; user approved launches as boxes free. Seeds 0-2 complete and recorded (§21.2-§21.8); the interim (s21.py,
+seeds 0-3) runs when seed 3's four cells end (~04:00 IST).
 Watchers: one bg task per box, `mz01-watch` (main checkout), inhibitor, reads
 monitor. Creds in the job scratchpad only.
 
 **Open for the user.** (1) §19.4: the §19 arm meets AVOIDS at 320 (0.938 /
 0.743, paired −0.430 [−0.664, −0.242]); credit withheld on the control-at-320
-and DEAD-label clauses. Credit sends `forkcf4b_{A,D}_s1_tx_h320` (labels now
-in `launch_fork.sh`) to the next two boxes; otherwise `ctrl4b_{A,D}_s3_m3`.
-(2) §20.2's read at 120 (§21.4). (3) Launch approval for idle boxes.
-(4) Band or horizon (`docs/research/2026-10-04-band-horizon/COMPARISON.md`).
+and DEAD-label clauses. User kept it withheld (§21.7).
+(2) §20.2's read at 120 (§21.4). (3) Band or horizon (`docs/research/2026-10-04-band-horizon/COMPARISON.md`).
 
 **Gotcha (new):** run helpers from a worktree and pulls land in that
 worktree's `results/`; symlink each new label to the main checkout's

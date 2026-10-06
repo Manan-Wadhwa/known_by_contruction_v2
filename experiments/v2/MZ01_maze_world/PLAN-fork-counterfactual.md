@@ -1826,3 +1826,57 @@ I's half-widths only. Nothing in §21's queue or reading rule changes, and those
 numbers are not reported anywhere before the interim at seeds 0 to 3, which is
 run once all four seed-3 cells have a read at 160 and goes through the
 results-verifier.
+
+### 21.8 The seed-2 block's fork pair and cell-D control (ended 2026-10-06 19:54–20:28Z); launches since §21.1
+
+**Runs.** `forkcf4b_A_s2_tx` (ended 19:54:21Z, 56.1 s/step, `82b0579`) and its
+partner `forkcf4b_D_s2_tx` (`13ed7e0`, ended 20:28:26Z, 57.4 s/step), both
+160 steps, DONE, valid at every read; `ctrl4b_D_s2_m3` (`c982d2f`,
+`onpolicy_g6`, cell D, ended 20:07:30Z, 24.2 s/step, 160 steps, DONE, valid at
+every read). None has a trainer-code diff from `6de23ad`. Reads, solve / mine
+ratio against the seed-2 reference (0.930 / 2.164):
+- arm: 0.930 / 0.884, 0.922 / 0.899, 0.969 / 0.870, 0.961 / 0.830; trial
+  label DEAD; at 160 capped share 0.039 (reference 0.070), `mean_steps` 12.64
+  (13.00), solved routes 12.18 (12.17), `detour_paid_solved` 0.000 (0.008);
+  read 2 over 0–159: 318 forks, tie share 0.063, pooled A(taken) −2.29
+  [−3.20, −1.30].
+- partner: 0.922 / 0.942, 0.930 / 0.996, 0.914 / 0.986, 0.914 / 0.888; DEAD;
+  not RANDOMISED by the cell-D rule (training solve −0.053 against its own
+  start); read 2: 105 forks, tie share 0.133, −6.66 [−9.95, −3.08].
+- cell-D control: 0.859 / 0.917, 0.875 / 1.025, 0.945 / 0.982, 0.914 / 0.931
+  (bare 0.993, unparsed 0.007 at 160); DEAD; not RANDOMISED by the cell-D rule
+  (training solve −0.014 against its own start).
+
+No read of the arm is AVOIDS; not credited. Paired A − D gap at 160: −0.125
+mine steps per episode, bootstrap 95 % [−0.289, +0.031], t [−0.283, +0.033];
+solve +0.047; on the 114 mazes both solved, −0.193 per episode, bootstrap
+95 % [−0.333, −0.070], −22 of −16 mine steps, with A's routes 12.18 against
+D's 12.44 steps (+7 on the 9 mazes only A solved, −1 on the 3 only D solved).
+The matched control `ctrl4b_A_s2_m3` (§21.6) ended 0.859 / 0.758. Seed-2
+on-policy pair (`ctrl4b_A_s2_m3` − `ctrl4b_D_s2_m3`) at 160: −0.375
+[−0.523, −0.227], solve −0.055; on the 104 mazes both solved, −0.269
+[−0.385, −0.163], −28 of −48; −24 fall on the 13 mazes only D solved. A
+control property; it credits nothing. Verified by the results-verifier with
+corrections.
+
+**Launches since §21.1** (all through `launch_fork.sh`, banners checked; the
+same five leases, each on Python 3.13.11, torch 2.11.0+cu130, CUDA 13.0,
+peft 0.20.0, transformers 5.14.1 as §21.1 recorded; no re-setup):
+
+| launched (Z, 10-06) | box | label |
+| --- | --- | --- |
+| 15:37:00 | box5 | `ctrl4b_D_s0_m3` |
+| 16:47:43 | box5 | `ctrl4b_A_s1_m3` |
+| 17:04:06 | box4 | `ctrl4b_D_s1_m3` |
+| 17:21:57 | box3 | `forkcf4b_A_s2_tx` |
+| 17:52:19 | box5 | `forkcf4b_D_s2_tx` |
+| 17:54:18 | box4 | `ctrl4b_A_s2_m3` |
+| 19:00:00 | box2 | `ctrl4b_D_s2_m3` |
+| 19:06:17 | box4 | `forkcf4b_A_s3_tx` |
+| 19:55:07 | box3 | `forkcf4b_D_s3_tx` |
+| 20:57:52 | box1 | `ctrl4b_A_s3_m3` |
+| 20:57:52 | box2 | `ctrl4b_D_s3_m3` |
+| 20:57:52 | box5 | `forkcf4b_A_s4_tx` |
+
+Box1 and box2 were idle from ~20:08Z to 20:57Z while launches waited on the
+user's approval (§21.7).
