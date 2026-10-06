@@ -31,8 +31,8 @@ worktree's `results/`; symlink each new label to the main checkout's
   (0.818 vs 0.946; 0.765 vs 0.989, paired gap −0.484 [−0.773, −0.211]) and
   level with the on-policy controls (0.80; 0.765). Without the selection
   (`_t`) solve collapsed. Prices ≥ −30 lose solve (§16.7, §17.1).
-- §19's pair at 160, before the loss: arm 0.938 / 0.775, paired gap −0.461
-  [−0.781, −0.195] with the arm solving more (not verified).
+- 10-06: `forkcf4b_A_s1_tx_p20` AVOIDS at 120 (0.906 / 0.664), credit
+  withheld (§20.2: partner's rise, §17's clause unsized, no matched control).
 
 **Open for the user.** Whether the AVOIDS solve band or the 160-step horizon
 should change (DECISIONS "still open", FAILURES A7). The written comparison is
