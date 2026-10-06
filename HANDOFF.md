@@ -10,14 +10,14 @@ gotchas. Box URLs and tokens never go in this file.
 **State 2026-10-06 14:30Z (session d6f94cbe, branch `s21-tooling`).** Five
 leases, all running since 14:24:42Z (PLAN §21.1): box1/box2 the §19 pair
 `forkcf4b_{A,D}_s0_tx_h320` (320 steps, ~5.5 h+), box3 §21's
-`forkcf4b_A_s2_tx`, box4 `ctrl4b_D_s1_m3`, box5 `ctrl4b_A_s1_m3` (seed-0
-controls ended: §21.2 0.938 / 0.854, §21.3 0.828 / 1.071). Watchers: one
+`forkcf4b_A_s2_tx`, box4 `ctrl4b_A_s2_m3`, box5 `forkcf4b_D_s2_tx` (seed-0
+and seed-1 controls ended, §21.2-§21.5). Watchers: one
 bg task per box, `mz01-watch` (run from the main checkout), inhibitor, reads
 monitor. Creds in the job scratchpad only. Pushed 2026-10-06 with the user's
 go: `reorg/b-split-trainer` at `064ca2d`, `s21-tooling` (not merged).
 
-**Next:** each freed box takes §21's next item (`forkcf4b_D_s2_tx`, then
-`ctrl4b_{A,D}_s2_m3`, then seeds 3-7) via `launch_fork.sh`. `s21.py` (across-seed
+**Next:** each freed box takes §21's next item (`ctrl4b_D_s2_m3`, then
+seeds 3-7). Open for the user: credit §20.2's read (§21.4)? via `launch_fork.sh`. `s21.py` (across-seed
 analysis, verified on §18.1, fixes in `a43550e`) reads `both` (§21.1).
 
 **Gotcha (new):** run helpers from a worktree and pulls land in that
