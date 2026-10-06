@@ -1508,3 +1508,34 @@ log (§19.1).
 (`ctrl4b_s0` and `ctrl4b_s1` at 25 s/step). Twelve fork runs and sixteen
 controls come to about 56 box-h, about 14 h on four leases, before lease
 losses. The extension adds about 34 box-h.
+
+### 19.3 / 20.2 / 21.1 Launches on five fresh leases (2026-10-06 14:24Z / 19:54 IST)
+
+Written after launch and before any read. Five leases (box1 to box5) came up
+at 14:20Z; `bringup2.sh`'s "setup FAILED" was the known false positive (every
+box's `/marimo/v2/setup.log` ends "SETUP DONE", 66-79 s, 8 of 8 shards). The
+three 4B files were pushed and verified on every box, and the six synced files
+matched by MD5 at `e4b74f5` (branch `s21-tooling`), whose trainer code has no
+diff from `6de23ad`. All five launched at 14:24:42Z through `launch_fork.sh`:
+
+| box | label | queue item | banner checked |
+| --- | --- | --- | --- |
+| box1 | `forkcf4b_A_s0_tx_h320` | §19 relaunch (§19.2) | seed 0, cell A, `fork_cf_g6`, 320 steps, reads 40-280, fork share tie/crossfit, mass 0.3 |
+| box2 | `forkcf4b_D_s0_tx_h320` | §19 relaunch (§19.2) | seed 0, cell D, as box1 |
+| box3 | `forkcf4b_A_s0_tx_p20` | §20 relaunch (§20.1) | seed 0, cell A, tie/crossfit, mine priced at −20.0 in training |
+| box4 | `forkcf4b_A_s1_tx_p20` | §20 relaunch (§20.1) | seed 1, cell A, as box3 |
+| box5 | `ctrl4b_A_s0_m3` | §21 item 1 | seed 0, cell A, `onpolicy_g6`, mass 0.3, no fork or dose line |
+
+Every box runs Python 3.13.11, torch 2.11.0+cu130 (CUDA 13.0), peft 0.20.0 and
+transformers 5.14.1 under `/marimo/persist/env.sh`, on an NVIDIA RTX PRO 6000
+Blackwell Server Edition (§21 "Measurement").
+
+**One reading fixed before any §21 read.** §21's credit condition on P_fork
+says "its both-solved part's interval lies below zero". `scripts/box/s21.py`
+prints two forms: `both`, the mean gap per episode on the mazes both runs
+solved (§18.1's −0.317 on 101 mazes), and `both part`, those mazes' share of
+the contrast. The condition reads `both`, the form §18.1 reported. `both part`
+is reported beside it and credits nothing. `s21.py` reproduces §18.1's seed-1
+interval on maze resampling, −0.484 [−0.766, −0.211] at rng 0 (the gap to
+[−0.773, −0.211] is the random stream; rng 2 gives it exactly), checked by the
+results-verifier.
