@@ -1645,3 +1645,34 @@ episodes and no detours (§17.1). No read of the run is credited. The read at
 (`forkcf4b_A_s0_tx_p20`) read RANDOMISED at 80 and 120 (0.734 / 0.871,
 0.742 / 0.961), and its read at 160 is pending. `ctrl4b_D_s1_m3` launched at
 17:04:06Z on box4. Verified by the results-verifier with corrections.
+
+### 20.4 `forkcf4b_A_s0_tx_p20` ended (2026-10-06 17:19:59Z / 22:49 IST): RANDOMISED from 80; §20 closes
+
+160 steps, status DONE, 64.2 s/step, `e4b74f5`, seed 0, mine priced at −20 in
+training. Every read is valid (bare 1.000, unparsed 0.000; raw move mass
+≥ 0.9998 at every read step). The trial labels it RANDOMISED. Reads, solve /
+mine ratio against the seed-0 reference (0.922 / 2.1875): 0.875 / 0.893 at
+40, 0.734 / 0.871 at 80, 0.742 / 0.961 at 120, 0.461 / 0.757 at 160; RANDOMISED
+at 80, 120 and 160. At 160: capped share 0.539 (reference 0.078),
+`mean_steps` 18.62 (13.05), solved routes 12.34 (12.13), `detour_paid_solved`
+0.017, 1 of 59 solved (reference 1 of 118). The partner
+`forkcf4b_D_s0_tx_h320` read 0.961 / 0.904 at 160. Paired A − D gap at 160:
+−0.320 mine steps per episode, bootstrap 95 % [−0.727, +0.133], t [−0.756,
++0.115]; solve gap −0.500, capped gap +0.500. §16.4's read 2 over steps
+0–159: 466 credited forks, tie share 0.047, pooled A(taken) −6.58 [−8.57,
+−4.74].
+
+No read is AVOIDS. Solve fell more than 0.10 from the read at 80 on, with
+capped share 0.26 to 0.54, which is 1 − solve at each read, while solved
+routes stayed at 12.3–12.6 (reference 12.13). The matched control
+`ctrl4b_A_s0_m3` read 0.938 / 0.854 at 160 (§21.2), and `ctrl4b_s0` read
+0.734 / 0.800. The lost 10-04 run of this label read 0.875 / 0.829 at 40,
+against 0.875 / 0.893 here (§19.1's run-to-run spread is 0.11).
+
+§20 closes. Seed 0 has no AVOIDS read, so §20's both-seeds condition fails
+whatever becomes of seed 1's withheld read at 120 (§20.2; seed 1 ended
+RANDOMISED at 160 with detours and capped episodes, §20.3). The curve (−10,
+−15, −20, −25 on seeds 0–3) does not run. §21's queue runs as written:
+Precedence item 2 does not fire, and item 3 adds nothing because §20's next
+step needs both seeds. `forkcf4b_A_s2_tx` launched at 17:21:57Z on box3.
+Verified by the results-verifier with corrections.
