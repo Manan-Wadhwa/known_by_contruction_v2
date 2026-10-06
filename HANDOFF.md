@@ -10,13 +10,14 @@ gotchas. Box URLs and tokens never go in this file.
 **State 2026-10-06 14:30Z (session d6f94cbe, branch `s21-tooling`).** Five
 leases, all running since 14:24:42Z (PLAN §21.1): box1/box2 the §19 pair
 `forkcf4b_{A,D}_s0_tx_h320` (320 steps, ~5.5 h+), box3/box4 §20's
-`forkcf4b_A_s{0,1}_tx_p20`, box5 `ctrl4b_A_s0_m3` (~1.4-2 h). Watchers: one
+`forkcf4b_A_s{0,1}_tx_p20`, box5 `ctrl4b_D_s0_m3` since 15:37Z
+(`ctrl4b_A_s0_m3` ended 15:35Z: 0.938 / 0.854, a control, §21.2). Watchers: one
 bg task per box, `mz01-watch` (run from the main checkout), inhibitor, reads
 monitor. Creds in the job scratchpad only. Pushed 2026-10-06 with the user's
 go: `reorg/b-split-trainer` at `064ca2d`, `s21-tooling` (not merged).
 
-**Next:** each freed box takes §21's next item (`ctrl4b_D_s0_m3`, then
-`ctrl4b_{A,D}_s1_m3`, then blocks of four per seed 2-7) via `launch_fork.sh`.
+**Next:** each freed box takes §21's next item (`ctrl4b_{A,D}_s1_m3`, then
+blocks of four per seed 2-7) via `launch_fork.sh`.
 `s21.py` (across-seed analysis, verified on §18.1; the verifier's fixes in
 `a43550e`) prints validity per run; §21.1 fixed that the both-solved
 condition reads its `both`.
