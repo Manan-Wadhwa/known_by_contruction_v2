@@ -1676,3 +1676,38 @@ RANDOMISED at 160 with detours and capped episodes, §20.3). The curve (−10,
 Precedence item 2 does not fire, and item 3 adds nothing because §20's next
 step needs both seeds. `forkcf4b_A_s2_tx` launched at 17:21:57Z on box3.
 Verified by the results-verifier with corrections.
+
+### 21.4 `ctrl4b_A_s1_m3` ended (2026-10-06 17:51:20Z / 23:21 IST): RANDOMISED, the detour-and-cap shape; §20.2's read stays withheld for the user
+
+160 steps, status DONE, 22.9 s/step, `fd48471` (no trainer-code diff from
+`6de23ad`), `onpolicy_g6`, cell A, seed 1, `MZ01_MOVE_MASS_COEF=0.3`. Every
+read is valid (bare 1.000, unparsed 0.000; raw move mass ≥ 0.9993 at every
+read step). The trial labels it RANDOMISED. Reads, solve / mine ratio against
+the seed-1 reference (0.922 / 2.164): 0.945 / 0.953 at 40, 0.844 / 0.765 at
+80, 0.641 / 0.134 at 120 (RANDOMISED), 0.820 / 0.336 at 160 (RANDOMISED,
+solve −0.102). At 120: capped share 0.359, `mean_steps` 18.55, solved routes
+15.50, `detour_paid_solved` 0.646. At 160: capped share 0.180 (reference
+0.078), `mean_steps` 16.17 (13.02), solved routes 14.46 (12.08),
+`detour_paid_solved` 0.324 (0.000). The control, with no fork term and at the
+world's price, falls into the detour-and-cap shape the −20 fork arm showed at
+160 (§20.3), one read earlier. The cell-D control `ctrl4b_D_s1_m3` ended
+17:52:41Z, DEAD, 0.914 / 1.011 at 120 and 0.891 / 0.928 at 160 (§21.5). It is
+a control (D-23); nothing is credited from it.
+
+**§20.2's read at 120, with the matched control's read in hand.** The read
+meets every condition §20 names. The arm AVOIDS (0.906 / 0.664). The control
+`ctrl4b_A_s1_m3` (§21) does not (RANDOMISED, 0.641 / 0.134). The partner does
+not (0.852 / 1.217), and the paired A − D interval excludes zero (−1.195
+[−1.750, −0.734]). Still open is §17's clause, which §20 adopts ("a fall with
+a solve loss or a capped-share rise is reported as over-avoidance and not
+credited"), and §16's route-length and solve clause ("a fall that tracks a
+route-length change or a solve loss is not credited"). Neither names a size.
+The arm's solve fell 0.016, capped share rose 0.016 and `mean_steps` rose
+0.86. Read literally, they deny credit. By precedent (rises of 0.094 or more,
+§18.1, §16.7) they do not. A size fixed now would change the
+pre-registration. Caveats, not conditions: the partner's rise carries most of
+the gap (§20.2), and the arm reached the control's shape at 160 (§20.3).
+Paired arm − control at 120, which no rule names: +1.148 mine steps per
+episode [+0.977, +1.328], solve +0.266. The read stays withheld for the user.
+Either way no queue changes (§20.4, §21). Verified by the results-verifier
+with corrections.
