@@ -42,4 +42,6 @@ user's explicit go. `scripts/box/s21.py --seeds ...` gives the across-seed read.
 - `mean_steps` rises are mostly capped episodes; use `detour_paid_solved`.
 - Same seed and config diverge (seed 0 pair at 160: −0.461 on 10-04,
   §19.2, unverified; +0.320 on 10-06, §19.4).
+- `reads.py` dedups on `label@step` in `reads.seen`: before relaunching a
+  label, delete its old lines or the new run's reads are never shown.
 - The Stop hook blocks when the repo changed and this file did not.
