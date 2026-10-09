@@ -4384,7 +4384,7 @@ def _bumper_or_oracle(prompt, generator):
     return "up" if u < 0.5 else _oracle_reply(prompt)
 
 
-def _exit_fixture_train(make_hook=None, **kw):
+def _exit_fixture_train(make_hook=None, steps=2, **kw):
     """A two-step toy cell A over `TWOMINES` with the scripted mixed policy.
 
     -> (history, LoRA state). The sampler is SCRIPTED, so what it draws depends
@@ -4400,7 +4400,7 @@ def _exit_fixture_train(make_hook=None, **kw):
     maze_orgb._sample_replies = _ScriptedSampler(_bumper_or_oracle)
     try:
         hist = maze_orgb.train_orgb_cell(
-            model, tok, cell="A", seed=0, steps=2, batch_size=2, group_size=3,
+            model, tok, cell="A", seed=0, steps=steps, batch_size=2, group_size=3,
             train_pool=[maze2.from_layout(TWOMINES, seed=500 + i)
                         for i in range(2)],
             fmt=ASCII, log_every=0, chunk_size=4, lr=0.1, **kw)
@@ -7434,3 +7434,141 @@ def test_the_pick_and_the_selection_are_named_knobs_refused_without_the_term(
         _ckpt_train(ckpt_path=str(Path(tmp_path) / "tie.pt"), ckpt_every=2,
                     steps=2, cell="A", fork_cf=True)
     assert "fork_pick" in str(err.value)
+
+
+# ---------------------------------------------------------------------------
+# NINETEENTH PASS, 2026-10-09 (BUILD-solve-protect-2026-10-09.md): the KL
+# anchor to the warm start, and the validation-selected checkpoint.
+# ---------------------------------------------------------------------------
+
+def test_kl_off_is_the_pre_build_trace_and_the_anchor_is_both_or_neither():
+    """`kl_coef=0` is the pre-build trainer to the bit; a half-set anchor dies."""
+    hist, state = _exit_fixture_train(kl_coef=0.0)
+    for key, want in _PRE_FORK_TRACE.items():
+        assert hist[key] == want, (key, hist[key], want)
+    assert _adapter_sha(state) == _PRE_FORK_ADAPTER_SHA
+    assert "kl_to_ref" not in hist and "kl" not in hist["config"]
+    for bad in ({"kl_coef": 0.5}, {"kl_ref": {}}, {"kl_coef": -1.0, "kl_ref": {}}):
+        with pytest.raises(ValueError) as err:
+            _exit_fixture_train(**bad)
+        assert "both or neither" in str(err.value)
+
+
+def test_the_reference_read_is_the_reference_and_restores_the_policy():
+    """KL is 0 at policy == reference, > 0 after a change; the swap is exact."""
+    model, tok = _model()
+    device = torch.device("cpu")
+    cols = maze_orgb._move_cols(tok, device)
+    texts = ["grid one ", "grid two ", "grid three "]
+    ref_state = lora_state_dict(model)
+
+    def kl_now():
+        pol = maze_orgb._fork_move_logp(model, tok, texts, cols=cols,
+                                        device=device)
+        ref = maze_orgb._reference_move_logp(model, tok, texts, ref_state,
+                                             cols=cols, device=device,
+                                             chunk_size=2)
+        return (pol.exp() * (pol - ref)).sum(-1).detach(), ref
+
+    kl0, ref0 = kl_now()
+    assert float(kl0.abs().max()) < 1e-6
+    with torch.no_grad():
+        for prm in lora_parameters(model):
+            prm.add_(0.5 * torch.randn(prm.shape,
+                                       generator=torch.Generator().manual_seed(3)))
+    moved = {k: v.clone() for k, v in lora_state_dict(model).items()}
+    kl1, ref1 = kl_now()
+    assert float(kl1.min()) > 1e-4
+    assert torch.equal(ref0, ref1), "the reference read must not follow the policy"
+    after = lora_state_dict(model)
+    assert all(torch.equal(after[k], moved[k]) for k in moved)
+    remove_lora(model)
+
+
+def test_the_kl_anchor_trains_zero_at_step_zero_then_positive():
+    """End to end: the trace's KL is 0 at step 0 (policy IS the warm start)."""
+    ref = {}
+
+    def capture(model, tok):
+        ref.update(lora_state_dict(model))
+        return None
+
+    hist, state = _exit_fixture_train(make_hook=capture, kl_coef=0.5,
+                                      kl_ref=ref)
+    assert hist["kl_to_ref"][0] < 1e-6
+    assert hist["kl_to_ref"][1] > 1e-6
+    assert hist["config"]["kl"]["coef"] == 0.5
+    assert hist["loss"][0] == pytest.approx(_PRE_FORK_TRACE["loss"][0], abs=1e-5)
+    assert _adapter_sha(state) != _PRE_FORK_ADAPTER_SHA
+
+
+def test_validation_mazes_are_disjoint_from_the_held_out_set_and_the_pool():
+    """Seeds past both rl.py ranges, and no canonical hash shared with either."""
+    from calibration.rl import _TRAIN_SEED_RANGE
+    trial = _trial_module()
+    lo, hi = trial.VAL_SEED_RANGE
+    for a, b in (_EVAL_SEED_RANGE, _TRAIN_SEED_RANGE):
+        assert hi <= a or lo >= b, ((lo, hi), (a, b))
+    held = _mazes(8, seed_tag="val_eval")
+    pool, _ = maze2.generate_set(
+        8, n=7, generator=derive_generator(0, "orgb_test", "val_pool"),
+        seed_range=_TRAIN_SEED_RANGE)
+    val = trial.validation_set(8, n=7, eval_set=held, train_pool=pool,
+                               generator=derive_generator(0, "orgb_test", "val"))
+    assert len(val) == 8
+    assert all(lo <= m.seed < hi for m in val)
+    hashes = {m.labels["canonical_hash"] for m in held + pool}
+    assert not hashes & {m.labels["canonical_hash"] for m in val}
+    assert trial.KL_COEF == 0.0 and trial.VAL_EVERY == 0, "both default off"
+    for knob in ("MZ01_KL_COEF", "MZ01_VAL_EVERY", "MZ01_VAL_N"):
+        assert knob in (trial.__doc__ or ""), knob
+
+
+class _PricedOnly(dict):
+    """A competence dict that fails the test if anything but the priced return
+    or solve is read from it."""
+
+    def __getitem__(self, key):
+        assert key in ("mean_score", "solve_rate"), f"selection read {key!r}"
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        raise AssertionError(f"selection read {key!r}")
+
+
+def test_selection_keeps_the_max_priced_return_and_never_reads_mine_steps():
+    """Max mean_score, solve breaks ties, earliest keeps a full tie."""
+    trial = _trial_module()
+    reads = [(10, -30.0, 0.90, 0.1), (20, -22.0, 0.80, 2.0),
+             (30, -25.0, 0.95, 0.0), (40, -22.0, 0.85, 3.0),
+             (50, -22.0, 0.85, 0.0)]
+    best, snaps = None, []
+    for step, score, solve, mines in reads:
+        comp = _PricedOnly(mean_score=score, solve_rate=solve,
+                           mine_step_rate=mines, mine_landing_rate=mines)
+        best = trial.val_select(best, step, comp,
+                                lambda s=step: snaps.append(s) or f"state@{s}")
+    assert best == (40, (-22.0, 0.85), "state@40")
+    assert snaps == [10, 20, 40], "a snapshot only when a read wins"
+
+
+def test_the_kl_anchor_pulls_toward_the_reference():
+    """The sign: a large coefficient leaves the policy nearer the warm start.
+
+    Step 0's KL gradient is zero (policy == reference), so the pull shows from
+    step 1's update on: `kl_to_ref` at step 2 is smaller at a large coefficient.
+    """
+    def run(coef):
+        ref = {}
+
+        def capture(model, tok):
+            ref.update(lora_state_dict(model))
+            return None
+
+        hist, _ = _exit_fixture_train(make_hook=capture, steps=3,
+                                      kl_coef=coef, kl_ref=ref)
+        return hist["kl_to_ref"]
+
+    weak, strong = run(1e-6), run(100.0)
+    assert weak[1] == pytest.approx(strong[1], rel=1e-6)
+    assert strong[2] < weak[2], (strong, weak)
