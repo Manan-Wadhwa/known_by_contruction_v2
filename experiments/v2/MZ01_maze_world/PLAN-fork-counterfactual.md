@@ -1961,3 +1961,29 @@ seeds 0–2 contrasts (§21.7). The partner `forkcf4b_D_s3_tx`'s read at 160
 arrived after the user chose, and the interim was first run after it
 (~03:54). All five leases are idle and unwatched; `mz01-watch` and the sleep
 inhibitor are stopped.
+
+### 21.12 §21 resumed at seed 4, pre-registered (2026-10-09, before any launch)
+
+Written before any launch on the five leases the user gave on 2026-10-09 and
+before any read of the runs it queues. The user, given the open choice of
+whether to resume §21 at seeds 4 to 7 (`docs/HANDOFF-2026-10-09.md`), told the
+lead to continue. D-25 records it; it reverses D-24's stop.
+
+**What runs.** §21's queue from seed 4, unchanged: blocks of four per seed,
+`forkcf4b_A_s{k}_tx`, `forkcf4b_D_s{k}_tx`, `ctrl4b_A_s{k}_m3`,
+`ctrl4b_D_s{k}_m3`, for k = 4, 5, 6, 7, each freed box taking the next item,
+through `launch_fork.sh` at the settings §21 names. Seed 4 restarts from
+scratch: the partials in `results/_stopped_2026-10-07/` enter nothing. The
+trainer code stays at `6de23ad`'s (no diff at `s21-tooling` HEAD).
+
+**Reading rule.** §21's, unchanged: the per-run rule, and the across-seed
+analysis at the read at 160 with the crossed bootstrap, `both` as the
+both-solved form (§21.1). The interim at seeds 0 to 3 was reported
+(§21.10) and changes nothing. The analysis at seed 7 is final unless F's or
+I's 95 % half-width exceeds 0.10 in ratio; then seeds 8 to 11 run and the
+analysis is repeated once at 12 seeds, as §21 says. Before this section the
+lead had seen every read through seed 3 and the interim; no read of seeds 4
+to 7 exists.
+
+**Leases.** New leases differ from 10-06's; §21.1's environment record is
+redone at launch and logged as a dated entry (§21 "Measurement").
