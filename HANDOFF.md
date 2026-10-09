@@ -7,13 +7,14 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**State 2026-10-09 14:35 IST (session d6f94cbe, branch `s21-tooling`).** §21
-resumed (D-25, §21.12-§21.13). Seed 4 done and recorded (§21.14). Running:
-box1 `forkcf4b_D_s6_tx`, box2 `forkcf4b_A_s6_tx`, box3 `forkcf4b_D_s5_tx`,
-box4 `ctrl4b_D_s5_m3`, box5 `ctrl4b_A_s6_m3`. Seed 5's `forkcf4b_A_s5_tx`
-and `ctrl4b_A_s5_m3` ended, not yet recorded. Next: `ctrl4b_D_s6_m3`, then
-seed 7; final analysis at seed 7 (`s21.py`). Watchers: one bg task per box,
-`mz01-watch`, inhibitor, reads monitor. Creds in the job scratchpad only.
+**State 2026-10-09 14:50 IST (session d6f94cbe, branch `s21-tooling`).** §21
+resumed (D-25, §21.12-§21.13). Seed 4 recorded (§21.14). Box1's lease DIED
+~14:44 IST (§21.15, B27): `forkcf4b_D_s6_tx` lost at step 17, requeued at the
+head. Four leases: box2 `forkcf4b_A_s6_tx`, box3 `forkcf4b_D_s5_tx`, box4
+`ctrl4b_D_s5_m3`, box5 `ctrl4b_A_s6_m3`. Seed 5's `forkcf4b_A_s5_tx` and
+`ctrl4b_A_s5_m3` ended, not yet recorded. Next free box: `forkcf4b_D_s6_tx`,
+then `ctrl4b_D_s6_m3`, then seed 7; final analysis at seed 7 (`s21.py`).
+Watchers per box, `mz01-watch`, inhibitor, reads monitor. Creds in scratchpad.
 
 **Where it ended** (`docs/RESULTS_LOG.md` §11; PLAN §19.4-§21.11).
 - No AVOIDS credited in the programme.
