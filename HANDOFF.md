@@ -7,12 +7,13 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**State 2026-10-09 15:35 IST (session d6f94cbe, branch `s21-tooling`).** §21
-resumed (D-25). Seeds 4 and 5 recorded (§21.14, §21.16); box1's first 10-09
-lease died (§21.15, B27). Running: box1 `forkcf4b_D_s6_tx` (rerun), box2
-`forkcf4b_A_s6_tx`, box3 `forkcf4b_A_s7_tx`, box4 `ctrl4b_D_s6_m3`, box5
-`ctrl4b_A_s6_m3`. Next free boxes: `forkcf4b_D_s7_tx`, `ctrl4b_{A,D}_s7_m3`;
-then the final analysis at seed 7 (`s21.py --seeds 0,...,7`), verified.
+**State 2026-10-09 16:05 IST (session d6f94cbe, branch `s21-tooling`).** The
+user stopped §21 at seeds 0-5 and changed approach (D-26, §21.17). Running
+since 10:28Z (§22, §22.1): `forkcf4b_A_s{1..5}_tx_h320` on box1-box5 (320
+steps, ~5.2 h). Building in worktree `s22-solve` (branch `s22-solve`): a KL
+anchor to the warm start in RL and checkpoint selection on a validation set
+(priced return only), with tests, critic, controls; then pre-register and run
+them. Partners `forkcf4b_D_s{k}_tx_h320` and 320-step controls follow.
 Watchers per box, `mz01-watch`, inhibitor, reads monitor. Creds in scratchpad.
 
 **Where it ended** (`docs/RESULTS_LOG.md` §11; PLAN §19.4-§21.11).

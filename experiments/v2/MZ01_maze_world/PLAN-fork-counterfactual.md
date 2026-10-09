@@ -2136,3 +2136,14 @@ mine and solve at 320 (and at any read), against §19's one of one at seed 0.
 
 **Construction test.** As §19 (D-22): tie forks from walls, selection on the
 priced return of the policy's own continuations; nothing mine-aware.
+
+### 22.1 Launches (2026-10-09 10:28:36Z / 15:58 IST)
+
+`forkcf4b_A_s{1..5}_tx_h320` on box1 to box5, through `launch_fork.sh`,
+MD5 match at `1296983` (no trainer-code diff from `6de23ad`), the same
+environment as §21.13. Banners checked: seed k, cell A, `fork_cf_g6`, 320
+steps, fork share "pick tie, select crossfit", no dose. The §21 partials
+stopped at 10:27Z are in `results/_stopped_2026-10-09/`. In parallel, the
+two solve-protecting recipes of D-26 are being built in the worktree
+`s22-solve`, with tests, a critic and their controls, before any of their
+runs is pre-registered.
