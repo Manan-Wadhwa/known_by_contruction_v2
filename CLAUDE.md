@@ -2,11 +2,11 @@
 
 This repository is MZ01, the minefield maze of the "Known by Construction"
 programme. The live state of every agent is in `HANDOFF.md`; the takeover prompt is
-`docs/HANDOFF-2026-10-06.md`; the box mechanics are in `docs/HANDOFF-2026-09-10.md`.
+`docs/HANDOFF-2026-10-09.md` (bring-up steps in `docs/HANDOFF-2026-10-06.md`); the box mechanics are in `docs/HANDOFF-2026-09-10.md`.
 
 ## Hard rules, in priority order
 
-1. Read `HANDOFF.md` and `docs/HANDOFF-2026-10-06.md` first (live state and the
+1. Read `HANDOFF.md` and `docs/HANDOFF-2026-10-09.md` first (live state and the
    takeover prompt), then `docs/HANDOFF-2026-09-10.md` for the box mechanics and
    its stage table. Load only what the stage needs. The rest is record.
 2. The construction test. Mine positions enter only through the priced return.

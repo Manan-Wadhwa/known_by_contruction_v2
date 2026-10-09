@@ -1,6 +1,6 @@
 # HANDOFF: live state
 
-`docs/HANDOFF-2026-10-06.md` is the takeover prompt and
+`docs/HANDOFF-2026-10-09.md` is the takeover prompt and
 `docs/HANDOFF-2026-09-10.md` holds the box mechanics. This file holds the live state, one `## <owner>` section per agent, each under 40 lines.
 Update your own section before you stop: in flight, last verdicts, next,
 gotchas. Box URLs and tokens never go in this file.
@@ -31,7 +31,7 @@ free; final analysis at seed 7 (`s21.py`). The 10-07 stop's partials stay in
 **Open for the user.** §20.2's credit (§21.4); band or horizon
 (`docs/research/2026-10-04-band-horizon/COMPARISON.md`); merging `s21-tooling`.
 
-**To resume.** `docs/HANDOFF-2026-10-06.md` for bring-up. All §21 labels are
+**To resume.** `docs/HANDOFF-2026-10-09.md` first; `docs/HANDOFF-2026-10-06.md` for bring-up. All §21 labels are
 in `launch_fork.sh` (and `forkcf4b_{A,D}_s1_tx_h320`). Run helpers from a
 worktree only after symlinking each label's `results/` dir to the main
 checkout's. The classifier may block launches on freed boxes without the
@@ -40,6 +40,6 @@ user's explicit go. `scripts/box/s21.py --seeds ...` gives the across-seed read.
 **Gotchas** (the full list is in the takeover prompt).
 - Compare every arm with its on-policy control as well as its cell-D partner.
 - `mean_steps` rises are mostly capped episodes; use `detour_paid_solved`.
-- Same seed and config diverge across leases (§19.1; seed 0 pair at 160:
-  −0.461 on 10-04, +0.320 on 10-06).
+- Same seed and config diverge (seed 0 pair at 160: −0.461 on 10-04,
+  §19.2, unverified; +0.320 on 10-06, §19.4).
 - The Stop hook blocks when the repo changed and this file did not.
