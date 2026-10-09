@@ -209,9 +209,9 @@ Environment:
                      trains: the exact KL over the four bare move ids at each
                      sampled decision's first token, the reference the frozen
                      warm start this run loaded (navigator + MZ01_WARM_START).
-                     The warm start carries no mine information (it imitates
-                     the walls-only navigator, remarks placed independently of
-                     the mine). (BUILD-solve-protect-2026-10-09.md.)
+                     The warm start was trained with no mine-dependent target
+                     (the walls-only navigator's own moves, remarks placed
+                     independently of the mine). (BUILD-solve-protect-2026-10-09.md.)
   MZ01_VAL_EVERY     NINETEENTH PASS, DEFAULT 0 (off). Every k steps (and at the
                      last) the arm is read greedily on MZ01_VAL_N VALIDATION
                      mazes, seeds in VAL_SEED_RANGE (disjoint from rl.py's
@@ -627,8 +627,8 @@ def eval_block(measurement, step=None):
 def validation_set(count, *, n, eval_set, train_pool, generator):
     """The validation mazes. -> a list of `count` mazes.
 
-    Inputs: the held-out set and the training pool already drawn, and the
-    generator. Seeds come from VAL_SEED_RANGE, past rl.py's train and eval
+    Inputs: `count` mazes at grid size `n`, the held-out set and the training
+    pool already drawn, and the generator. Seeds come from VAL_SEED_RANGE, past rl.py's train and eval
     ranges, and every maze is deduped by canonical hash against both sets.
     """
     from calibration import maze2
@@ -747,6 +747,9 @@ def main():
     if CREDIT not in maze_orgb.CREDIT_MODES:
         raise SystemExit(f"MZ01_CREDIT must be one of "
                          f"{list(maze_orgb.CREDIT_MODES)}, got {CREDIT!r}")
+    if VAL_EVERY and VAL_N < 1:
+        raise SystemExit(f"MZ01_VAL_EVERY={VAL_EVERY} needs MZ01_VAL_N >= 1, "
+                         f"got {VAL_N}")
     if EPSILON_WHERE not in maze_orgb.EPSILON_WHERES:
         raise SystemExit(f"MZ01_EPSILON_WHERE must be one of "
                          f"{list(maze_orgb.EPSILON_WHERES)}, got "

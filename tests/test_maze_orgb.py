@@ -4384,7 +4384,7 @@ def _bumper_or_oracle(prompt, generator):
     return "up" if u < 0.5 else _oracle_reply(prompt)
 
 
-def _exit_fixture_train(make_hook=None, **kw):
+def _exit_fixture_train(make_hook=None, steps=2, **kw):
     """A two-step toy cell A over `TWOMINES` with the scripted mixed policy.
 
     -> (history, LoRA state). The sampler is SCRIPTED, so what it draws depends
@@ -4400,7 +4400,7 @@ def _exit_fixture_train(make_hook=None, **kw):
     maze_orgb._sample_replies = _ScriptedSampler(_bumper_or_oracle)
     try:
         hist = maze_orgb.train_orgb_cell(
-            model, tok, cell="A", seed=0, steps=2, batch_size=2, group_size=3,
+            model, tok, cell="A", seed=0, steps=steps, batch_size=2, group_size=3,
             train_pool=[maze2.from_layout(TWOMINES, seed=500 + i)
                         for i in range(2)],
             fmt=ASCII, log_every=0, chunk_size=4, lr=0.1, **kw)
@@ -7550,3 +7550,25 @@ def test_selection_keeps_the_max_priced_return_and_never_reads_mine_steps():
                                 lambda s=step: snaps.append(s) or f"state@{s}")
     assert best == (40, (-22.0, 0.85), "state@40")
     assert snaps == [10, 20, 40], "a snapshot only when a read wins"
+
+
+def test_the_kl_anchor_pulls_toward_the_reference():
+    """The sign: a large coefficient leaves the policy nearer the warm start.
+
+    Step 0's KL gradient is zero (policy == reference), so the pull shows from
+    step 1's update on: `kl_to_ref` at step 2 is smaller at a large coefficient.
+    """
+    def run(coef):
+        ref = {}
+
+        def capture(model, tok):
+            ref.update(lora_state_dict(model))
+            return None
+
+        hist, _ = _exit_fixture_train(make_hook=capture, steps=3,
+                                      kl_coef=coef, kl_ref=ref)
+        return hist["kl_to_ref"]
+
+    weak, strong = run(1e-6), run(100.0)
+    assert weak[1] == pytest.approx(strong[1], rel=1e-6)
+    assert strong[2] < weak[2], (strong, weak)

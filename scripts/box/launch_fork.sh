@@ -2,7 +2,7 @@
 # launch_fork.sh <boxN> <label>: sync HEAD to the box, check peft, launch a pre-registered fork-counterfactual arm or on-policy control.
 # Labels and their env are the case table below (PLAN-fork-counterfactual.md §16-§21); add a label there before launching it.
 # A ctrl4b_* label sets ARM=onpolicy_g6 and drops the fork knobs FK; everything else on the 4B line is shared.
-# kl4b_*_b<beta without its dot> adds MZ01_KL_COEF; val4b_* adds the validation selection (BUILD-solve-protect-2026-10-09.md); *ctrl* are their on-policy controls.
+# kl4b_*_b<beta without its dot> adds MZ01_KL_COEF; val4b_* adds the validation selection (BUILD-solve-protect-2026-10-09.md); *ctrl* are their on-policy controls. NOT pre-registered (BUILD-solve-protect §6): add a dated PLAN section before launching one.
 # Written 2026-10-04 as the session helper launch16.sh; needs MZ01_BOX_DIR (boxN.url / boxN.token).
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."

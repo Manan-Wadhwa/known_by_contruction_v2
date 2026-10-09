@@ -3654,6 +3654,9 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         fingerprint["mine_price"] = mine_price
     if kl_coef:
         fingerprint["kl_coef"] = kl_coef
+        fingerprint["kl_ref_sha256"] = hashlib.sha256(b"".join(
+            kl_ref[k].detach().float().cpu().numpy().tobytes()
+            for k in sorted(kl_ref))).hexdigest()
     start, resumed, ckpt_saves = 0, None, 0
     if ckpt_path and resume and os.path.exists(ckpt_path):
         ck = load_cell_checkpoint(ckpt_path)
