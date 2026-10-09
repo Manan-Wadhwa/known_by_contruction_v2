@@ -7,12 +7,14 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**State 2026-10-07 04:00 IST (session d6f94cbe, branch `s21-tooling`, pushed).**
-Nothing running. The user stopped the programme (D-24, PLAN §21.11): the four
-seed-4 runs were killed (partials in `results/_stopped_2026-10-07/`, enter
-nothing); `mz01-watch` and the inhibitor are stopped; the five leases are idle
-for the user to release. `s21-tooling` is not merged into
-`reorg/b-split-trainer` (needs the user's go).
+**State 2026-10-09 11:45 IST (session d6f94cbe, branch `s21-tooling`).** §21
+RESUMED at seed 4 on five new leases (D-25, PLAN §21.12, pushed `10fe7a2`).
+Bring-up running (`mz01-bringup-boxN` units); inhibitor up. Next: launch
+box1 `forkcf4b_A_s4_tx`, box2 `forkcf4b_D_s4_tx`, box3 `ctrl4b_A_s4_m3`,
+box4 `ctrl4b_D_s4_m3`, box5 `forkcf4b_A_s5_tx`; record the leases'
+environment; watchers, `mz01-watch`, reads monitor. Then seeds 5-7 as boxes
+free; final analysis at seed 7 (`s21.py`). The 10-07 stop's partials stay in
+`results/_stopped_2026-10-07/`. Creds in the job scratchpad only.
 
 **Where it ended** (`docs/RESULTS_LOG.md` §11; PLAN §19.4-§21.11).
 - No AVOIDS credited in the programme.
@@ -27,8 +29,7 @@ for the user to release. `s21-tooling` is not merged into
   1) alike, so it is not specific to the fork term.
 
 **Open for the user.** §20.2's credit (§21.4); band or horizon
-(`docs/research/2026-10-04-band-horizon/COMPARISON.md`); whether to resume §21
-(seeds 4-7) on new leases; merging `s21-tooling`.
+(`docs/research/2026-10-04-band-horizon/COMPARISON.md`); merging `s21-tooling`.
 
 **To resume.** `docs/HANDOFF-2026-10-06.md` for bring-up. All §21 labels are
 in `launch_fork.sh` (and `forkcf4b_{A,D}_s1_tx_h320`). Run helpers from a
