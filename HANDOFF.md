@@ -7,35 +7,32 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**State 2026-10-09 16:05 IST (session d6f94cbe, branch `s21-tooling`).** The
-user stopped §21 at seeds 0-5 and changed approach (D-26, §21.17). Running
-since 10:28Z (§22, §22.1): `forkcf4b_A_s{1..5}_tx_h320` on box1-box5 (320
-steps, ~5.2 h). Building in worktree `s22-solve` (branch `s22-solve`): a KL
-anchor to the warm start in RL and checkpoint selection on a validation set
-(priced return only), with tests, critic, controls; then pre-register and run
-them. Partners `forkcf4b_D_s{k}_tx_h320` and 320-step controls follow.
-Watchers per box, `mz01-watch`, inhibitor, reads monitor. Creds in scratchpad.
+**State 2026-10-09 19:05 IST (session d6f94cbe, worktree `s21-tooling`, pushed
+`9dadf21`).** §21 stopped at seeds 0-5 (D-26). RUNNING since 10:28Z (§22):
+`forkcf4b_A_s{k}_tx_h320` on box k (k=1..5), 320 steps, ~step 140, end ~21:15
+IST; reads to 120 all FLAT or RANDOMISED, none under 0.75 (provisional).
+After the PC restart (16:36 IST) these were restored: per-box `watch_box.sh`
+bg tasks, `mz01-watch`, inhibitor, reads monitor. Creds: job scratchpad
+`/home/manan/.claude/jobs/d6f94cbe/tmp/boxes` (box1 is a fresh 10-09 lease).
+BUILT and merged (`BUILD-solve-protect-2026-10-09.md`, tests 155 pass):
+`MZ01_KL_COEF` (KL to warm start) and `MZ01_VAL_EVERY/N` (checkpoint by
+validation priced return); labels `kl4b_*`, `klctrl4b_*`, `val4b_*`,
+`valctrl4b_*` NOT pre-registered. PENDING user answers (asked 16:40):
+beta choice; cell-D selection; first block at 21:15. If no answer by ~20:45
+IST, pre-register the lead's picks: all three betas (0.03/0.1/0.3) as matched
+blocks at seed 0; cell D selected by the world's priced return; both recipes
+at seed 0 first, §22's D partners and 320-step controls behind. Before
+reading any val run, build a scorer path for `eval_selected` (open point 6).
 
-**Where it ended** (`docs/RESULTS_LOG.md` §11; PLAN §19.4-§21.11).
-- No AVOIDS credited in the programme.
-- §20 (dose −20) closed: both arms ended RANDOMISED (§20.3, §20.4). §20.2's
-  AVOIDS read at 120 stays withheld for the user (§21.4).
-- §19's arm met AVOIDS at 320 by mine and solve (0.938 / 0.743, paired
-  −0.430 [−0.664, −0.242]); the user kept credit withheld (§19.4, §21.7).
-- §21 interim, seeds 0-3, one run per cell (§21.10): P_fork −0.168
-  [−0.436, +0.091] not shown; P_on −0.273 [−0.494, −0.086], a control
-  property; F and I contain zero, half-widths 0.367 and 0.343.
-- Detour-and-cap over-avoidance hit a fork arm (seed 3) and a control (seed
-  1) alike, so it is not specific to the fork term.
+**Results so far** (`docs/RESULTS_LOG.md` §11; PLAN §19.4-§22): no AVOIDS
+credited. §19's seed-0 arm met AVOIDS at 320 (withheld, §19.4); §20 closed;
+§21 seeds 0-5: fork arms that kept solve read 0.765 (s1), 0.830 (s2), 1.050
+(s0) at 160; seeds 3-5 over-avoided (§21.9-§21.16).
 
 **Open for the user.** §20.2's credit (§21.4); band or horizon
 (`docs/research/2026-10-04-band-horizon/COMPARISON.md`); merging `s21-tooling`.
 
-**To resume.** `docs/HANDOFF-2026-10-09.md` first; `docs/HANDOFF-2026-10-06.md` for bring-up. All §21 labels are
-in `launch_fork.sh` (and `forkcf4b_{A,D}_s1_tx_h320`). Run helpers from a
-worktree only after symlinking each label's `results/` dir to the main
-checkout's. The classifier may block launches on freed boxes without the
-user's explicit go. `scripts/box/s21.py --seeds ...` gives the across-seed read.
+**To resume.** `docs/HANDOFF-2026-10-09.md`, then this section.
 
 **Gotchas** (the full list is in the takeover prompt).
 - Compare every arm with its on-policy control as well as its cell-D partner.
