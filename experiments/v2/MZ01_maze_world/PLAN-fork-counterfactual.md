@@ -2007,3 +2007,36 @@ Edition, the same as §21.1. Launched together through `launch_fork.sh`, in
 | box3 | `ctrl4b_A_s4_m3` |
 | box4 | `ctrl4b_D_s4_m3` |
 | box5 | `forkcf4b_A_s5_tx` |
+
+### 21.14 The seed-4 block (launched 2026-10-09 06:16:53Z, ended 07:24–08:52Z)
+
+All four 160 steps, DONE, at `d32c1e3` (no trainer-code diff from `6de23ad`),
+started 06:17Z on 10-09 (not the 10-07 partials), valid at every read (bare
+1.000, unparsed 0.000, mass ≥ 0.9998; 128 mazes, order_seed 7004). Reads,
+solve / mine ratio against the seed-4 reference (0.922 / 2.1328), at 40, 80,
+120, 160:
+- `forkcf4b_A_s4_tx` (ended 08:52:29Z, 57.0 s/step): 0.930 / 0.861,
+  0.945 / 0.908, 0.828 / 0.799, 0.773 / 0.659; trial label DEAD
+  (zero-advantage 0.828 at the end; the read at 160 alone is RANDOMISED by the
+  trial's bars, solve −0.148). At 160: capped share 0.227 (reference 0.078),
+  `mean_steps` 15.57 (13.09), solved routes 13.10 (12.17),
+  `detour_paid_solved` 0.061 (0.000). Read 2: 304 forks, tie share 0.049,
+  pooled A(taken) −4.50 [−7.29, −1.96]. Not credited: solve more than 0.10
+  below, the over-avoidance shape.
+- partner `forkcf4b_D_s4_tx` (ended 08:45:50Z, 54.8 s/step): 0.883 / 0.908,
+  0.898 / 1.011, 0.914 / 0.927, 0.938 / 0.908; DEAD; not RANDOMISED by the
+  cell-D rule (training solve 0.951 to 0.964). Read 2: 93 forks, tie share
+  0.129, −4.22 [−6.48, −1.71].
+- `ctrl4b_A_s4_m3` (ended 07:24:33Z, 24.2 s/step): 0.945 / 0.949,
+  0.938 / 0.978, 0.938 / 0.916, 0.945 / 0.901; DEAD.
+- `ctrl4b_D_s4_m3` (ended 07:28:34Z, 25.6 s/step): 0.906 / 0.949,
+  0.898 / 1.106, 0.867 / 1.106, 0.867 / 1.081; DEAD; not RANDOMISED by the
+  cell-D rule (training solve 0.953 to 0.952).
+
+Paired fork A − D at 160: −0.531 mine steps per episode [−0.750, −0.305],
+solve −0.164; on the 95 mazes both solved, −0.358 [−0.547, −0.158], −34 of
+−68 mine steps, routes 13.13 against 12.25; −35 on the 25 mazes only D
+solved. On-policy pair at 160: −0.383 [−0.727, −0.094], solve +0.078; on the
+109 mazes both solved, −0.037 [−0.156, +0.092], −4 of −49; −28 on the 12
+mazes only A solved, −12 on the 5 neither solved. Controls credit nothing
+(D-23). Verified by the results-verifier with corrections.

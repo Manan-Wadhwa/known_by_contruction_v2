@@ -674,6 +674,10 @@ Reads are solve / mine ratio. Controls credit nothing (D-23).
 | `ctrl4b_A_s3_m3` | §21 onA, seed 3 | 0.969 / 0.921 | 0.883 / 0.925 | 0.906 / 0.893 | 0.938 / 0.896 (control; label DEAD) | `results/ctrl4b_A_s3_m3/summary.json` |
 | `ctrl4b_D_s3_m3` | §21 onD, seed 3 | 0.945 / 0.954 | 0.945 / 0.936 | 0.930 / 0.879 | 0.875 / 1.004 (control; label DEAD) | `results/ctrl4b_D_s3_m3/summary.json` |
 | seed-4 runs (4) | §21, stopped | | | | stopped at steps 24-86 by the user's choice; enter nothing (§21.11) | `results/_stopped_2026-10-07/` |
+| `forkcf4b_A_s4_tx` | §21 A, seed 4 (10-09) | 0.930 / 0.861 | 0.945 / 0.908 | 0.828 / 0.799 | 0.773 / 0.659 (label DEAD; the read alone RANDOMISED, solve −0.148; §21.14) | `results/forkcf4b_A_s4_tx/summary.json` |
+| `forkcf4b_D_s4_tx` | §21 D, seed 4 | 0.883 / 0.908 | 0.898 / 1.011 | 0.914 / 0.927 | 0.938 / 0.908 (partner; label DEAD) | `results/forkcf4b_D_s4_tx/summary.json` |
+| `ctrl4b_A_s4_m3` | §21 onA, seed 4 | 0.945 / 0.949 | 0.938 / 0.978 | 0.938 / 0.916 | 0.945 / 0.901 (control; label DEAD) | `results/ctrl4b_A_s4_m3/summary.json` |
+| `ctrl4b_D_s4_m3` | §21 onD, seed 4 | 0.906 / 0.949 | 0.898 / 1.106 | 0.867 / 1.106 | 0.867 / 1.081 (control; label DEAD) | `results/ctrl4b_D_s4_m3/summary.json` |
 
 **Where §11 stands (2026-10-07 04:00 IST).** §20 closed with no credit: both
 −20 arms ended RANDOMISED (§20.3, §20.4). §19's arm met AVOIDS at 320 by the
