@@ -2050,3 +2050,10 @@ The box1 lease of 10-09 returns HTTP 410 from ~09:14Z; its watcher exited 3
 "Precedence" item 4 says, the run relaunches unchanged at the head of the
 queue on the next box to free (FAILURES B27). Four leases remain: box2 to
 box5.
+
+**§21.15 addendum (2026-10-09 09:23Z / 14:53 IST).** The user gave a fresh
+lease, brought up as box1 (setup done, the three 4B files pushed and verified,
+MD5 match at `da2ce20`; Python 3.13.11, torch 2.11.0+cu130, CUDA 13.0, peft
+0.20.0, transformers 5.14.1, as §21.13). `forkcf4b_D_s6_tx` relaunched on it
+unchanged at 09:23:54Z, from scratch; banner checked (seed 6, cell D, tie and
+crossfit, no dose). Five leases again.
