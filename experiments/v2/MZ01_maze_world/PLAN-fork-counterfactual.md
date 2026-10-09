@@ -2040,3 +2040,13 @@ solved. On-policy pair at 160: −0.383 [−0.727, −0.094], solve +0.078; on t
 109 mazes both solved, −0.037 [−0.156, +0.092], −4 of −49; −28 on the 12
 mazes only A solved, −12 on the 5 neither solved. Controls credit nothing
 (D-23). Verified by the results-verifier with corrections.
+
+### 21.15 Box1's lease died (2026-10-09 ~09:14Z / 14:44 IST); `forkcf4b_D_s6_tx` lost at step 17
+
+The box1 lease of 10-09 returns HTTP 410 from ~09:14Z; its watcher exited 3
+("unreachable twice"). Lost: `forkcf4b_D_s6_tx` (launched 08:54:23Z) at step
+17 of 160, no held-out read. The last pull is kept under
+`results/_lost_2026-10-09_forkcf4b_D_s6_tx/` and enters nothing. As §21
+"Precedence" item 4 says, the run relaunches unchanged at the head of the
+queue on the next box to free (FAILURES B27). Four leases remain: box2 to
+box5.
