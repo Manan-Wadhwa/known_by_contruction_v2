@@ -2635,14 +2635,37 @@ def _fork_move_logp(model, tok, texts, *, cols, device, return_mass=False):
     return mlogp
 
 
+def _reference_move_logp(model, tok, texts, ref_state, *, cols, device,
+                         chunk_size=8):
+    """The frozen reference's 4-way move log-probs at each prompt. -> [N, 4].
+
+    Inputs: the prompts (each decision's own `text`), `ref_state` (a LoRA state
+    dict, e.g. the warm start). Copies `ref_state` into the LoRA tensors in
+    place, reads `_fork_move_logp` chunk by chunk with no gradient, then copies
+    the policy's own tensors back bit for bit. Call it with no graph alive.
+    """
+    own = lora_state_dict(model, cpu=False)
+    load_lora_state_dict(model, ref_state)
+    try:
+        with torch.no_grad():
+            return torch.cat([
+                _fork_move_logp(model, tok, texts[lo:lo + chunk_size],
+                                cols=cols, device=device)
+                for lo in range(0, len(texts), chunk_size)])
+    finally:
+        load_lora_state_dict(model, own)
+
+
 # --------------------------------------------------------------- the trainer
 
 def _rescore(model, tok, rows, *, cols, device, max_new_tokens,
-             move_mask=False):
+             move_mask=False, return_mlogp=False):
     """Per-token log-probs of the SAMPLED tokens, plus the move-mass readout.
 
     -> (tok_logp [B, W], m_mask, r_mask, log_mass [B], entropy [B]),
-    where `W` is the longest generated reply in the chunk.
+    where `W` is the longest generated reply in the chunk. `return_mlogp`
+    (nineteenth pass, the KL anchor) appends the 4-way move log-probs [B, 4]
+    at the first-token position, with grad.
 
     The PROMPTS are LEFT-padded, exactly as the sampler pads them, so every
     row's prompt ends at the same index and generated token j sits at the same
@@ -2774,8 +2797,9 @@ def _rescore(model, tok, rows, *, cols, device, max_new_tokens,
             first = torch.where(in_cols, restricted.to(tok_logp.dtype),
                                 tok_logp[:, 0])
             tok_logp = torch.cat([first[:, None], tok_logp[:, 1:]], dim=1)
-    return tok_logp, m_mask.to(tok_logp.dtype), r_mask.to(tok_logp.dtype), \
-        log_mass, entropy
+    out = (tok_logp, m_mask.to(tok_logp.dtype), r_mask.to(tok_logp.dtype),
+           log_mass, entropy)
+    return out + (mlogp,) if return_mlogp else out
 
 
 # ------------------------------------------------ the mid-cell checkpoint (R1)
@@ -3131,6 +3155,7 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                     fork_coef=1.0, fork_std=False, fork_temperature=1.0,
                     fork_grad_max=FORK_GRAD_MAX_DEFAULT, fork_mass_coef=None,
                     fork_pick="uniform", fork_select="none",
+                    kl_coef=0.0, kl_ref=None,
                     on_step=None):
     """One cell of the 2x2. Returns a per-step history dict.
 
@@ -3317,6 +3342,16 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     the trace and their own keys to the fingerprint and the config; at the
     defaults the fork arm is the seventeenth pass's to the bit.
 
+    THE KL ANCHOR (nineteenth pass, 2026-10-09,
+    BUILD-solve-protect-2026-10-09.md). With `kl_coef > 0` and `kl_ref` (a LoRA
+    state dict, the frozen warm start) the loss gains
+    `kl_coef * mean_d KL(pi(.|d) || ref(.|d))`, the exact KL over the four bare
+    move ids at the position that predicts each sampled decision's first token
+    -- the 4-way distribution the move term, the mask and the entropy bonus
+    read. `ref` is read once a step by `_reference_move_logp` (no gradient).
+    The trace gains `kl_to_ref` and the config a `kl` block, both only when on;
+    `kl_coef=0` runs none of it.
+
     OFF IS OFF. With `fork_cf=False` nothing above runs, no random number is
     drawn for it, the trace gains no field and the loss is the fourteenth pass's
     to the bit -- `test_fork_off_is_the_pre_build_trace_and_the_pre_build_adapter`.
@@ -3468,6 +3503,11 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                   else float(mine_price))
     mine_dosed = mine_price != float(maze2.SCORE_MINE)
     _refuse_mine_dose(cell, mine_price, mine_dosed, mine_cost)
+    # NINETEENTH PASS. The anchor needs both halves; either alone is refused.
+    kl_coef = float(kl_coef or 0.0)
+    if kl_coef < 0 or (kl_coef > 0) != (kl_ref is not None):
+        raise ValueError(f"kl_coef={kl_coef} needs kl_ref (and kl_ref needs "
+                         "kl_coef > 0): the KL anchor is both or neither")
     n_trainable = assert_only_lora_trainable(model)
     params = lora_parameters(model)
     device = next(model.parameters()).device
@@ -3476,6 +3516,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
 
     gen = set_all_seeds(seed) if generator is None else generator
     cols = _move_cols(tok, device)
+    if kl_coef:
+        kl_ref = {k: v.to(device) for k, v in kl_ref.items()}
     move_mask = bool(move_mask)
     exit_at_cap = bool(exit_at_cap)
     # TWELFTH PASS. Resolved ONCE, from the same `cols` the mask restricts to
@@ -3509,6 +3551,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     # The second pass's own clock, only when there is a second pass.
     if fork_cf and fork_select == "crossfit":
         history["fork_stage2_seconds"] = []
+    if kl_coef:
+        history["kl_to_ref"] = []
     history["examples"] = []
     zero_move = zero_yell = zero_signal = 0
     coef = float(entropy_coef)
@@ -3608,6 +3652,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
     # because `_checkpoint_mismatch` unions the keys of the two fingerprints.
     if mine_dosed:
         fingerprint["mine_price"] = mine_price
+    if kl_coef:
+        fingerprint["kl_coef"] = kl_coef
     start, resumed, ckpt_saves = 0, None, 0
     if ckpt_path and resume and os.path.exists(ckpt_path):
         ck = load_cell_checkpoint(ckpt_path)
@@ -3806,14 +3852,19 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             # ---- the loss, teacher-forced and chunked ----------------------
             optimiser.zero_grad(set_to_none=True)
             t_res0 = time.perf_counter()
+            # NINETEENTH PASS. The anchor's reference, before any graph exists.
+            ref_mlogp = (_reference_move_logp(
+                model, tok, [d["text"] for d in decisions], kl_ref, cols=cols,
+                device=device, chunk_size=chunk_size) if kl_coef else None)
             normaliser = len(decisions)
-            loss_val = ent_sum = mass_sum = 0.0
+            loss_val = ent_sum = mass_sum = kl_sum = 0.0
             move_counts = torch.zeros(len(MOVE_WORDS))
             for lo in range(0, len(decisions), chunk_size):
                 rows = decisions[lo:lo + chunk_size]
-                tok_logp, m_mask, r_mask, log_mass, ent = _rescore(
+                tok_logp, m_mask, r_mask, log_mass, ent, *pol = _rescore(
                     model, tok, rows, cols=cols, device=device,
-                    max_new_tokens=max_new_tokens, move_mask=move_mask)
+                    max_new_tokens=max_new_tokens, move_mask=move_mask,
+                    **({"return_mlogp": True} if kl_coef else {}))
                 a_move = torch.tensor([move_adv[lo + j] for j in range(len(rows))],
                                       dtype=tok_logp.dtype, device=tok_logp.device)
                 a_yell = torch.tensor([yell_adv[lo + j] for j in range(len(rows))],
@@ -3831,6 +3882,11 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
                     loss = loss - coef * ent.mean() * share
                 if move_mass_coef:
                     loss = loss + move_mass_coef * (-log_mass.mean()) * share
+                if kl_coef:
+                    ref = ref_mlogp[lo:lo + len(rows)]
+                    kl = (pol[0].exp() * (pol[0] - ref)).sum(-1)
+                    loss = loss + kl_coef * kl.mean() * share
+                    kl_sum += float(kl.detach().sum())
                 loss.backward()
                 loss_val += float(loss.detach())
                 with torch.no_grad():
@@ -4074,6 +4130,8 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
             history["policy_entropy"].append(measured_entropy)
             history["entropy_coef"].append(coef)
             history["move_mass"].append(mass_sum / len(decisions))
+            if kl_coef:
+                history["kl_to_ref"].append(kl_sum / len(decisions))
             history["grad_norm"].append(grad_norm)
             history["step_seconds"].append(elapsed)
             history["sample_seconds"].append(t_sample)
@@ -4399,6 +4457,11 @@ def train_orgb_cell(model, tok, *, cell="D", seed=0, steps=300, n=9,
         "scoring": {"step": maze2.SCORE_STEP, "mine": maze2.SCORE_MINE,
                     "goal": maze2.SCORE_GOAL, "mine_in_return": mine_cost,
                     **({"mine_price": mine_price} if mine_dosed else {})},
+        # NINETEENTH PASS. Present only when the anchor ran.
+        **({"kl": {"coef": kl_coef, "direction": "KL(policy || reference)",
+                   "over": "the four bare move ids at each decision's first "
+                           "token, the reference a frozen LoRA state"}}
+           if kl_coef else {}),
         # FIFTEENTH PASS. The fork block, present ONLY when the term ran, so a
         # row from any earlier arm is byte for byte what it was and a reader of
         # the JSON never has to infer the recipe from a knob's default.

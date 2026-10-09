@@ -2,12 +2,14 @@
 # launch_fork.sh <boxN> <label>: sync HEAD to the box, check peft, launch a pre-registered fork-counterfactual arm or on-policy control.
 # Labels and their env are the case table below (PLAN-fork-counterfactual.md §16-§21); add a label there before launching it.
 # A ctrl4b_* label sets ARM=onpolicy_g6 and drops the fork knobs FK; everything else on the 4B line is shared.
+# kl4b_*_b<beta without its dot> adds MZ01_KL_COEF; val4b_* adds the validation selection (BUILD-solve-protect-2026-10-09.md); *ctrl* are their on-policy controls.
 # Written 2026-10-04 as the session helper launch16.sh; needs MZ01_BOX_DIR (boxN.url / boxN.token).
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 S="${MZ01_BOX_DIR:?set MZ01_BOX_DIR to the directory holding boxN.url and boxN.token}"
 BOX=$1; LABEL=$2; R=/marimo/repo/experiments/v2/MZ01_maze_world/results
 STEPS=160; EVAL=40,80,120; ARM=fork_cf_g6; FK="MZ01_FORK_GRAD_MAX=0.3 MZ01_FORK_COEF=1.0"
+B=${LABEL##*_b}; KL="MZ01_KL_COEF=${B:0:1}.${B:1}"; V="MZ01_VAL_EVERY=10 MZ01_VAL_N=128"; H=40,80,120,160,200,240,280
 case $LABEL in
   forkcf4b_A_s0_tx)     SEED=0; X="MZ01_FORK_PICK=tie MZ01_FORK_SELECT=crossfit";;
   forkcf4b_D_s0_tx)     SEED=0; X="MZ01_TRIAL_CELL=D MZ01_FORK_PICK=tie MZ01_FORK_SELECT=crossfit";;
@@ -30,6 +32,14 @@ case $LABEL in
   forkcf4b_D_s[2-7]_tx) SEED=${LABEL:12:1}; X="MZ01_TRIAL_CELL=D MZ01_FORK_PICK=tie MZ01_FORK_SELECT=crossfit";;
   ctrl4b_A_s[0-7]_m3)   SEED=${LABEL:10:1}; ARM=onpolicy_g6; FK=; X=;;
   ctrl4b_D_s[0-7]_m3)   SEED=${LABEL:10:1}; ARM=onpolicy_g6; FK=; X="MZ01_TRIAL_CELL=D";;
+  kl4b_A_s[0-7]_b003|kl4b_A_s[0-7]_b0[13]) SEED=${LABEL:8:1}; X="MZ01_FORK_PICK=tie MZ01_FORK_SELECT=crossfit $KL";;
+  kl4b_D_s[0-7]_b003|kl4b_D_s[0-7]_b0[13]) SEED=${LABEL:8:1}; X="MZ01_TRIAL_CELL=D MZ01_FORK_PICK=tie MZ01_FORK_SELECT=crossfit $KL";;
+  klctrl4b_A_s[0-7]_b003|klctrl4b_A_s[0-7]_b0[13]) SEED=${LABEL:12:1}; ARM=onpolicy_g6; FK=; X="$KL";;
+  klctrl4b_D_s[0-7]_b003|klctrl4b_D_s[0-7]_b0[13]) SEED=${LABEL:12:1}; ARM=onpolicy_g6; FK=; X="MZ01_TRIAL_CELL=D $KL";;
+  val4b_A_s[0-7])       SEED=${LABEL:9:1}; STEPS=320; EVAL=$H; X="MZ01_FORK_PICK=tie MZ01_FORK_SELECT=crossfit $V";;
+  val4b_D_s[0-7])       SEED=${LABEL:9:1}; STEPS=320; EVAL=$H; X="MZ01_TRIAL_CELL=D MZ01_FORK_PICK=tie MZ01_FORK_SELECT=crossfit $V";;
+  valctrl4b_A_s[0-7])   SEED=${LABEL:13:1}; STEPS=320; EVAL=$H; ARM=onpolicy_g6; FK=; X="$V";;
+  valctrl4b_D_s[0-7])   SEED=${LABEL:13:1}; STEPS=320; EVAL=$H; ARM=onpolicy_g6; FK=; X="MZ01_TRIAL_CELL=D $V";;
   *) echo "unknown label $LABEL"; exit 2;;
 esac
 bash scripts/box/bringup2_nosetup.sh $BOX 2>&1 | grep -E 'MD5|ready|FAIL'

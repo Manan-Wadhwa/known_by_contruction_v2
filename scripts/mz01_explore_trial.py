@@ -204,6 +204,25 @@ Environment:
                      in the checkpoint fingerprint only when it is not -10, so a
                      resume across two doses is refused.
                      (BUILD-mine-dose-2026-09-10.md.)
+  MZ01_KL_COEF       NINETEENTH PASS, 2026-10-09, DEFAULT 0 (off). beta in
+                     `+ beta * KL(policy || warm start)` on every arm that
+                     trains: the exact KL over the four bare move ids at each
+                     sampled decision's first token, the reference the frozen
+                     warm start this run loaded (navigator + MZ01_WARM_START).
+                     The warm start carries no mine information (it imitates
+                     the walls-only navigator, remarks placed independently of
+                     the mine). (BUILD-solve-protect-2026-10-09.md.)
+  MZ01_VAL_EVERY     NINETEENTH PASS, DEFAULT 0 (off). Every k steps (and at the
+                     last) the arm is read greedily on MZ01_VAL_N VALIDATION
+                     mazes, seeds in VAL_SEED_RANGE (disjoint from rl.py's
+                     train and eval ranges, deduped by canonical hash against
+                     both sets); the adapter with the best validation
+                     `mean_score` -- the world's priced return, solve the
+                     tie-break, never a mine count -- is kept, and at the end it
+                     gets the usual held-out read as `payload["eval_selected"]`
+                     beside `eval`; `payload["val"]` holds the reads. No
+                     gradient touches a validation maze.
+  MZ01_VAL_N         validation mazes (default 128).
   MZ01_NO_PLACEBO / MZ01_NO_NOVEL
                      the driver's knobs, DEFAULTED TO OFF here: a trial arm is
                      not an organism and the graded claim is not being read.
@@ -329,6 +348,13 @@ FORK_MASS_COEF = float(_FORK_MASS_COEF) if _FORK_MASS_COEF else None
 # exploration recipe and the dose is a property of the whole trial -- and it is
 # handed only to a cell that prices mines at all.
 MINE_PRICE = float(os.environ.get("MZ01_SCORE_MINE", "-10.0"))
+# NINETEENTH PASS, 2026-10-09 (BUILD-solve-protect-2026-10-09.md). The KL
+# anchor to the warm start and the validation-selected checkpoint; both off at
+# their defaults. The validation range lies past rl.py's two ranges.
+KL_COEF = float(os.environ.get("MZ01_KL_COEF", "") or 0.0)
+VAL_EVERY = int(os.environ.get("MZ01_VAL_EVERY", "") or 0)
+VAL_N = int(os.environ.get("MZ01_VAL_N", "") or 128)
+VAL_SEED_RANGE = (1_000_000_000, 1_500_000_000)
 # The driver's knobs, DEFAULTED OFF here. A trial arm is not an organism: the
 # placebo pass is the control for the GRADED claim and the novel pairings are
 # the transfer probe, and neither is being read. Two passes saved per arm.
@@ -598,6 +624,41 @@ def eval_block(measurement, step=None):
     }
 
 
+def validation_set(count, *, n, eval_set, train_pool, generator):
+    """The validation mazes. -> a list of `count` mazes.
+
+    Inputs: the held-out set and the training pool already drawn, and the
+    generator. Seeds come from VAL_SEED_RANGE, past rl.py's train and eval
+    ranges, and every maze is deduped by canonical hash against both sets.
+    """
+    from calibration import maze2
+    seen = {m.labels["canonical_hash"] for m in list(eval_set) + list(train_pool)}
+    mazes, _ = maze2.generate_set(count, n=n, generator=generator,
+                                  seed_range=VAL_SEED_RANGE, seen=seen)
+    return mazes
+
+
+def val_key(competence):
+    """The selection key of one validation read. -> (mean_score, solve_rate).
+
+    Input: `maze2.aggregate`'s `overall` dict. The world's priced return (step,
+    mine at the world's price, goal) first and solve as the tie-break; it reads
+    those two keys and nothing else, so no mine count can select.
+    """
+    return (competence["mean_score"], competence["solve_rate"])
+
+
+def val_select(best, step, competence, snapshot):
+    """One validation read against the best so far. -> the new best.
+
+    Inputs: `best` (None or (step, key, adapter state)), this read's step and
+    `overall` dict, and `snapshot()` -> the adapter state, called only when
+    this read wins. Strictly greater wins, so the earliest step keeps a tie.
+    """
+    key = val_key(competence)
+    return (step, key, snapshot()) if best is None or key > best[1] else best
+
+
 def arm_payload(arm, *, cell, seed, plan, preflight, history, status,
                 cfg, started_at, model_id, name=None, follow_up=False,
                 measurement=None, eval_at=None):
@@ -821,6 +882,17 @@ def main():
         maze2.glyphs_for_seed(TRIAL_SEED, counterbalance=True, **roles), FORMAT)
     say(f"{len(eval_set)} held-out mazes, a {len(train_pool)}-maze pool, "
         f"glyphs {glyphs.as_dict()}")
+    # NINETEENTH PASS. Drawn only when the knob is on, so the off path draws
+    # nothing it did not draw before.
+    val_mazes = (validation_set(
+        VAL_N, n=GRID_N, eval_set=eval_set, train_pool=train_pool,
+        generator=derive_generator(0, "orgb", "val")) if VAL_EVERY else [])
+    if VAL_EVERY:
+        say(f"  validation: {len(val_mazes)} mazes, seeds in {VAL_SEED_RANGE}, "
+            f"read every {VAL_EVERY} steps; selection on mean_score, then solve")
+    if KL_COEF:
+        say(f"  KL anchor: {KL_COEF} x KL(policy || warm start) on the move "
+            f"distribution, every arm")
 
     t0 = time.perf_counter()
     results, done = {}, []
@@ -986,6 +1058,10 @@ def main():
                # ONLY when it is not the world's price -- an undosed arm's row
                # is byte for byte what it was.
                **({"mine_price": arm_mine_price} if arm_dosed else {}),
+               # NINETEENTH PASS. Each only when on.
+               **({"kl_coef": KL_COEF} if KL_COEF else {}),
+               **({"val_every": VAL_EVERY, "val_n": len(val_mazes)}
+                  if VAL_EVERY else {}),
                "placebo": PLACEBO, "novel": NOVEL,
                "warm_start": ws_path, "nav_adapter": NAV_ADAPTER,
                "nav_adapter_sha256": nav.get("adapter_sha256"),
@@ -1060,6 +1136,7 @@ def main():
             say("  " + line)
         plan = pre["plan"]
         reads = {}
+        val = {"reads": {}, "best": None}
 
         def on_step(step, history):
             # THE MID-ARM READ, FIRST, so the payload this hook writes already
@@ -1077,11 +1154,48 @@ def main():
                 except Exception:                          # noqa: BLE001
                     say(f"  !! MID-ARM READ FAILED at step {step + 1}:\n"
                         + traceback.format_exc())
-            drv.write_payload(path, arm_payload(
+            # NINETEENTH PASS. The validation read and the selection: greedy,
+            # no gradient, on mazes outside the pool and the held-out set.
+            if VAL_EVERY and ((step + 1) % VAL_EVERY == 0
+                              or step + 1 == TRIAL_STEPS):
+                try:
+                    comp = maze_orgb.measure_organism(
+                        model, tok, val_mazes, cell=cell, seed=TRIAL_SEED,
+                        glyphs=glyphs, fmt=FORMAT, batch_size=EVAL_BATCH,
+                        device=device, order_seed=9000 + int(TRIAL_SEED),
+                        placebo=False, novel=False,
+                        max_new_tokens=run_orgb.DEFAULT_CONFIG["max_new_tokens"]
+                    )["competence"]
+                    key = val_key(comp)
+                    val["reads"][str(step + 1)] = {
+                        "mean_score": key[0], "solve_rate": key[1]}
+                    val["best"] = val_select(
+                        val["best"], step + 1, comp,
+                        lambda: lora_state_dict(model, cpu=True))
+                    say(f"  VALIDATION @{step + 1}: mean_score {key[0]:.3f}, "
+                        f"solve {key[1]:.3f}; best @{val['best'][0]}")
+                except Exception:                          # noqa: BLE001
+                    say(f"  !! VALIDATION READ FAILED at step {step + 1}:\n"
+                        + traceback.format_exc())
+            p = arm_payload(
                 arm, cell=cell, seed=TRIAL_SEED, plan=plan, preflight=pre,
                 history=history, status=f"RUNNING step {step + 1}/{TRIAL_STEPS}",
                 cfg=cfg, started_at=started, model_id=model_id,
-                name=name, follow_up=bool(tag), eval_at=reads))
+                name=name, follow_up=bool(tag), eval_at=reads)
+            if VAL_EVERY:
+                p["val"] = val_record()
+            drv.write_payload(path, p)
+
+        def val_record():
+            """The validation block for the payload. -> dict (no adapter)."""
+            best = val["best"]
+            return {"every": VAL_EVERY, "n_mazes": len(val_mazes),
+                    "seed_range": list(VAL_SEED_RANGE),
+                    "order_seed": 9000 + int(TRIAL_SEED),
+                    "criterion": "max (mean_score, solve_rate); mean_score is "
+                                 "the world's priced return at its own price",
+                    "reads": dict(val["reads"]),
+                    "selected_step": best[0] if best else None}
 
         hist = maze_orgb.train_orgb_cell(
             model, tok, cell=cell, seed=TRIAL_SEED, steps=TRIAL_STEPS,
@@ -1114,6 +1228,9 @@ def main():
                 "fork_mass_coef": FORK_MASS_COEF,
                 "fork_pick": FORK_PICK, "fork_select": FORK_SELECT}
                if arm_fork else {}),
+            # NINETEENTH PASS. The anchor's reference is the exact warm-start
+            # state every arm restores; passed only when on.
+            **({"kl_coef": KL_COEF, "kl_ref": warm_state} if KL_COEF else {}),
             chunk_size=CHUNK, train_pool=train_pool, glyphs=glyphs,
             fmt=FORMAT, log_every=1,
             # NO CHECKPOINT: an arm is a few dozen steps and is discarded
@@ -1173,6 +1290,23 @@ def main():
             history=hist, status="DONE", cfg=cfg, started_at=started,
             model_id=model_id, name=name, follow_up=bool(tag),
             measurement=meas, eval_at=reads)
+        # NINETEENTH PASS. The selected adapter's held-out read, by the same
+        # `measure()`; at the last step it IS the final adapter and its read.
+        if VAL_EVERY:
+            payload["val"] = val_record()
+            payload["eval_selected"] = None
+            best = val["best"]
+            try:
+                if best and best[0] == TRIAL_STEPS:
+                    payload["eval_selected"] = eval_block(meas, step=best[0])
+                elif best:
+                    load_lora_state_dict(model, best[2])
+                    payload["eval_selected"] = eval_block(
+                        measure(cell, f"{name} selected @{best[0]}"),
+                        step=best[0])
+            except Exception:                              # noqa: BLE001
+                say(f"  !! SELECTED READ FAILED for {name}:\n"
+                    + traceback.format_exc())
         drv.write_payload(path, payload)
         say(f"  WROTE {path}")
         return payload
