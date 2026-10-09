@@ -1987,3 +1987,23 @@ to 7 exists.
 
 **Leases.** New leases differ from 10-06's; §21.1's environment record is
 redone at launch and logged as a dated entry (§21 "Measurement").
+
+### 21.13 Launches on the 2026-10-09 leases (06:16:53Z / 11:46 IST)
+
+Five leases came up at 06:14–06:16Z: every box's setup log ends "SETUP DONE"
+(`bringup2.sh`'s "setup FAILED" was the known false positive), the three 4B
+files were pushed and verified, and the six synced files matched by MD5 at
+`d32c1e3` (no trainer-code diff from `6de23ad`). Every box runs Python
+3.13.11, torch 2.11.0+cu130 (CUDA 13.0), peft 0.20.0 and transformers 5.14.1
+under `/marimo/persist/env.sh`, on an NVIDIA RTX PRO 6000 Blackwell Server
+Edition, the same as §21.1. Launched together through `launch_fork.sh`, in
+§21.12's queue order; banners checked (seed, cell, arm, mass 0.3; fork share
+"pick tie, select crossfit" on the fork runs only; no dose line):
+
+| box | label |
+| --- | --- |
+| box1 | `forkcf4b_A_s4_tx` |
+| box2 | `forkcf4b_D_s4_tx` |
+| box3 | `ctrl4b_A_s4_m3` |
+| box4 | `ctrl4b_D_s4_m3` |
+| box5 | `forkcf4b_A_s5_tx` |

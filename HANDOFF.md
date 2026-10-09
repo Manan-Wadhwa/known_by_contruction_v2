@@ -7,13 +7,13 @@ gotchas. Box URLs and tokens never go in this file.
 
 ## lead
 
-**State 2026-10-09 11:45 IST (session d6f94cbe, branch `s21-tooling`).** §21
-RESUMED at seed 4 on five new leases (D-25, PLAN §21.12, pushed `10fe7a2`).
-Bring-up running (`mz01-bringup-boxN` units); inhibitor up. Next: launch
-box1 `forkcf4b_A_s4_tx`, box2 `forkcf4b_D_s4_tx`, box3 `ctrl4b_A_s4_m3`,
-box4 `ctrl4b_D_s4_m3`, box5 `forkcf4b_A_s5_tx`; record the leases'
-environment; watchers, `mz01-watch`, reads monitor. Then seeds 5-7 as boxes
-free; final analysis at seed 7 (`s21.py`). The 10-07 stop's partials stay in
+**State 2026-10-09 11:50 IST (session d6f94cbe, branch `s21-tooling`).** §21
+RESUMED at seed 4 (D-25, PLAN §21.12). Running since 06:16:53Z (§21.13):
+box1 `forkcf4b_A_s4_tx`, box2 `forkcf4b_D_s4_tx`, box3 `ctrl4b_A_s4_m3`, box4
+`ctrl4b_D_s4_m3`, box5 `forkcf4b_A_s5_tx`. Watchers: one bg task per box,
+`mz01-watch`, inhibitor, reads monitor. Next: freed boxes take
+`forkcf4b_D_s5_tx`, `ctrl4b_{A,D}_s5_m3`, then seeds 6-7; final analysis at
+seed 7 (`s21.py`). The 10-07 stop's partials stay in
 `results/_stopped_2026-10-07/`. Creds in the job scratchpad only.
 
 **Where it ended** (`docs/RESULTS_LOG.md` §11; PLAN §19.4-§21.11).
