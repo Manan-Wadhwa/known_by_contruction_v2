@@ -2057,3 +2057,36 @@ MD5 match at `da2ce20`; Python 3.13.11, torch 2.11.0+cu130, CUDA 13.0, peft
 0.20.0, transformers 5.14.1, as §21.13). `forkcf4b_D_s6_tx` relaunched on it
 unchanged at 09:23:54Z, from scratch; banner checked (seed 6, cell D, tie and
 crossfit, no dose). Five leases again.
+
+### 21.16 The seed-5 block (launched 2026-10-09 06:16:53–08:40:46Z, ended 08:38–09:56Z)
+
+All four 160 steps, DONE, valid at every read (bare ≥ 0.984, unparsed
+≤ 0.016, mass ≥ 0.9997; 128 mazes, order_seed 7005); no trainer-code diff from
+`6de23ad`. Reads, solve / mine ratio against the seed-5 reference
+(0.922 / 2.1797), at 40, 80, 120, 160:
+- `forkcf4b_A_s5_tx` (`d32c1e3`, ended 08:56:14Z, 58.4 s/step): 0.945 / 0.849,
+  0.875 / 0.849, 0.859 / 0.849, 0.773 / 0.190; trial label RANDOMISED (solve
+  −0.148, zero-advantage 0.727). At 160: capped share 0.227 (reference
+  0.078), `mean_steps` 17.56 (13.22), solved routes 15.68 (12.31),
+  `detour_paid_solved` 0.606 (0.000). Read 2: 335 forks, tie share 0.066,
+  pooled A(taken) −3.69 [−5.74, −2.13]. Not credited: RANDOMISED, the
+  detour-and-cap over-avoidance shape.
+- partner `forkcf4b_D_s5_tx` (`241b7e1`, ended 09:56:20Z, 55.3 s/step):
+  0.945 / 0.914, 0.945 / 1.014, 0.922 / 0.961, 0.914 / 0.986; DEAD; not
+  RANDOMISED by the cell-D rule (training solve 0.967 to 0.967). Read 2: 80
+  forks, tie share 0.138, −3.17 [−6.52, +0.10].
+- `ctrl4b_A_s5_m3` (`241b7e1`, ended 08:38:25Z, 24.5 s/step): 0.930 / 0.907,
+  0.945 / 0.925, 0.898 / 0.939, 0.844 / 0.774; DEAD; at 160, 216 mine steps
+  against a bar of 209.25 (0.75 × 279), solve 108 against 118 of 128.
+- `ctrl4b_D_s5_m3` (`dd5013a`, ended 09:54:40Z, 26.6 s/step): 0.906 / 0.975,
+  0.922 / 0.953, 0.945 / 1.050, 0.906 / 0.996; DEAD; not RANDOMISED by the
+  cell-D rule (training solve 0.909 to 0.983).
+
+Paired fork A − D at 160: −1.734 mine steps per episode [−2.055, −1.445],
+solve −0.141; on the 93 mazes both solved, −1.613 [−1.828, −1.409], −150 of
+−222 mine steps, routes 15.72 against 12.37; −45 on the 24 mazes only D
+solved, −12 on the 6 only A solved, −15 on the 5 neither solved. On-policy
+pair at 160: −0.484 [−0.758, −0.227], solve −0.062; on the 102 mazes both
+solved, −0.225 [−0.373, −0.078], −23 of −62; −25 on the 14 only D solved, −12
+on the 6 only A solved, −2 on the 6 neither solved. Controls credit nothing
+(D-23). Verified by the results-verifier with corrections.
