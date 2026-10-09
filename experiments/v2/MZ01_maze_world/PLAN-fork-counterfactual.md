@@ -2090,3 +2090,49 @@ pair at 160: −0.484 [−0.758, −0.227], solve −0.062; on the 102 mazes bot
 solved, −0.225 [−0.373, −0.078], −23 of −62; −25 on the 14 only D solved, −12
 on the 6 only A solved, −2 on the 6 neither solved. Controls credit nothing
 (D-23). Verified by the results-verifier with corrections.
+
+### 21.17 §21 stopped again by the user (2026-10-09 10:27Z / 15:57 IST); seeds 0 to 5 complete
+
+Shown the per-seed table through seed 5 (§21.14, §21.16) and the lead's
+judgement that the recipe has no stable point under the bar that keeps solve,
+the user chose to change approach and to stop the current runs. Stopped at
+10:27Z (`pkill` on each box): `forkcf4b_D_s6_tx` at step 63,
+`forkcf4b_A_s6_tx` at 96, `ctrl4b_D_s6_m3` at 74, `forkcf4b_A_s7_tx` at 30,
+`forkcf4b_D_s7_tx` at 21. `ctrl4b_A_s6_m3` had ended (0.836 / 0.861 at 160,
+provisional). The partials go to `results/_stopped_2026-10-09/` and enter
+nothing. §21's pre-registered final analysis at seed 7 is not reached
+(D-26). Seeds 0 to 5 have all four cells; no across-seed read of them has
+been run since the interim (§21.10).
+
+## 22. The 320-step horizon on seeds 1 to 5, one arm per seed, pre-registered (2026-10-09 10:35Z / 16:05 IST)
+
+Written before any launch of the runs it queues and before any read of them.
+The user's direction (2026-10-09): use all five boxes for a seed each now, and
+switch recipes once the new recipes have their tests and controls.
+
+**Why.** The one read in the programme that met AVOIDS by the mine and solve
+clauses came at step 320 (§19.4: `forkcf4b_A_s0_tx_h320`, 0.938 / 0.743, one
+seed). At 160 steps the clean fork arms sit at 0.76 to 0.85 and three of six
+ended in the detour-and-cap shape (§21.9, §21.14, §21.16). Whether the
+crossing at 320 replicates on other seeds is untested.
+
+**The runs.** `forkcf4b_A_s{k}_tx_h320` for k = 1, 2, 3, 4, 5: as
+`forkcf4b_A_s0_tx_h320` (§19) in every setting but the seed (4B @
+`cdbee75f`, `nav_nav48_4b`, `orgb_4b/warm_start.pt`, `fork_cf_g6`, tie forks,
+crossfit selection, fork cap 0.3, coefficient 1.0, mask on, exit priced at
+cap, episode credit, mass 0.3, no dose), 320 steps, reads at 40, 80, …, 280
+and the final at 320, `episodes` records on. One per box. No new knob.
+
+**Reading rule.** Each arm is read at every read by the trial's bars and §9's
+validity bars. Per arm, report the first read (if any) that meets AVOIDS by
+the mine and solve clauses, the read at 320, and beside each read capped
+share, `mean_steps`, solved routes and `detour_paid_solved` (§17's
+over-avoidance shape is reported, never credited). No arm is credited here:
+§19's rule needs the same-seed cell-D partner at the same step, and the
+partners `forkcf4b_D_s{k}_tx_h320` and matched 320-step on-policy controls
+run after these, on boxes as they free, under this same section, before any
+credit is read. The summary count is how many of the five arms meet AVOIDS by
+mine and solve at 320 (and at any read), against §19's one of one at seed 0.
+
+**Construction test.** As §19 (D-22): tie forks from walls, selection on the
+priced return of the policy's own continuations; nothing mine-aware.
